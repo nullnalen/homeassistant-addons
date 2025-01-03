@@ -5,4 +5,4 @@ echo "Starter addon..."
 export SUPERVISOR_OPTIONS=$(</data/options.json)
 
 # Kjør Python-scriptet
-python3 /ukenytt_frida.py
+python3 /ukenytt.py

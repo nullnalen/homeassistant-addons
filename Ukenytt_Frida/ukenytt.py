@@ -1,48 +1,5 @@
 import subprocess
 import sys
-
-def ensure_java_installed():
-    try:
-        # Sjekk om default-jre er installert med dpkg
-        result = subprocess.run(
-            ["dpkg", "-s", "default-jre"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        if result.returncode == 0:
-            print("Java (default-jre) er allerede installert.")
-            return
-        else:
-            print("Java (default-jre) er ikke installert. Installerer...")
-    except Exception as e:
-        print(f"Feil ved sjekk av Java-installasjon: {e}")
-
-    try:
-        # Installer default-jre
-        subprocess.run(["apt-get", "update"], check=True)
-        subprocess.run(["apt-get", "install", "-y", "default-jre"], check=True)
-        print("Java er installert.")
-    except Exception as e:
-        print(f"Feil under installasjon av Java: {e}")
-        raise
-ensure_java_installed()
-
-def ensure_dependencies():
-    """
-    Installerer nødvendige moduler hvis de ikke er tilgjengelige.
-    """
-    required_packages = ["json", "tabula-py", "pandas", "warnings","requests","yaml"]
-    for package in required_packages:
-        try:
-            __import__(package)
-        except ImportError:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-
-# Sørg for at nødvendige avhengigheter er installert før import
-ensure_dependencies()
-
-
 import os
 import json
 import tabula

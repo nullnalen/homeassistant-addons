@@ -1,9 +1,4 @@
-subprocess
-sys
-os
-json
 tabula
-pandas as pd
-warnings
+pandas
 requests
-yaml
+PyYAML

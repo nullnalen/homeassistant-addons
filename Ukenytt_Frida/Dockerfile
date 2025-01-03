@@ -1,16 +1,25 @@
-# Bruk baseimage for Home Assistant add-ons
-ARG BUILD_FROM
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.19
 FROM $BUILD_FROM
 
-# Oppsett av metadata
-LABEL maintainer="Kristian Kaldager kaldager.kristian@gmail.com"
+LABEL maintainer="Kristian Kaldager <kaldager.kristian@gmail.com>"
 
-# Installer avhengigheter
-RUN apk add --no-cache python3 py3-pip default-jre
+# Installer Python, pip og OpenJDK
+RUN apk add --no-cache python3 py3-pip openjdk17-jre
 
-# Kopier filer til containeren
+# Opprett et virtuelt miljø og installer avhengigheter
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Installer Python-avhengigheter
+COPY requirements.txt /
+RUN pip install --no-cache-dir -r /requirements.txt
+
+# Kopier skript og kjørefiler
+COPY ukenytt.py /
 COPY run.sh /
+
+# Gjør run.sh kjørbar
 RUN chmod a+x /run.sh
 
-# Start kommandoen
+# Start add-on
 CMD [ "/run.sh" ]
