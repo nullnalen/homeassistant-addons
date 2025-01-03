@@ -47,7 +47,7 @@ def download_latest_file():
     file_url = f"https://api.bitbucket.org/2.0/repositories/{REPO_OWNER}/{REPO_SLUG}/src/{BRANCH}/{latest_file}"
     file_response = requests.get(file_url, auth=auth)
     if file_response.status_code == 200:
-        local_path = os.path.join("/data/Ukenytt_pdf/", os.path.basename(latest_file))
+        local_path = os.path.join("/data/", os.path.basename(latest_file))
         with open(local_path, "wb") as f:
             f.write(file_response.content)
         print(f"Fil lastet ned til: {local_path}")
