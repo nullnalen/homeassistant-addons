@@ -1,6 +1,6 @@
 name: "Ukenytt Frida"
 description: "Addon konverterer ukenytt pdf til sensorer i Home Assistant"
-version: "0.1.1"
+version: "0.1.2"
 slug: "ukenytt_frida"
 init: false
 arch:
@@ -12,3 +12,22 @@ arch:
 startup: services
 ports:
   8080/tcp: 8080
+options:
+options:
+  bitbucket_username: "brukernavn"
+  bitbucket_app_password: "app-passord"
+  bitbucket_repo_owner: "eiernavn"
+  bitbucket_repo_slug: "repo-navn"
+  bitbucket_branch: "main"
+  bitbucket_folder_path: "/addons"
+  homeassistant_url: "http://homeassistant.local:8123"
+  homeassistant_long_lived_access_token: "din_token"
+schema:
+  bitbucket_username: "str" # Må være en streng
+  bitbucket_app_password: "str"
+  bitbucket_repo_owner: "str"
+  bitbucket_repo_slug: "str"
+  bitbucket_branch: "str"
+  bitbucket_folder_path: "str"
+  homeassistant_url: "str" # Må være en gyldig URL-formatert streng
+  homeassistant_long_lived_access_token: "str"

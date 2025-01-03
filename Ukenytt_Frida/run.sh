@@ -1,3 +1,8 @@
-#!/bin/sh
+#!/bin/bash
 echo "Starter addon..."
-python3 -m http.server 8080
+
+# Eksporter konfigurasjonen fra options.json som miljøvariabler
+export SUPERVISOR_OPTIONS=$(</data/options.json)
+
+# Kjør Python-scriptet
+python3 /ukenytt_frida.py

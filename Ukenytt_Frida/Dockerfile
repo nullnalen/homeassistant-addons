@@ -6,7 +6,7 @@ FROM $BUILD_FROM
 LABEL maintainer="Kristian Kaldager kaldager.kristian@gmail.com"
 
 # Installer avhengigheter
-RUN apk add --no-cache python3 py3-pip
+RUN apk add --no-cache python3 py3-pip default-jre
 
 # Kopier filer til containeren
 COPY run.sh /

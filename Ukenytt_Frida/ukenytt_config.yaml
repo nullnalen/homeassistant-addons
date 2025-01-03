@@ -1,0 +1,11 @@
+Bitbucket:
+  username: "kristianj"
+  app_password: "ATBBQ2yFX6McVaHNwrdXysERxYT7199A3FE4"
+  repo_owner: "jomeditdevelopment"
+  repo_slug: "ukenytt"
+  branch: "master"
+  folder_path: "ukenytt/"
+
+HomeAssistant:
+  url: "http://192.168.1.66:8123/api/states/sensor.frida_ukenytt_tabell"
+  long_lived_access_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI2M2JiYjhjZTgyNjc0ZjA0ODVlMDg3NDhlMGRkZDNjNSIsImlhdCI6MTczMzQ4NTIxNCwiZXhwIjoyMDQ4ODQ1MjE0fQ.7usmMk57uFMqjT_S0HivO25zFx9H7OI0bU7qs2DOlVo
