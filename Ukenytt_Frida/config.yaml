@@ -1,0 +1,12 @@
+name: "Ukenytt Frida"
+description: "Addon konverterer ukenytt pdf til sensorer i Home Assistant"
+version: "0.1.0"
+slug: "ukenytt_frida"
+init: false
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+  
