@@ -1,6 +1,6 @@
 name: "Ukenytt Frida"
 description: "Addon konverterer ukenytt pdf til sensorer i Home Assistant"
-version: "0.1.6"
+version: "0.1.7"
 slug: "ukenytt_frida"
 init: false
 arch:
