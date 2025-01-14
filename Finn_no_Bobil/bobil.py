@@ -41,7 +41,7 @@ DATE_FORMAT = "%d. %b. %Y %H:%M"
 
 DB_CONFIG = {
     "host": options.get("databasehost", ""),
-    "user": options.get("databaseuser", ""),
+    "user": options.get("databaseusername", ""),
     "passwd": options.get("databasepassword", ""),
     "database": options.get("databasename", ""),
     "port": options.get("databaseport", "")
