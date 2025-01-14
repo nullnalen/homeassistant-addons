@@ -10,6 +10,7 @@ from tabulate import tabulate
 import re
 import mysql.connector
 import yaml
+import os
 
 # Logging-konfigurasjon
 LOG_FILE = "/data/bobil_script.log"

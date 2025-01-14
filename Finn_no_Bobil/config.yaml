@@ -1,4 +1,4 @@
-name: "Finn_no_Bobil"
+name: "Finn no Bobil"
 description: "Addon traverserer finn på jakt etter bobiler og lagrer historikk i database"
 version: "0.2"
 slug: "finn_no_bobil"
