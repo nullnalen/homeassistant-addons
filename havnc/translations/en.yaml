@@ -1,0 +1,9 @@
+configuration:
+  url:
+    name: Home Assistant URL
+    description: The URL of your Home Assistant instance, optionally with the kiosk arg if you have that (e.g., http://homeassistant:8123/wallboard?kiosk)
+  resolution:
+    name: Screen Resolution
+    description: The resolution for the VNC viewer in WIDTHxHEIGHT format (e.g., 768x1024)
+network:
+  8080/TCP: The port where you will find noVNC. Access it by going to <homeassistant-address>:<port> on your device.

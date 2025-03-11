@@ -1,0 +1,20 @@
+name: "HAVNC"
+description: "VNC straight to your dashboard"
+version: "0.0.8"
+slug: "havnc"
+init: false
+full_access: false
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+ports:
+  8080/tcp: 8080
+options:
+  url: "http://homeassistant:8123"
+  resolution: "768x1024"
+schema:
+  url: "str"
+  resolution: "str"
