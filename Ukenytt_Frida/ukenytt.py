@@ -147,7 +147,7 @@ def main():
 
     # Skriv ut JSON-utdata til konsollen
     #print("\nJSON-utdata:")
-    #print(json_output)
+    print(json_output)
 
     # Oppdater Home Assistant sensor
     update_home_assistant_sensor(output_json, file_name)
