@@ -22,6 +22,8 @@ RUN git clone -c http.sslVerify=false --branch $NOVNC_VERSION https://github.com
 # Cleanup to reduce image size
 RUN rm -rf /var/cache/apk/* /tmp/*
 
+RUN mkdir -p /var/run/dbus && rm -f /var/run/dbus/system_bus_socket /run/dbus/dbus.pid
+
 # Copy configuration files
 COPY index.html /opt/novnc/index.html
 COPY config /config
