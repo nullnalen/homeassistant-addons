@@ -98,7 +98,7 @@ def main():
     # Prosesser PDF-filen
     warnings.filterwarnings("ignore", category=UserWarning, module='tabula')
     try:
-        first_table = tabula.read_pdf(file_path, pages=1, multiple_tables=True)
+        first_table = tabula.read_pdf(file_path, pages=1, multiple_tables=True, stream=True)
     except Exception as e:
         print(f"Feil ved lesing av PDF: {e}")
         return

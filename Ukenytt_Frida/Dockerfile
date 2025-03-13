@@ -3,12 +3,19 @@ FROM $BUILD_FROM
 
 LABEL maintainer="Kristian Kaldager <kaldager.kristian@gmail.com>"
 
-# Installer Python, pip og OpenJDK
-RUN apk add --no-cache python3 py3-pip openjdk17-jre
+# Installer Python, pip, OpenJDK og nødvendige bygg-verktøy
+RUN apk add --no-cache python3 py3-pip openjdk17 g++ gcc libffi-dev python3-dev musl-dev
 
 # Opprett et virtuelt miljø og installer avhengigheter
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
+
+# Sett Java-miljøvariabler for å finne libjvm.so
+ENV JAVA_HOME="/usr/lib/jvm/java-17-openjdk"
+ENV LD_LIBRARY_PATH="/usr/lib/jvm/java-17-openjdk/lib/server"
+
+# Ekstra fallback: Opprett symlink for libjvm.so hvis nødvendig
+RUN ln -s /usr/lib/jvm/java-17-openjdk/lib/server/libjvm.so /usr/lib/libjvm.so || true
 
 # Installer Python-avhengigheter
 COPY requirements.txt /
@@ -20,6 +27,9 @@ COPY run.sh /
 
 # Gjør run.sh kjørbar
 RUN chmod a+x /run.sh
+
+# Sjekk om Java fungerer (diagnostikk)
+RUN java -version
 
 # Start add-on
 CMD [ "/run.sh" ]

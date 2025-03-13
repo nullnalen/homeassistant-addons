@@ -2,3 +2,4 @@ tabula-py
 pandas
 requests
 PyYAML
+jpype1

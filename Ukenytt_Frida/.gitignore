@@ -1,0 +1,7 @@
+# Ignorer options.json for lokal testing
+options.json
+
+# Ignorer også eventuelle .pyc-filer og __pycache__
+__pycache__/
+*.pyc
+*.pyo
