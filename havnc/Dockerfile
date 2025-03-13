@@ -27,9 +27,9 @@ COPY index.html /opt/novnc/index.html
 COPY config /config
 
 # Define environment variables
-ENV PORT=8080 \
-    NOVNC_PORT=$PORT \
-    VNC_TITLE="Home Assistant Dashboard" \
-    DISPLAY=:0
+ENV PORT=8080
+ENV NOVNC_PORT=8080
+ENV VNC_TITLE="Home Assistant Dashboard"
+ENV DISPLAY=:0
 
 CMD ["supervisord", "-l", "/var/log/supervisord.log", "-c", "/config/supervisord.conf"]
