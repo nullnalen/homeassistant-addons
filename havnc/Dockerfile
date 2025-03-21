@@ -1,37 +1,63 @@
 FROM alpine:3.19
 
-LABEL AboutImage="Home Assistant Dashboard through VNC"
+LABEL description="Home Assistant Dashboard through VNC"
 
-# Locale
+# Miljøvariabler
 ENV LANG=en_US.UTF-8 \
     LANGUAGE=en_US.UTF-8 \
     LC_ALL=C.UTF-8 \
-    TZ="UTC"
+    TZ="UTC" \
+    DISPLAY=:0 \
+    NOVNC_PORT=8080 \
+    VNC_TITLE="Home Assistant Dashboard"
 
-RUN apk update && \
-    apk add --no-cache tzdata ca-certificates supervisor curl wget openssl bash python3 py3-requests sed unzip xvfb tigervnc websockify openbox chromium nss alsa-lib font-noto font-noto-cjk jq git procps dbus dbus-x11
+# Installer nødvendige pakker
+RUN apk add --no-cache \
+    bash \
+    ca-certificates \
+    curl \
+    dbus \
+    dbus-x11 \
+    font-noto \
+    font-noto-cjk \
+    git \
+    jq \
+    nss \
+    openssl \
+    procps \
+    py3-requests \
+    python3 \
+    py3-pip \
+    sed \
+    supervisor \
+    tigervnc \
+    tzdata \
+    unzip \
+    wget \
+    websockify \
+    alsa-lib \
+    openbox \
+    xvfb \
+    chromium
 
-# TimeZone
-RUN cp /usr/share/zoneinfo/$TZ /etc/localtime && \
-    echo $TZ > /etc/timezone
+RUN pip3 install --break-system-packages pyxdg
 
-# Install NoVNC
-ARG NOVNC_VERSION=v0.5.1
-RUN git clone -c http.sslVerify=false --branch $NOVNC_VERSION https://github.com/novnc/noVNC.git /opt/novnc
+# Sett riktig tidssone
+RUN cp /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-# Cleanup to reduce image size
+# Installer nyere NoVNC (valgfritt)
+ARG NOVNC_VERSION=v1.4.0
+RUN git clone --depth 1 --branch $NOVNC_VERSION https://github.com/novnc/noVNC.git /opt/novnc
+
+# Rydd opp
 RUN rm -rf /var/cache/apk/* /tmp/*
 
-RUN mkdir -p /var/run/dbus && rm -f /var/run/dbus/system_bus_socket /run/dbus/dbus.pid
+# Klargjør dbus
+RUN mkdir -p /run/dbus
 
-# Copy configuration files
+# Kopier filer
 COPY index.html /opt/novnc/index.html
 COPY config /config
 
-# Define environment variables
-ENV PORT=8080
-ENV NOVNC_PORT=8080
-ENV VNC_TITLE="Home Assistant Dashboard"
-ENV DISPLAY=:0
-
-CMD ["supervisord", "-l", "/var/log/supervisord.log", "-c", "/config/supervisord.conf"]
+# Start container
+CMD ["supervisord", "-c", "/config/supervisord.conf"]
