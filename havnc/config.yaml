@@ -1,6 +1,6 @@
 name: "HAVNC"
 description: "VNC straight to your dashboard"
-version: "1.3"
+version: "1.4"
 slug: "havnc"
 init: false
 full_access: false

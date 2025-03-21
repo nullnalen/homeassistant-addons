@@ -1,7 +1,5 @@
 # Changelog
 
-Notable and less notable changes. 
+## [1.3]
 
-## [0.0.8]
-
-- Initial public release.
+- Første fungerende utgave
