@@ -179,30 +179,52 @@ def display_ads(ads):
     headers = ["Finnkode", "Tittel", "Pris", "Modell", "Km", "Oppdatert", "Beskrivelse"]
     print(tabulate(table_data, headers=headers, tablefmt="grid"))
 
-# Sammenligner og oppdaterer databasen (stub for eksempel)
-def compare_prices_and_save(ads):
-    logger.info(f"Simulerer lagring av {len(ads)} annonser i databasen...")
-    # Her kunne du hatt INSERT/UPDATE-logikk
+# Lagrer annonsedata til databasen
+def update_database(ads):
+    try:
+        conn = connect_to_database()
+        if not conn:
+            return
+        cursor = conn.cursor()
+        for ad in ads:
+            query = """
+                INSERT INTO bobil (Finnkode, Annonsenavn, Modell, Kilometerstand, Beskrivelse, Nyttelast, 
+                                   Typebobil, Oppdatert, URL, Pris)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    Annonsenavn = VALUES(Annonsenavn),
+                    Modell = VALUES(Modell),
+                    Kilometerstand = VALUES(Kilometerstand),
+                    Beskrivelse = VALUES(Beskrivelse),
+                    Nyttelast = VALUES(Nyttelast),
+                    Typebobil = VALUES(Typebobil),
+                    Oppdatert = VALUES(Oppdatert),
+                    URL = VALUES(URL),
+                    Pris = VALUES(Pris)
+            """
+            data = (
+                ad["Finnkode"],
+                ad["Annonsenavn"],
+                ad["Modell"],
+                format_kilometerstand(ad["Kilometerstand"]),
+                ad["Detaljer"].get("Beskrivelse", "Ikke tilgjengelig"),
+                ad["Detaljer"].get("Nyttelast", "Ikke tilgjengelig"),
+                ad["Detaljer"].get("Type bobil", "Ikke tilgjengelig"),
+                ad["Oppdatert"],
+                ad["URL"],
+                normalize_and_format_price(ad["Pris"], output_format=True),
+            )
+            cursor.execute(query, data)
+        logger.info(f"Lagret {len(ads)} annonser i databasen.")
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except mysql.connector.Error as err:
+        logger.error(f"Feil ved databaseoppdatering: {err}")
 
 # Hovedfunksjon: henter, parser og viser eller lagrer data
 async def main():
     logger.info("Starter script...")
-
-    if not RUNNING_LOCALLY:
-        try:
-            conn = connect_to_database()
-            if not conn:
-                return
-            cursor = conn.cursor(dictionary=True)
-            cursor.execute("SELECT Finnkode, Pris FROM bobil")
-            existing_ads = {row["Finnkode"]: row["Pris"] for row in cursor.fetchall()}
-            cursor.close()
-            conn.close()
-        except mysql.connector.Error as err:
-            logger.error(f"Feil ved henting av eksisterende annonser: {err}")
-            return
-    else:
-        existing_ads = {}
 
     async with aiohttp.ClientSession() as session:
         json_data = await fetch_json(session, LISTINGS_PAGE_URL)
@@ -218,7 +240,7 @@ async def main():
         if RUNNING_LOCALLY:
             display_ads(detailed_ads)
         else:
-            compare_prices_and_save(detailed_ads)
+            update_database(detailed_ads)
 
     logger.info("Avslutter script...")
 
