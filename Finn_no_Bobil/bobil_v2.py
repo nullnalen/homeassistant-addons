@@ -10,13 +10,10 @@ from bs4 import BeautifulSoup
 from tabulate import tabulate
 import re
 import mysql.connector
-import yaml
 import os
 
-# Bestemmer om scriptet kjører lokalt (f.eks. i VSCode) eller i Home Assistant
 RUNNING_LOCALLY = __name__ == "__main__" and "SUPERVISOR_OPTIONS" not in os.environ
 
-# Logging-konfigurasjon – logg ALT til stdout slik at det vises i Home Assistant-logg
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 logger.handlers = []
@@ -26,7 +23,6 @@ formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
-# Last inn konfigurasjon fra miljøvariabler eller lokal testdata
 if RUNNING_LOCALLY:
     logger.info("Kjører lokalt med testkonfig.")
     options = {
@@ -46,11 +42,9 @@ else:
         logger.error("SUPERVISOR_OPTIONS mangler eller er feil formatert.")
         sys.exit(1)
 
-# URL for å hente bobil-annonser via FINNs API og datoformat for presentasjon
 LISTINGS_PAGE_URL = "https://www.finn.no/mobility/search/api/search/SEARCH_ID_CAR_MOBILE_HOME?location=22042&location=20003&location=20007&location=22034&location=20061&location=20009&location=20008&location=20002&mileage_to=122000&mobile_home_segment=3&mobile_home_segment=1&mobile_home_segment=2&no_of_sleepers_from=4&price_from=300000&price_to=600000&sort=YEAR_DESC&stored-id=65468215&weight_to=3501&year_from=2006"
 DATE_FORMAT = "%d. %b. %Y %H:%M"
 
-# Databasekonfigurasjon
 DB_CONFIG = {
     "host": options.get("databasehost", ""),
     "user": options.get("databaseusername", ""),
@@ -59,21 +53,15 @@ DB_CONFIG = {
     "port": options.get("databaseport", 3306)
 }
 
-# Oppretter databasenkobling med automatisk reconnect og timeout
 def connect_to_database():
     try:
-        conn = mysql.connector.connect(
-            **DB_CONFIG,
-            connection_timeout=10,
-            autocommit=True
-        )
+        conn = mysql.connector.connect(**DB_CONFIG, connection_timeout=10, autocommit=True)
         logger.info("Koblet til databasen.")
         return conn
     except mysql.connector.Error as err:
         logger.error(f"Feil ved tilkobling til databasen: {err}")
         return None
 
-# Henter JSON-data direkte fra FINNs API
 async def fetch_json(session, url):
     logger.info("Henter JSON fra FINN API...")
     try:
@@ -84,7 +72,6 @@ async def fetch_json(session, url):
         logger.error(f"Feil ved henting av JSON fra {url}: {e}")
         return None
 
-# Parser JSON-responsen fra FINN og bygger liste over annonser
 def extract_info_from_json(json_data):
     try:
         ads = json_data.get("docs", [])
@@ -101,14 +88,13 @@ def extract_info_from_json(json_data):
                 "Oppdatert": formatted_date,
                 "URL": ad.get("canonical_url"),
                 "Beskrivelse": None,
-                "Detaljer": None
+                "Detaljer": {}
             })
         return extracted_data
     except Exception as e:
         logger.error(f"Feil ved ekstraksjon av JSON-data: {e}")
         return []
 
-# Henter HTML-innhold fra enkeltannonser
 async def fetch_html(session, url):
     try:
         async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}) as response:
@@ -118,26 +104,32 @@ async def fetch_html(session, url):
         logger.error(f"Feil ved henting av HTML fra {url}: {e}")
         return None
 
-# Ekstraherer spesifikasjoner og beskrivelse fra HTML-siden for en annonse
 def extract_detailed_ad_info(html_content):
     try:
         soup = BeautifulSoup(html_content, 'html.parser')
         info_dict = {}
-        spesifikasjoner = soup.find('dl', class_='list-descriptive')
+
+        spesifikasjoner = soup.find('dl', class_='emptycheck')
         if spesifikasjoner:
             items = spesifikasjoner.find_all(['dt', 'dd'])
             for i in range(0, len(items), 2):
                 key = items[i].text.strip()
                 value = items[i+1].text.strip()
                 info_dict[key] = value
+
         desc_tag = soup.find('meta', property='og:description')
         info_dict["Beskrivelse"] = desc_tag['content'] if desc_tag else "Ikke tilgjengelig"
+
+        if RUNNING_LOCALLY:
+            logger.info("--- Detaljer fra annonse ---")
+            for k, v in info_dict.items():
+                logger.info(f"{k}: {v}")
+
         return info_dict
     except Exception as e:
         logger.error(f"Feil under detaljuttrekk: {e}")
         return {}
 
-# Kombinerer grunndata og detaljer for hver annonse
 async def fetch_and_combine_data(session, ads):
     async def fetch_details(ad):
         html = await fetch_html(session, ad["URL"])
@@ -146,7 +138,6 @@ async def fetch_and_combine_data(session, ads):
         return ad
     return await asyncio.gather(*(fetch_details(ad) for ad in ads))
 
-# Rens og formatter pris som tall eller tekst med tusenskille
 def normalize_and_format_price(price, output_format=True):
     try:
         normalized = re.sub(r"[^\d]", "", str(price))
@@ -155,7 +146,6 @@ def normalize_and_format_price(price, output_format=True):
     except:
         return None
 
-# Formatter kilometerstand med tusenskille
 def format_kilometerstand(km):
     try:
         normalized = re.sub(r"[^\d]", "", str(km))
@@ -163,7 +153,6 @@ def format_kilometerstand(km):
     except:
         return "Ukjent"
 
-# Vis annonser i tabell (kun ved lokal kjøring)
 def display_ads(ads):
     table_data = [
         [
@@ -173,13 +162,15 @@ def display_ads(ads):
             ad["Modell"],
             format_kilometerstand(ad["Kilometerstand"]),
             ad["Oppdatert"],
-            ad.get("Detaljer", {}).get("Beskrivelse", "")[:60] + "..."
+            ad["Detaljer"].get("Girkasse", ""),
+            ad["Detaljer"].get("Type bobil", ""),
+            ad["Detaljer"].get("Nyttelast", ""),
+            ad["Detaljer"].get("Beskrivelse", "")[:60] + "..."
         ] for ad in ads
     ]
-    headers = ["Finnkode", "Tittel", "Pris", "Modell", "Km", "Oppdatert", "Beskrivelse"]
+    headers = ["Finnkode", "Tittel", "Pris", "Modell", "Km", "Oppdatert", "Girkasse", "Type", "Nyttelast", "Beskrivelse"]
     print(tabulate(table_data, headers=headers, tablefmt="grid"))
 
-# Lagrer annonsedata til databasen
 def update_database(ads):
     try:
         conn = connect_to_database()
@@ -188,13 +179,13 @@ def update_database(ads):
         cursor = conn.cursor()
         for ad in ads:
             query = """
-                INSERT INTO bobil (Finnkode, Annonsenavn, Modell, Kilometerstand, Beskrivelse, Nyttelast, 
-                                   Typebobil, Oppdatert, URL, Pris)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO bobil (Finnkode, Annonsenavn, Modell, Kilometerstand, Girkasse, Beskrivelse, Nyttelast, Typebobil, Oppdatert, URL, Pris)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     Annonsenavn = VALUES(Annonsenavn),
                     Modell = VALUES(Modell),
                     Kilometerstand = VALUES(Kilometerstand),
+                    Girkasse = VALUES(Girkasse),
                     Beskrivelse = VALUES(Beskrivelse),
                     Nyttelast = VALUES(Nyttelast),
                     Typebobil = VALUES(Typebobil),
@@ -207,12 +198,13 @@ def update_database(ads):
                 ad["Annonsenavn"],
                 ad["Modell"],
                 format_kilometerstand(ad["Kilometerstand"]),
+                ad["Detaljer"].get("Girkasse", "Ikke oppgitt"),
                 ad["Detaljer"].get("Beskrivelse", "Ikke tilgjengelig"),
-                ad["Detaljer"].get("Nyttelast", "Ikke tilgjengelig"),
-                ad["Detaljer"].get("Type bobil", "Ikke tilgjengelig"),
+                ad["Detaljer"].get("Nyttelast", "Ikke oppgitt"),
+                ad["Detaljer"].get("Type bobil", "Ikke oppgitt"),
                 ad["Oppdatert"],
                 ad["URL"],
-                normalize_and_format_price(ad["Pris"], output_format=True),
+                normalize_and_format_price(ad["Pris"], output_format=True)
             )
             cursor.execute(query, data)
         logger.info(f"Lagret {len(ads)} annonser i databasen.")
@@ -222,26 +214,20 @@ def update_database(ads):
     except mysql.connector.Error as err:
         logger.error(f"Feil ved databaseoppdatering: {err}")
 
-# Hovedfunksjon: henter, parser og viser eller lagrer data
 async def main():
     logger.info("Starter script...")
-
     async with aiohttp.ClientSession() as session:
         json_data = await fetch_json(session, LISTINGS_PAGE_URL)
         if not json_data:
             return
-
         ads_data = extract_info_from_json(json_data)
         if not ads_data:
             return
-
         detailed_ads = await fetch_and_combine_data(session, ads_data)
-
         if RUNNING_LOCALLY:
             display_ads(detailed_ads)
         else:
             update_database(detailed_ads)
-
     logger.info("Avslutter script...")
 
 if __name__ == "__main__":
