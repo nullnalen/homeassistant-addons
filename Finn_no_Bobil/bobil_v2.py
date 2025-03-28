@@ -179,6 +179,11 @@ def display_ads(ads):
     headers = ["Finnkode", "Tittel", "Pris", "Modell", "Km", "Oppdatert", "Beskrivelse"]
     print(tabulate(table_data, headers=headers, tablefmt="grid"))
 
+# Sammenligner og oppdaterer databasen (stub for eksempel)
+def compare_prices_and_save(ads):
+    logger.info(f"Simulerer lagring av {len(ads)} annonser i databasen...")
+    # Her kunne du hatt INSERT/UPDATE-logikk
+
 # Hovedfunksjon: henter, parser og viser eller lagrer data
 async def main():
     logger.info("Starter script...")
@@ -213,7 +218,7 @@ async def main():
         if RUNNING_LOCALLY:
             display_ads(detailed_ads)
         else:
-            logger.info("Produksjonsmodus: her kan du kalle compare_prices_and_save()")
+            compare_prices_and_save(detailed_ads)
 
     logger.info("Avslutter script...")
 
