@@ -1,6 +1,6 @@
 name: "Finn no Bobil"
 description: "Addon traverserer finn på jakt etter bobiler og lagrer historikk i database"
-version: "0.2.4"
+version: "0.2.5"
 slug: "finn_no_bobil"
 init: false
 arch:
@@ -10,8 +10,6 @@ arch:
   - armv7
   - i386
 startup: services
-ports:
-  8080/tcp: 8080
 options:
   databasehost: "database host"
   databaseusername: "database username"
