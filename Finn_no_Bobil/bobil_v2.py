@@ -16,16 +16,12 @@ import os
 # Bestemmer om scriptet kjører lokalt (f.eks. i VSCode) eller i Home Assistant
 RUNNING_LOCALLY = __name__ == "__main__" and "SUPERVISOR_OPTIONS" not in os.environ
 
-# Logging-konfigurasjon
-LOG_FILE = "bobil_script.log" if RUNNING_LOCALLY else "/data/bobil_script.log"
-logging.basicConfig(
-    filename=None if RUNNING_LOCALLY else LOG_FILE,
-    level=logging.DEBUG,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+# Logging-konfigurasjon – logg ALT til stdout slik at det vises i Home Assistant-logg
 logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
+logger.handlers = []
 console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
+console_handler.setLevel(logging.DEBUG)
 formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
