@@ -5,4 +5,4 @@ echo "Starter addon..."
 export SUPERVISOR_OPTIONS=$(</data/options.json)
 
 # Kjør Python-scriptet
-python3 /bobil.py
+python3 /bobil_v2.py

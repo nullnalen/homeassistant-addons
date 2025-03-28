@@ -15,8 +15,9 @@ COPY requirements.txt /
 RUN pip install --no-cache-dir -r /requirements.txt
 
 # Kopier skript og kjørefiler
-COPY bobil.py /
+COPY bobil_v2.py /
 COPY run.sh /
+RUN mkdir -p /data
 
 # Gjør run.sh kjørbar
 RUN chmod a+x /run.sh
