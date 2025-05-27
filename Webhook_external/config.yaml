@@ -1,0 +1,11 @@
+name: "Webhook_external"
+description: "Webhook for external sensors"
+version: "0.1"
+slug: "Webhook_external"
+iarch:
+  - amd64
+  - aarch64
+startup: application
+boot: auto
+homeassistant_api: true
+host_network: true
