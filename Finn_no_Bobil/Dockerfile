@@ -3,7 +3,6 @@ FROM $BUILD_FROM
 
 LABEL maintainer="Kristian Kaldager <kaldager.kristian@gmail.com>"
 
-# Installer Python, pip og OpenJDK
 RUN apk add --no-cache python3 py3-pip
 
 # Opprett et virtuelt miljø og installer avhengigheter
@@ -24,3 +23,4 @@ RUN chmod a+x /run.sh
 
 # Start add-on
 CMD [ "/run.sh" ]
+

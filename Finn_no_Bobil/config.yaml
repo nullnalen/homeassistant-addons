@@ -22,3 +22,4 @@ schema:
   databasepassword: "str"
   databasename: "str"
   databaseport: "str"
+
