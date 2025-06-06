@@ -12,9 +12,10 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 from tabulate import tabulate
 
-RUNNING_LOCALLY = os.getenv("RUN_LOCALLY", "false").lower() == "true"
+# RUN_LOCALLY blir False hvis miljøvariabelen ikke er satt eller ikke finnes.
+RUN_LOCALLY = os.getenv("RUN_LOCALLY", "false").lower() == "true"
 logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 if not logger.hasHandlers():
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.DEBUG)
@@ -28,17 +29,16 @@ else:
     console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger.addHandler(console_handler)
 
-if RUNNING_LOCALLY:
-    # Log that the script is running with a local test configuration
+if RUN_LOCALLY:
+    # Kjører lokalt med hardkodede databaseverdier (ingen bruk av SUPERVISOR_OPTIONS)
     logger.info("Kjører lokalt med testkonfig.")
 
-    # Set up the options dictionary with local database configuration details
     options = {
-        "databasehost": "localhost",       # Database host is set to localhost
-        "databaseusername": "",        # Use 'user' as database username
-        "databasepassword": "",        # Use 'pass' as database password
-        "databasename": "",          # Specify the database name as 'testdb'
-        "databaseport": ""               # Set the database port to 3306
+        "databasehost": "192.168.1.66",       # Database host er satt til lokal IP
+        "databaseusername": "homeassistant",  # Databasebruker
+        "databasepassword": "FridaHenrik",    # Databasepassord
+        "databasename": "finn_no",            # Databasenavn
+        "databaseport": "3306"                # Databaseport
     }
 else:
     try:
@@ -51,7 +51,7 @@ else:
         logger.error("Ukjent feil ved lasting av SUPERVISOR_OPTIONS: %s", e)
         sys.exit(1)
 
-LISTINGS_PAGE_URL = "https://www.finn.no/mobility/search/api/search/SEARCH_ID_CAR_MOBILE_HOME?location=22042&location=20003&location=20007&location=22034&location=20061&location=20009&location=20008&location=20002&mileage_to=122000&mobile_home_segment=3&mobile_home_segment=1&mobile_home_segment=2&no_of_sleepers_from=4&price_from=300000&price_to=600000&sort=YEAR_DESC&stored-id=65468215&weight_to=3501&year_from=2006"
+LISTINGS_PAGE_URL = "https://www.finn.no/mobility/search/api/search/SEARCH_ID_CAR_MOBILE_HOME?location=22042&location=20003&location=20007&location=22034&location=20061&location=20009&location=20008&location=20002&mileage_to=122000&mobile_home_segment=3&mobile_home_segment=1&mobile_home_segment=2&no_of_sleepers_from=4&price_from=300000&price_to=700000&sort=YEAR_DESC&stored-id=65468215&weight_to=3501&year_from=2006"
 DATE_FORMAT = "%d. %b. %Y %H:%M"
 
 DB_CONFIG = {
@@ -148,10 +148,10 @@ def extract_detailed_ad_info(html_content: str) -> dict:
         beskrivelse = desc_tag['content'] if desc_tag else "Ikke tilgjengelig"
         info_dict["Beskrivelse"] = beskrivelse
 
-        if RUNNING_LOCALLY:
-            logger.info("--- Detaljer fra annonse ---")
+        if RUN_LOCALLY:
+            logger.debug("--- Detaljer fra annonse ---")
             for k, v in info_dict.items():
-                logger.info(f"{k}: {v}")
+                logger.debug(f"{k}: {v}")
 
         return info_dict
     except Exception as e:
@@ -169,11 +169,15 @@ async def fetch_and_combine_data(session, ads):
 def normalize_and_format_price(price: str, output_format: bool = True) -> str | int | None:
     """
     Normaliser og formater pris.
+    Returnerer int hvis output_format=False, ellers formatert streng.
     """
     try:
         normalized = re.sub(r"[^\d]", "", str(price))
         price_as_int = int(normalized)
-        return f"{price_as_int:,.0f} kr".replace(",", " ") if output_format else price_as_int
+        if output_format:
+            return f"{price_as_int:,.0f} kr".replace(",", " ")
+        else:
+            return price_as_int
     except Exception as e:
         logger.error(f"Feil ved formatering av pris: {e}")
         return None
@@ -214,26 +218,66 @@ def display_ads(ads: list[dict]) -> None:
 def update_database(ads: list[dict]) -> None:
     """
     Oppdater database med annonser.
-    Logger eksplisitt hvis prisendring oppdages.
+    Logger eksplisitt hvis noen felt endres.
+    Pris lagres nå som int i databasen.
     Merk: For asynkron database, vurder aiomysql eller lignende bibliotek.
     """
+    logger.info("Starter databaseoppdatering for %d annonser.", len(ads))
     try:
         conn = connect_to_database()
         if not conn:
+            logger.error("Ingen tilkobling til databasen. Avbryter oppdatering.")
             return
         cursor = conn.cursor()
+        if not ads:
+            logger.warning("Ingen annonser å oppdatere i databasen.")
         for ad in ads:
             finnkode = ad["Finnkode"]
-            ny_pris = normalize_and_format_price(ad["Pris"], output_format=True)
-            # Sjekk om annonsen finnes fra før og om prisen er endret
-            cursor.execute("SELECT Pris FROM bobil WHERE Finnkode = %s", (finnkode,))
+            ny_pris_int = normalize_and_format_price(ad["Pris"], output_format=False)
+            if ny_pris_int is None:
+                logger.error(f"Kan ikke lagre annonse {finnkode}: pris ikke gyldig ({ad['Pris']})")
+                continue
+
+            # Hent eksisterende verdier for alle felter
+            cursor.execute(
+                "SELECT Annonsenavn, Modell, Kilometerstand, Girkasse, Beskrivelse, Nyttelast, Typebobil, Oppdatert, URL, Pris FROM bobil WHERE Finnkode = %s",
+                (finnkode,)
+            )
             row = cursor.fetchone()
+            felt_navn = [
+                "Annonsenavn", "Modell", "Kilometerstand", "Girkasse", "Beskrivelse",
+                "Nyttelast", "Typebobil", "Oppdatert", "URL", "Pris"
+            ]
+            nye_verdier = [
+                ad["Annonsenavn"],
+                ad["Modell"],
+                format_kilometerstand(ad["Kilometerstand"]),
+                ad["Detaljer"].get("Girkasse", "Ikke oppgitt"),
+                ad["Detaljer"].get("Beskrivelse", "Ikke tilgjengelig"),
+                ad["Detaljer"].get("Nyttelast", "Ikke oppgitt"),
+                ad["Detaljer"].get("Type bobil", "Ikke oppgitt"),
+                ad["Oppdatert"],
+                ad["URL"],
+                ny_pris_int
+            ]
             if row:
-                gammel_pris = row[0]
-                if gammel_pris != ny_pris:
-                    logger.info(f"Prisendring for Finnkode {finnkode}: {gammel_pris} -> {ny_pris}")
+                endringer = []
+                for idx, (gammel, ny) in enumerate(zip(row, nye_verdier)):
+                    # Sammenlign som str for alle felt unntatt Pris (int)
+                    if felt_navn[idx] == "Pris":
+                        try:
+                            gammel_int = int(re.sub(r"[^\d]", "", str(gammel)))
+                        except Exception:
+                            gammel_int = None
+                        if gammel_int != ny:
+                            endringer.append(f"{felt_navn[idx]}: {gammel_int} -> {ny}")
+                    else:
+                        if str(gammel) != str(ny):
+                            endringer.append(f"{felt_navn[idx]}: '{gammel}' -> '{ny}'")
+                if endringer:
+                    logger.info(f"Endringer for Finnkode {finnkode}: {', '.join(endringer)}")
             else:
-                logger.info(f"Ny annonse lagres med Finnkode {finnkode} og pris {ny_pris}")
+                logger.info(f"Ny annonse lagres med Finnkode {finnkode}")
 
             query = """
                 INSERT INTO bobil (Finnkode, Annonsenavn, Modell, Kilometerstand, Girkasse, Beskrivelse, Nyttelast, Typebobil, Oppdatert, URL, Pris)
@@ -261,8 +305,10 @@ def update_database(ads: list[dict]) -> None:
                 ad["Detaljer"].get("Type bobil", "Ikke oppgitt"),
                 ad["Oppdatert"],
                 ad["URL"],
-                ny_pris
+                ny_pris_int
             )
+            logger.debug(f"SQL: {query}")
+            logger.debug(f"Data: {data}")
             try:
                 cursor.execute(query, data)
             except Exception as e:
@@ -291,9 +337,14 @@ async def main() -> None:
             logger.error("Ingen annonser funnet i JSON-data.")
             return
         detailed_ads = await fetch_and_combine_data(session, ads_data)
-        if RUNNING_LOCALLY:
+        if not RUN_LOCALLY:
+            # Databaseoppdatering skjer kun hvis RUN_LOCALLY er False.
+            # For å deaktivere databaseoppdatering, kommenter ut linjen under:
             update_database(detailed_ads)
-        display_ads(detailed_ads)
+            #display_ads(detailed_ads)
+        else:
+            #display_ads(detailed_ads)
+            update_database(detailed_ads)
     logger.info("Avslutter script...")
 
 if __name__ == "__main__":
