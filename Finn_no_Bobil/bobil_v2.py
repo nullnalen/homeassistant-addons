@@ -34,11 +34,11 @@ if RUNNING_LOCALLY:
 
     # Set up the options dictionary with local database configuration details
     options = {
-        "databasehost": "192.168.1.66",       # Database host is set to localhost
-        "databaseusername": "homeassistant",        # Use 'user' as database username
-        "databasepassword": "FridaHenrik",        # Use 'pass' as database password
-        "databasename": "finn_no",          # Specify the database name as 'testdb'
-        "databaseport": 3306               # Set the database port to 3306
+        "databasehost": "localhost",       # Database host is set to localhost
+        "databaseusername": "",        # Use 'user' as database username
+        "databasepassword": "",        # Use 'pass' as database password
+        "databasename": "",          # Specify the database name as 'testdb'
+        "databaseport": ""               # Set the database port to 3306
     }
 else:
     try:
