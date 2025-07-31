@@ -90,6 +90,42 @@ async def fetch_json(session: aiohttp.ClientSession, url: str) -> dict | None:
         logger.error(f"Feil ved henting av JSON fra {url}: {e}")
         return None
 
+async def fetch_all_pages(session: aiohttp.ClientSession, base_url: str) -> list[dict]:
+    """
+    Hent alle annonser fra FINN API ved å iterere over paginering (offset).
+    """
+    all_ads = []
+    offset = 0
+    page_size = 20  # FINN returnerer 20 annonser per side
+
+    # Første kall for å hente metadata og total_matches
+    initial_data = await fetch_json(session, f"{base_url}&offset={offset}")
+    if not initial_data:
+        logger.error("Kunne ikke hente første side.")
+        return []
+
+    total_matches = initial_data.get("metadata", {}).get("total_matches", 0)
+    logger.info(f"Totalt antall annonser: {total_matches}")
+    all_ads.extend(extract_info_from_json(initial_data))
+
+    # Iterer over resten
+    for offset in range(page_size, total_matches, page_size):
+        await asyncio.sleep(0.2)  # For å unngå throttling
+        paged_url = f"{base_url}&offset={offset}"
+        logger.info(f"Henter annonser med offset={offset}")
+        json_data = await fetch_json(session, paged_url)
+        if not json_data:
+            logger.warning(f"Ingen data hentet ved offset={offset}.")
+            break
+        ads = extract_info_from_json(json_data)
+        if not ads:
+            logger.info("Tom side – avslutter paginering.")
+            break
+        all_ads.extend(ads)
+
+    logger.info(f"Totalt hentet {len(all_ads)} annonser.")
+    return all_ads
+
 def extract_info_from_json(json_data: dict) -> list[dict]:
     """
     Ekstraher relevante felter fra FINN JSON-data.
@@ -328,10 +364,11 @@ async def main() -> None:
     """
     logger.info("Starter script...")
     async with aiohttp.ClientSession() as session:
-        json_data = await fetch_json(session, LISTINGS_PAGE_URL)
-        if not json_data:
-            logger.error("Ingen JSON-data hentet fra FINN API.")
+        ads_data = await fetch_all_pages(session, LISTINGS_PAGE_URL)
+        if not ads_data:
+            logger.error("Ingen annonser hentet fra FINN API.")
             return
+
         ads_data = extract_info_from_json(json_data)
         if not ads_data:
             logger.error("Ingen annonser funnet i JSON-data.")
