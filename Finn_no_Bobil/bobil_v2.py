@@ -92,39 +92,48 @@ async def fetch_json(session: aiohttp.ClientSession, url: str) -> dict | None:
 
 async def fetch_all_pages(session: aiohttp.ClientSession, base_url: str) -> list[dict]:
     """
-    Hent alle annonser fra FINN API ved å iterere over paginering (offset).
+    Henter alle sider fra FINN API med paginering.
     """
     all_ads = []
+    page_size = 20
     offset = 0
-    page_size = 20  # FINN returnerer 20 annonser per side
 
-    # Første kall for å hente metadata og total_matches
+    logger.info("Henter første side med offset 0...")
     initial_data = await fetch_json(session, f"{base_url}&offset={offset}")
     if not initial_data:
         logger.error("Kunne ikke hente første side.")
         return []
 
+    # Prøv å hente total_matches, men bruk fallback hvis det er 0
     total_matches = initial_data.get("metadata", {}).get("total_matches", 0)
+    if total_matches == 0:
+        docs = initial_data.get("docs", [])
+        if docs:
+            total_matches = len(docs)
+            logger.warning(f"metadata['total_matches'] returnerte 0, bruker fallback: {total_matches}")
+        else:
+            logger.error("Ingen annonser funnet (docs er tom).")
+            return []
+
     logger.info(f"Totalt antall annonser: {total_matches}")
+
+    # Hent og legg til første side
     all_ads.extend(extract_info_from_json(initial_data))
 
-    # Iterer over resten
+    # Hent videre sider med offset
     for offset in range(page_size, total_matches, page_size):
-        await asyncio.sleep(0.2)  # For å unngå throttling
+        logger.debug(f"Henter side med offset {offset}")
+        await asyncio.sleep(0.2)  # Rate limit
         paged_url = f"{base_url}&offset={offset}"
-        logger.info(f"Henter annonser med offset={offset}")
-        json_data = await fetch_json(session, paged_url)
-        if not json_data:
-            logger.warning(f"Ingen data hentet ved offset={offset}.")
-            break
-        ads = extract_info_from_json(json_data)
-        if not ads:
-            logger.info("Tom side – avslutter paginering.")
-            break
-        all_ads.extend(ads)
+        data = await fetch_json(session, paged_url)
+        if data:
+            all_ads.extend(extract_info_from_json(data))
+        else:
+            logger.warning(f"Kunne ikke hente side med offset {offset}")
 
     logger.info(f"Totalt hentet {len(all_ads)} annonser.")
     return all_ads
+
 
 def extract_info_from_json(json_data: dict) -> list[dict]:
     """
