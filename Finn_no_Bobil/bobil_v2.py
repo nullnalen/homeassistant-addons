@@ -369,20 +369,15 @@ async def main() -> None:
             logger.error("Ingen annonser hentet fra FINN API.")
             return
 
-        ads_data = extract_info_from_json(json_data)
-        if not ads_data:
-            logger.error("Ingen annonser funnet i JSON-data.")
-            return
         detailed_ads = await fetch_and_combine_data(session, ads_data)
+
         if not RUN_LOCALLY:
-            # Databaseoppdatering skjer kun hvis RUN_LOCALLY er False.
-            # For å deaktivere databaseoppdatering, kommenter ut linjen under:
             update_database(detailed_ads)
-            #display_ads(detailed_ads)
         else:
-            #display_ads(detailed_ads)
             update_database(detailed_ads)
+
     logger.info("Avslutter script...")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
