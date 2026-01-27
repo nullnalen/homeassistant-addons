@@ -11,7 +11,7 @@ mkdir -p /data/ukenytt
 
 # Hent konfigurasjon via bashio
 export UKENYTT_API_KEY=$(bashio::config 'api_key')
-export UKENYTT_CHILDREN=$(bashio::config 'children' | bashio::jq -c '.')
+export UKENYTT_CHILDREN=$(bashio::config 'children')
 
 # Bruk Home Assistant API proxy
 export UKENYTT_HA_URL="http://supervisor/core"
