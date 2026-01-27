@@ -11,7 +11,8 @@ mkdir -p /data/ukenytt
 
 # Hent konfigurasjon via bashio
 export UKENYTT_API_KEY=$(bashio::config 'api_key')
-export UKENYTT_CHILDREN=$(bashio::config 'children')
+# Les children som JSON-array direkte fra options.json
+export UKENYTT_CHILDREN=$(jq -c '.children' /data/options.json)
 
 # Bruk Home Assistant API proxy
 export UKENYTT_HA_URL="http://supervisor/core"
