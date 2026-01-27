@@ -4,10 +4,14 @@ FROM ${BUILD_FROM}
 # Sett shell til bash for bedre feilhåndtering
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Installer avhengigheter (kun JRE for tabula-py subprocess-modus)
+# Installer avhengigheter - bruk Alpine-pakker for numpy/pandas (unngår musl segfault)
 RUN apk add --no-cache \
     python3 \
     py3-pip \
+    py3-numpy \
+    py3-pandas \
+    py3-flask \
+    py3-requests \
     openjdk17-jre-headless
 
 # Sett Java-miljøvariabler for tabula-py
@@ -17,10 +21,8 @@ ENV JAVA_HOME="/usr/lib/jvm/java-17-openjdk" \
 # Opprett symlink for libjvm.so
 RUN ln -sf /usr/lib/jvm/java-17-openjdk/lib/server/libjvm.so /usr/lib/libjvm.so || true
 
-# Installer Python-avhengigheter (med --break-system-packages for Alpine 3.19+)
-COPY requirements.txt /tmp/
-RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements.txt \
-    && rm /tmp/requirements.txt
+# Installer kun tabula-py og waitress via pip (resten er Alpine-pakker)
+RUN pip3 install --no-cache-dir --break-system-packages tabula-py waitress
 
 # Kopier rootfs (S6-overlay konfigurasjon)
 COPY rootfs /
@@ -40,4 +42,4 @@ LABEL \
     io.hass.name="Ukenytt" \
     io.hass.description="Mottar ukenytt-PDF via HTTP og konverterer til Home Assistant sensorer" \
     io.hass.type="addon" \
-    io.hass.version="1.0.7"
+    io.hass.version="1.0.8"
