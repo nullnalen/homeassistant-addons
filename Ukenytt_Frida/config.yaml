@@ -21,7 +21,9 @@ ports_description:
 map:
   - type: addon_config
     read_only: false
-ingress: false
+ingress: true
+ingress_port: 8099
+ingress_stream: true
 panel_icon: "mdi:calendar-week"
 options:
   api_key: ""
