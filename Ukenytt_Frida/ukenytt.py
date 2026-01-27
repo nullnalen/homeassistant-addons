@@ -58,8 +58,10 @@ def parse_pdf(file_path: Path) -> dict:
     pd.options.mode.chained_assignment = None
 
     try:
+        # Bruk java_options for å unngå JPype (subprocess-modus)
         tables = tabula.read_pdf(
-            str(file_path), pages=1, multiple_tables=True, stream=True
+            str(file_path), pages=1, multiple_tables=True, stream=True,
+            java_options=None  # Tvinger subprocess-modus
         )
     except Exception as e:
         logger.error("Feil ved lesing av PDF: %s", e)
