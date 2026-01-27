@@ -8,8 +8,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN apk add --no-cache \
     python3 \
     py3-pip \
-    openjdk17-jre-headless \
-    && rm -rf /var/cache/apk/*
+    openjdk17-jre-headless
 
 # Sett Java-miljøvariabler for tabula-py
 ENV JAVA_HOME="/usr/lib/jvm/java-17-openjdk" \
@@ -18,9 +17,9 @@ ENV JAVA_HOME="/usr/lib/jvm/java-17-openjdk" \
 # Opprett symlink for libjvm.so
 RUN ln -sf /usr/lib/jvm/java-17-openjdk/lib/server/libjvm.so /usr/lib/libjvm.so || true
 
-# Installer Python-avhengigheter
+# Installer Python-avhengigheter (med --break-system-packages for Alpine 3.19+)
 COPY requirements.txt /tmp/
-RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
+RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
 
 # Kopier rootfs (S6-overlay konfigurasjon)
