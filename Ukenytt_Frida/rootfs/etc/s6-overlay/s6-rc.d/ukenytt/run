@@ -1,0 +1,24 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Ukenytt Add-on: Starter hovedapplikasjonen
+# ==============================================================================
+
+bashio::log.info "Starter Ukenytt add-on..."
+
+# Opprett data-mappe hvis den ikke finnes
+mkdir -p /data/ukenytt
+
+# Hent konfigurasjon via bashio
+export UKENYTT_API_KEY=$(bashio::config 'api_key')
+export UKENYTT_CHILDREN=$(bashio::config 'children' | bashio::jq -c '.')
+
+# Bruk Home Assistant API proxy
+export UKENYTT_HA_URL="http://supervisor/core"
+export UKENYTT_HA_TOKEN="${SUPERVISOR_TOKEN}"
+
+bashio::log.info "Konfigurerte barn: ${UKENYTT_CHILDREN}"
+bashio::log.info "Starter webserver på port 8099..."
+
+# Start Python-applikasjonen
+exec python3 /usr/bin/ukenytt.py

@@ -1,7 +1,8 @@
 name: "Ukenytt"
-description: "Addon som mottar ukenytt-PDF via HTTP og konverterer til Home Assistant sensorer"
-version: "0.3.0"
+description: "Mottar ukenytt-PDF via HTTP og konverterer til Home Assistant sensorer. Perfekt for å digitalisere ukeplaner fra barnehage/skole."
+version: "1.0.0"
 slug: "ukenytt"
+url: "https://github.com/nullnalen/ukenytt_addon"
 init: false
 arch:
   - aarch64
@@ -10,19 +11,24 @@ arch:
   - armv7
   - i386
 startup: services
+boot: auto
+homeassistant_api: true
+hassio_api: true
 ports:
   8099/tcp: 8099
 ports_description:
   8099/tcp: "HTTP API for PDF-opplasting"
+map:
+  - type: addon_config
+    read_only: false
+ingress: false
+panel_icon: "mdi:calendar-week"
 options:
-  homeassistant_url: "http://supervisor/core"
-  homeassistant_long_lived_access_token: ""
   api_key: ""
   children:
-    - "frida"
+    - name: "Barn1"
 schema:
-  homeassistant_url: url
-  homeassistant_long_lived_access_token: str
   api_key: str?
   children:
-    - str
+    - name: str
+advanced: false

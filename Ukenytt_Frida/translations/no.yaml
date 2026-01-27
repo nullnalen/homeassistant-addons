@@ -1,0 +1,13 @@
+configuration:
+  api_key:
+    name: API-nøkkel
+    description: Valgfri API-nøkkel for autentisering av opplastingsforespørsler. La stå tom for å deaktivere autentisering.
+  children:
+    name: Barn
+    description: Liste over barn å spore ukeplaner for.
+    fields:
+      name:
+        name: Navn
+        description: Barnets navn. Dette vil brukes i sensornavnet (f.eks. sensor.frida_ukenytt_tabell).
+network:
+  8099/tcp: HTTP API-port for opplasting av PDF-filer via Siri-snarveier eller andre HTTP-klienter.

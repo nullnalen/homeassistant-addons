@@ -1,0 +1,13 @@
+configuration:
+  api_key:
+    name: API Key
+    description: Optional API key for authenticating upload requests. Leave empty to disable authentication.
+  children:
+    name: Children
+    description: List of children to track weekly schedules for.
+    fields:
+      name:
+        name: Name
+        description: The child's name. This will be used in the sensor name (e.g., sensor.frida_ukenytt_tabell).
+network:
+  8099/tcp: HTTP API port for uploading PDF files via Siri Shortcuts or other HTTP clients.
