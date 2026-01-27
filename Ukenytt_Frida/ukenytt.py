@@ -45,6 +45,22 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 app = Flask(__name__)
 
 
+@app.route("/", methods=["GET"])
+def index():
+    """Root-endepunkt - viser status."""
+    return jsonify({
+        "addon": "Ukenytt",
+        "status": "running",
+        "children": CHILDREN,
+        "endpoints": {
+            "upload": "POST /upload?child=<name>",
+            "health": "GET /health",
+            "status": "GET /status",
+            "process": "POST /process"
+        }
+    })
+
+
 def get_pdf_path(child_name: str) -> Path:
     """Returnerer stien til PDF-filen for et barn."""
     safe_name = "".join(c for c in child_name.lower() if c.isalnum() or c in "-_")

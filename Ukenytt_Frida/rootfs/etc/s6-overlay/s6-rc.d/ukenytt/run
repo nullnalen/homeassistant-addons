@@ -21,12 +21,5 @@ export UKENYTT_HA_TOKEN="${SUPERVISOR_TOKEN}"
 bashio::log.info "Konfigurerte barn: ${UKENYTT_CHILDREN}"
 bashio::log.info "Starter webserver på port 8099..."
 
-# Test Python-import først
-bashio::log.info "Tester Python-avhengigheter..."
-if ! python3 -c "import pandas; import tabula; import flask; import requests; print('OK')" 2>&1; then
-    bashio::log.error "Python-import feilet!"
-fi
-
-# Start Python-applikasjonen med full feilutskrift
-python3 -u /usr/bin/ukenytt.py 2>&1 || bashio::log.error "Python avsluttet med feil: $?"
-exec sleep infinity
+# Start Python-applikasjonen
+exec python3 -u /usr/bin/ukenytt.py
