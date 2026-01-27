@@ -1,8 +1,18 @@
 #!/bin/bash
-echo "Starter addon..."
+set -e
+
+echo "Starter Ukenytt add-on..."
 
 # Eksporter konfigurasjonen fra options.json som miljøvariabler
-export SUPERVISOR_OPTIONS=$(</data/options.json)
+if [ -f /data/options.json ]; then
+    export SUPERVISOR_OPTIONS=$(cat /data/options.json)
+else
+    echo "ADVARSEL: /data/options.json ikke funnet, bruker standardverdier"
+    export SUPERVISOR_OPTIONS="{}"
+fi
 
-# Kjør Python-scriptet
-python3 /ukenytt.py
+# Opprett data-mappe hvis den ikke finnes
+mkdir -p /data/ukenytt
+
+# Kjør Python-applikasjonen
+exec python3 /ukenytt.py

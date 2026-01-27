@@ -1,7 +1,7 @@
-name: "Ukenytt Frida"
-description: "Addon konverterer ukenytt pdf til sensorer i Home Assistant"
-version: "0.2.2"
-slug: "ukenytt_frida"
+name: "Ukenytt"
+description: "Addon som mottar ukenytt-PDF via HTTP og konverterer til Home Assistant sensorer"
+version: "0.3.0"
+slug: "ukenytt"
 init: false
 arch:
   - aarch64
@@ -11,23 +11,18 @@ arch:
   - i386
 startup: services
 ports:
-  8080/tcp: 8080
+  8099/tcp: 8099
+ports_description:
+  8099/tcp: "HTTP API for PDF-opplasting"
 options:
-options:
-  bitbucket_username: "brukernavn"
-  bitbucket_app_password: "app-passord"
-  bitbucket_repo_owner: "eiernavn"
-  bitbucket_repo_slug: "repo-navn"
-  bitbucket_branch: "main"
-  bitbucket_folder_path: "/addons"
-  homeassistant_url: "http://homeassistant.local:8123"
-  homeassistant_long_lived_access_token: "din_token"
+  homeassistant_url: "http://supervisor/core"
+  homeassistant_long_lived_access_token: ""
+  api_key: ""
+  children:
+    - "frida"
 schema:
-  bitbucket_username: "str" # Må være en streng
-  bitbucket_app_password: "str"
-  bitbucket_repo_owner: "str"
-  bitbucket_repo_slug: "str"
-  bitbucket_branch: "str"
-  bitbucket_folder_path: "str"
-  homeassistant_url: "str" # Må være en gyldig URL-formatert streng
-  homeassistant_long_lived_access_token: "str"
+  homeassistant_url: url
+  homeassistant_long_lived_access_token: str
+  api_key: str?
+  children:
+    - str

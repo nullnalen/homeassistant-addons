@@ -1,7 +1,30 @@
-# Ignorer options.json for lokal testing
+# Konfigurasjonsfiler med sensitiv data
 options.json
 
-# Ignorer også eventuelle .pyc-filer og __pycache__
+# PDF-filer (lagres lokalt, ikke i git)
+*.pdf
+
+# Data-mappe
+/data/
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+.Python
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

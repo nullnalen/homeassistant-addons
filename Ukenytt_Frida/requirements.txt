@@ -1,5 +1,6 @@
 tabula-py
 pandas
 requests
-PyYAML
+flask
+waitress
 jpype1
