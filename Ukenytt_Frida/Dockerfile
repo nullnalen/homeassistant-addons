@@ -4,11 +4,15 @@ FROM ${BUILD_FROM}
 # Sett shell til bash for bedre feilhåndtering
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Installer avhengigheter
+# Installer avhengigheter inkludert build-tools for JPype1
 RUN apk add --no-cache \
     python3 \
     py3-pip \
-    openjdk17-jre-headless
+    python3-dev \
+    openjdk17-jre-headless \
+    openjdk17-jdk \
+    g++ \
+    make
 
 # Sett Java-miljøvariabler for tabula-py
 ENV JAVA_HOME="/usr/lib/jvm/java-17-openjdk" \
