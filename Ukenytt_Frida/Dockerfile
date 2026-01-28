@@ -45,4 +45,4 @@ LABEL \
     io.hass.name="Ukenytt" \
     io.hass.description="Mottar ukenytt-PDF via HTTP og konverterer til Home Assistant sensorer" \
     io.hass.type="addon" \
-    io.hass.version="1.0.16"
+    io.hass.version="1.0.17"

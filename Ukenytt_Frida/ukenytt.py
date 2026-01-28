@@ -14,7 +14,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 import tabula
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, render_template_string
 
 # Konfigurer logging til stdout for S6-overlay
 logging.basicConfig(
@@ -45,9 +45,254 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 app = Flask(__name__)
 
 
+# HTML-mal for Ingress-visning
+INGRESS_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="no">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ukenytt</title>
+    <style>
+        :root {
+            --primary-color: #03a9f4;
+            --bg-color: #1c1c1c;
+            --card-bg: #2d2d2d;
+            --text-color: #e0e0e0;
+            --text-muted: #9e9e9e;
+            --border-color: #404040;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 {
+            color: var(--primary-color);
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        h1 svg { width: 32px; height: 32px; fill: var(--primary-color); }
+        .child-section {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid var(--border-color);
+        }
+        .child-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .child-name {
+            font-size: 1.4em;
+            font-weight: 600;
+            color: var(--primary-color);
+        }
+        .week-badge {
+            background: var(--primary-color);
+            color: #000;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-weight: 600;
+        }
+        .weekday {
+            margin-bottom: 15px;
+        }
+        .weekday-name {
+            font-weight: 600;
+            color: var(--primary-color);
+            margin-bottom: 5px;
+            font-size: 1.1em;
+        }
+        .weekday-items {
+            padding-left: 20px;
+        }
+        .weekday-items li {
+            margin-bottom: 4px;
+            color: var(--text-color);
+        }
+        .info-section {
+            margin-top: 20px;
+            padding-top: 15px;
+            border-top: 1px solid var(--border-color);
+        }
+        .info-title {
+            font-weight: 600;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+            font-size: 0.9em;
+            text-transform: uppercase;
+        }
+        .info-content {
+            white-space: pre-wrap;
+            color: var(--text-color);
+            background: rgba(0,0,0,0.2);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 0.95em;
+        }
+        .no-data {
+            color: var(--text-muted);
+            font-style: italic;
+            text-align: center;
+            padding: 40px;
+        }
+        .api-info {
+            margin-top: 30px;
+            padding: 15px;
+            background: rgba(3, 169, 244, 0.1);
+            border-radius: 8px;
+            border: 1px solid var(--primary-color);
+        }
+        .api-info h3 {
+            color: var(--primary-color);
+            margin-bottom: 10px;
+        }
+        .api-info code {
+            background: rgba(0,0,0,0.3);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        .refresh-btn {
+            background: var(--primary-color);
+            color: #000;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        .refresh-btn:hover { opacity: 0.9; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>
+            <svg viewBox="0 0 24 24"><path d="M19,19H5V8H19M16,1V3H8V1H6V3H5C3.89,3 3,3.89 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5C21,3.89 20.1,3 19,3H18V1M17,12H12V17H17V12Z"/></svg>
+            Ukenytt
+        </h1>
+
+        {% for child in children_data %}
+        <div class="child-section">
+            <div class="child-header">
+                <span class="child-name">{{ child.name }}</span>
+                {% if child.week %}
+                <span class="week-badge">Uke {{ child.week }}</span>
+                {% endif %}
+            </div>
+
+            {% if child.ukeplan %}
+                {% for day in ['Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag'] %}
+                    {% if day in child.ukeplan %}
+                    <div class="weekday">
+                        <div class="weekday-name">{{ day }}</div>
+                        <ul class="weekday-items">
+                            {% for item in child.ukeplan[day] %}
+                            <li>{{ item }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+                {% endfor %}
+            {% else %}
+                <p class="no-data">Ingen ukeplan lastet opp enn&aring;</p>
+            {% endif %}
+
+            {% if child.info %}
+            <div class="info-section">
+                <div class="info-title">Informasjon</div>
+                <div class="info-content">{{ child.info }}</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+
+        <div class="api-info">
+            <h3>API-endepunkter</h3>
+            <p><code>POST /upload?child=navn</code> - Last opp PDF</p>
+            <p><code>GET /info/navn</code> - Hent full info-tekst (JSON)</p>
+            <p><code>GET /api</code> - JSON API-status</p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+
+def get_child_data(child_name: str) -> dict:
+    """Henter lagret data for et barn fra sensor eller fil."""
+    safe_name = "".join(c for c in child_name.lower() if c.isalnum() or c in "_")
+    sensor_name = f"sensor.{safe_name}_ukenytt_tabell"
+    url = f"{HA_URL}/api/states/{sensor_name}"
+
+    headers = {
+        "Authorization": f"Bearer {HA_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    data = {"name": child_name, "week": None, "ukeplan": None, "info": None}
+
+    try:
+        response = requests.get(url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            sensor_data = response.json()
+            data["week"] = sensor_data.get("state")
+            attrs = sensor_data.get("attributes", {})
+            data["ukeplan"] = attrs.get("ukeplan")
+            data["info"] = attrs.get("info")
+    except requests.RequestException:
+        pass
+
+    # Hent full info fra fil hvis tilgjengelig
+    safe_name_file = "".join(c for c in child_name.lower() if c.isalnum() or c in "-_")
+    info_path = DATA_DIR / f"{safe_name_file}_info.txt"
+    if info_path.exists():
+        data["info"] = info_path.read_text(encoding="utf-8")
+
+    return data
+
+
 @app.route("/", methods=["GET"])
 def index():
-    """Root-endepunkt - viser status."""
+    """Root-endepunkt - viser Ingress HTML-side."""
+    # Sjekk om det er en Ingress-forespørsel (HTML) eller API (JSON)
+    accept = request.headers.get("Accept", "")
+    if "text/html" in accept or not accept:
+        # Hent data for alle barn
+        children_data = [get_child_data(child) for child in CHILDREN]
+        return render_template_string(INGRESS_TEMPLATE, children_data=children_data)
+
+    # Fallback til JSON for API-kall
+    return jsonify({
+        "addon": "Ukenytt",
+        "status": "running",
+        "children": CHILDREN,
+        "endpoints": {
+            "upload": "POST /upload?child=<name>",
+            "health": "GET /health",
+            "status": "GET /status",
+            "process": "POST /process",
+            "info": "GET /info/<child_name>",
+            "api": "GET /api"
+        }
+    })
+
+
+@app.route("/api", methods=["GET"])
+def api_index():
+    """API-endepunkt - returnerer alltid JSON."""
     return jsonify({
         "addon": "Ukenytt",
         "status": "running",
