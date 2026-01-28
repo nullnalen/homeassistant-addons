@@ -14,6 +14,7 @@ startup: services
 boot: auto
 homeassistant_api: true
 hassio_api: true
+auth_api: true
 ports:
   8099/tcp: 8099
 ports_description:
