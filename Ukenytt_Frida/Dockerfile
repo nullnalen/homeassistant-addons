@@ -12,7 +12,10 @@ RUN apk add --no-cache \
     py3-pandas \
     py3-flask \
     py3-requests \
-    openjdk17-jre-headless
+    openjdk17-jre-headless \
+    lcms2 \
+    fontconfig \
+    ttf-dejavu
 
 # Sett Java-miljøvariabler for tabula-py
 ENV JAVA_HOME="/usr/lib/jvm/java-17-openjdk" \
@@ -42,4 +45,4 @@ LABEL \
     io.hass.name="Ukenytt" \
     io.hass.description="Mottar ukenytt-PDF via HTTP og konverterer til Home Assistant sensorer" \
     io.hass.type="addon" \
-    io.hass.version="1.0.11"
+    io.hass.version="1.0.12"
