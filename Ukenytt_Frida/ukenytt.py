@@ -67,8 +67,8 @@ def get_pdf_path(child_name: str) -> Path:
     return DATA_DIR / f"{safe_name}.pdf"
 
 
-def parse_pdf(file_path: Path) -> dict:
-    """Parser PDF og returnerer ukeplan som dictionary."""
+def parse_pdf(file_path: Path) -> tuple[dict, list]:
+    """Parser PDF og returnerer ukeplan som dictionary og rå tabeller."""
     logger.info("Parser PDF: %s", file_path)
 
     pd.options.mode.chained_assignment = None
@@ -110,15 +110,38 @@ def parse_pdf(file_path: Path) -> dict:
             if todo_list:
                 output[day] = todo_list
 
-    return output
+    return output, tables
 
 
-def extract_week_number(file_path: Path) -> str:
-    """Ekstraherer ukenummer fra filnavn."""
-    digits = "".join(filter(str.isdigit, file_path.stem))
-    if len(digits) >= 2:
-        return digits[-2:]
-    return "00"
+def extract_week_number(file_path: Path, pdf_tables: list = None) -> str:
+    """Ekstraherer ukenummer fra filnavn eller PDF-innhold.
+
+    Prøver først filnavn (f.eks. 'uke 4.pdf', 'uke4.pdf', 'Ukenytt_uke_5.pdf'),
+    deretter søker i PDF-tabellene etter 'Uke XX' mønster.
+    """
+    import re
+
+    # Prøv filnavn først - søk etter "uke" etterfulgt av tall
+    filename = file_path.stem.lower()
+    match = re.search(r'uke\s*(\d{1,2})', filename)
+    if match:
+        return match.group(1)
+
+    # Fallback: bare tall i filnavnet
+    digits = "".join(filter(str.isdigit, filename))
+    if digits:
+        return digits.lstrip('0') or '0'
+
+    # Søk i PDF-tabellene etter "Uke XX"
+    if pdf_tables:
+        for table in pdf_tables:
+            if hasattr(table, 'to_string'):
+                table_text = table.to_string()
+                match = re.search(r'[Uu]ke\s*(\d{1,2})', table_text)
+                if match:
+                    return match.group(1)
+
+    return "0"
 
 
 def update_home_assistant_sensor(
@@ -168,8 +191,8 @@ def process_pdf_for_child(child_name: str) -> tuple[bool, str]:
         return False, f"Ingen PDF funnet for {child_name}"
 
     try:
-        data = parse_pdf(pdf_path)
-        week_number = extract_week_number(pdf_path)
+        data, tables = parse_pdf(pdf_path)
+        week_number = extract_week_number(pdf_path, tables)
 
         if update_home_assistant_sensor(child_name, data, week_number):
             return True, f"Sensor oppdatert for {child_name}, uke {week_number}"
