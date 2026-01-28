@@ -56,7 +56,8 @@ def index():
             "upload": "POST /upload?child=<name>",
             "health": "GET /health",
             "status": "GET /status",
-            "process": "POST /process"
+            "process": "POST /process",
+            "info": "GET /info/<child_name>"
         }
     })
 
@@ -113,39 +114,114 @@ def parse_pdf(file_path: Path) -> tuple[dict, list]:
     return output, tables
 
 
-def extract_week_number(file_path: Path, pdf_tables: list = None) -> str:
+def extract_pdf_text(file_path: Path) -> str:
+    """Leser all tekst fra PDF-en (inkludert overskrifter og tekst utenfor tabeller)."""
+    try:
+        import pdfplumber
+        with pdfplumber.open(str(file_path)) as pdf:
+            text = ""
+            for page in pdf.pages:
+                text += page.extract_text() or ""
+            return text
+    except Exception as e:
+        logger.warning("Kunne ikke lese PDF-tekst med pdfplumber: %s", e)
+        return ""
+
+
+def extract_week_number(file_path: Path, pdf_tables: list = None, pdf_text: str = None) -> str:
     """Ekstraherer ukenummer fra filnavn eller PDF-innhold.
 
     Prøver først filnavn (f.eks. 'uke 4.pdf', 'uke4.pdf', 'Ukenytt_uke_5.pdf'),
-    deretter søker i PDF-tabellene etter 'Uke XX' mønster.
+    deretter søker i PDF-teksten (overskrifter) etter 'Uke XX' mønster.
     """
     import re
+
+    logger.info("Ekstraherer ukenummer fra fil: %s", file_path.name)
 
     # Prøv filnavn først - søk etter "uke" etterfulgt av tall
     filename = file_path.stem.lower()
     match = re.search(r'uke\s*(\d{1,2})', filename)
     if match:
+        logger.info("Fant ukenummer i filnavn: %s", match.group(1))
         return match.group(1)
 
     # Fallback: bare tall i filnavnet
     digits = "".join(filter(str.isdigit, filename))
     if digits:
-        return digits.lstrip('0') or '0'
+        week = digits.lstrip('0') or '0'
+        logger.info("Fant tall i filnavn: %s", week)
+        return week
 
-    # Søk i PDF-tabellene etter "Uke XX"
+    # Søk i PDF-teksten (overskrifter etc) etter "Uke XX"
+    if pdf_text:
+        match = re.search(r'[Uu]ke\s*(\d{1,2})', pdf_text)
+        if match:
+            logger.info("Fant ukenummer i PDF-tekst: %s", match.group(1))
+            return match.group(1)
+
+    # Fallback: søk i tabellene
     if pdf_tables:
-        for table in pdf_tables:
+        for i, table in enumerate(pdf_tables):
             if hasattr(table, 'to_string'):
                 table_text = table.to_string()
                 match = re.search(r'[Uu]ke\s*(\d{1,2})', table_text)
                 if match:
+                    logger.info("Fant ukenummer i tabell: %s", match.group(1))
                     return match.group(1)
 
+    logger.warning("Kunne ikke finne ukenummer")
     return "0"
 
 
+def extract_extra_text(pdf_text: str) -> str:
+    """Ekstraherer tekst som kommer etter tabellen (informasjon, beskjeder etc)."""
+    import re
+
+    if not pdf_text:
+        return ""
+
+    # Fjern ukeplan-delen (linjer med ukedager)
+    lines = pdf_text.split('\n')
+    extra_lines = []
+    past_table = False
+
+    weekdays = ['mandag', 'tirsdag', 'onsdag', 'torsdag', 'fredag', 'lørdag', 'søndag']
+
+    for line in lines:
+        line_lower = line.lower().strip()
+
+        # Sjekk om vi er forbi tabellen (etter fredag)
+        if 'fredag' in line_lower:
+            past_table = True
+            continue
+
+        if past_table and line.strip():
+            # Hopp over linjer som bare er ukedager
+            if not any(day in line_lower for day in weekdays):
+                extra_lines.append(line.strip())
+
+    extra_text = '\n'.join(extra_lines).strip()
+    return extra_text
+
+
+def save_info_file(child_name: str, info_text: str) -> Path:
+    """Lagrer full info-tekst til fil for et barn."""
+    safe_name = "".join(c for c in child_name.lower() if c.isalnum() or c in "-_")
+    info_path = DATA_DIR / f"{safe_name}_info.txt"
+    info_path.write_text(info_text, encoding="utf-8")
+    logger.info("Lagret info-tekst til %s (%d tegn)", info_path, len(info_text))
+    return info_path
+
+
+def truncate_text(text: str, max_length: int = 500) -> str:
+    """Truncerer tekst til maks lengde med '...' hvis nødvendig."""
+    if not text or len(text) <= max_length:
+        return text
+    return text[:max_length - 3].rsplit(' ', 1)[0] + "..."
+
+
 def update_home_assistant_sensor(
-    child_name: str, data: dict, week_number: str
+    child_name: str, data: dict, week_number: str, extra_text: str = ""
 ) -> bool:
     """Oppdaterer Home Assistant sensor for et barn."""
     safe_name = "".join(c for c in child_name.lower() if c.isalnum() or c in "_")
@@ -157,15 +233,32 @@ def update_home_assistant_sensor(
         "Content-Type": "application/json",
     }
 
+    # Lagre full info-tekst til fil hvis den er lang
+    info_truncated = None
+    has_full_info = False
+    if extra_text:
+        if len(extra_text) > 500:
+            # Lagre full tekst til fil
+            save_info_file(child_name, extra_text)
+            info_truncated = truncate_text(extra_text, 500)
+            has_full_info = True
+        else:
+            info_truncated = extra_text
+
     payload = {
         "state": int(week_number) if week_number.isdigit() else 0,
         "attributes": {
             "barn": child_name,
             "ukeplan": data,
+            "info": info_truncated if info_truncated else None,
+            "info_full_available": has_full_info,
             "friendly_name": f"{child_name} Ukenytt",
             "icon": "mdi:calendar-week",
         },
     }
+
+    # Fjern None-verdier fra attributter
+    payload["attributes"] = {k: v for k, v in payload["attributes"].items() if v is not None}
 
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=10)
@@ -183,7 +276,7 @@ def update_home_assistant_sensor(
         return False
 
 
-def process_pdf_for_child(child_name: str) -> tuple[bool, str]:
+def process_pdf_for_child(child_name: str, original_filename: str = None) -> tuple[bool, str]:
     """Prosesserer PDF for et barn og oppdaterer sensor."""
     pdf_path = get_pdf_path(child_name)
 
@@ -192,9 +285,21 @@ def process_pdf_for_child(child_name: str) -> tuple[bool, str]:
 
     try:
         data, tables = parse_pdf(pdf_path)
-        week_number = extract_week_number(pdf_path, tables)
 
-        if update_home_assistant_sensor(child_name, data, week_number):
+        # Les all tekst fra PDF (for overskrift og ekstra info)
+        pdf_text = extract_pdf_text(pdf_path)
+
+        # Bruk originalt filnavn for ukenummer hvis tilgjengelig
+        if original_filename:
+            from pathlib import Path as P
+            week_number = extract_week_number(P(original_filename), tables, pdf_text)
+        else:
+            week_number = extract_week_number(pdf_path, tables, pdf_text)
+
+        # Hent ekstra tekst (beskjeder etc)
+        extra_text = extract_extra_text(pdf_text)
+
+        if update_home_assistant_sensor(child_name, data, week_number, extra_text):
             return True, f"Sensor oppdatert for {child_name}, uke {week_number}"
         return False, f"Kunne ikke oppdatere sensor for {child_name}"
     except ValueError as e:
@@ -246,6 +351,7 @@ def upload_pdf():
     child_name = CHILDREN[child_index]
 
     # Sjekk at fil ble sendt
+    original_filename = None
     if "file" not in request.files:
         if request.content_type and "pdf" in request.content_type.lower():
             file_data = request.get_data()
@@ -262,6 +368,8 @@ def upload_pdf():
         file = request.files["file"]
         if file.filename == "":
             return jsonify({"error": "Ingen fil valgt"}), 400
+        original_filename = file.filename
+        logger.info("Mottatt fil med originalnavn: %s", original_filename)
         file_data = file.read()
 
     # Valider at det er en PDF
@@ -279,8 +387,8 @@ def upload_pdf():
         logger.error("Kunne ikke lagre fil: %s", e)
         return jsonify({"error": "Kunne ikke lagre fil"}), 500
 
-    # Prosesser PDF og oppdater sensor
-    success, message = process_pdf_for_child(child_name)
+    # Prosesser PDF og oppdater sensor (med originalt filnavn for ukenummer)
+    success, message = process_pdf_for_child(child_name, original_filename)
 
     return (
         jsonify(
@@ -332,12 +440,40 @@ def status():
     status_info = {}
     for child in CHILDREN:
         pdf_path = get_pdf_path(child)
+        safe_name = "".join(c for c in child.lower() if c.isalnum() or c in "-_")
+        info_path = DATA_DIR / f"{safe_name}_info.txt"
         status_info[child] = {
             "has_pdf": pdf_path.exists(),
             "pdf_size": pdf_path.stat().st_size if pdf_path.exists() else None,
+            "has_info_file": info_path.exists(),
         }
 
     return jsonify({"children": status_info, "data_directory": str(DATA_DIR)})
+
+
+@app.route("/info/<child_name>", methods=["GET"])
+def get_info(child_name: str):
+    """Henter full info-tekst for et barn."""
+    # Finn riktig navn med korrekt casing
+    children_lower = [c.lower() for c in CHILDREN]
+    if child_name.lower() not in children_lower:
+        return jsonify({"error": f"Ukjent barn: {child_name}"}), 404
+
+    child_index = children_lower.index(child_name.lower())
+    child_name = CHILDREN[child_index]
+
+    safe_name = "".join(c for c in child_name.lower() if c.isalnum() or c in "-_")
+    info_path = DATA_DIR / f"{safe_name}_info.txt"
+
+    if not info_path.exists():
+        return jsonify({"error": f"Ingen info-fil funnet for {child_name}"}), 404
+
+    info_text = info_path.read_text(encoding="utf-8")
+    return jsonify({
+        "child": child_name,
+        "info": info_text,
+        "length": len(info_text)
+    })
 
 
 def startup_process():

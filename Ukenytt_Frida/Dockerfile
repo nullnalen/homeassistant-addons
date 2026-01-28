@@ -24,8 +24,8 @@ ENV JAVA_HOME="/usr/lib/jvm/java-17-openjdk" \
 # Opprett symlink for libjvm.so
 RUN ln -sf /usr/lib/jvm/java-17-openjdk/lib/server/libjvm.so /usr/lib/libjvm.so || true
 
-# Installer kun tabula-py og waitress via pip (resten er Alpine-pakker)
-RUN pip3 install --no-cache-dir --break-system-packages tabula-py waitress
+# Installer kun tabula-py, pdfplumber og waitress via pip (resten er Alpine-pakker)
+RUN pip3 install --no-cache-dir --break-system-packages tabula-py pdfplumber waitress
 
 # Kopier rootfs (S6-overlay konfigurasjon)
 COPY rootfs /
@@ -45,4 +45,4 @@ LABEL \
     io.hass.name="Ukenytt" \
     io.hass.description="Mottar ukenytt-PDF via HTTP og konverterer til Home Assistant sensorer" \
     io.hass.type="addon" \
-    io.hass.version="1.0.13"
+    io.hass.version="1.0.16"
