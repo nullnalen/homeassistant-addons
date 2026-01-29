@@ -132,6 +132,7 @@ async def fetch_all_pages(session: aiohttp.ClientSession, base_url: str) -> list
     Henter alle sider fra FINN API med paginering.
     """
     all_ads = []
+    seen_ids = set()
     offset = 0
 
     logger.info("Henter første side med offset 0...")
@@ -157,8 +158,11 @@ async def fetch_all_pages(session: aiohttp.ClientSession, base_url: str) -> list
     page_size = len(initial_data.get("docs", []))
     logger.info(f"Totalt antall annonser: {total_matches}, sidesize: {page_size}")
 
-    # Hent og legg til første side
-    all_ads.extend(extract_info_from_json(initial_data))
+    # Hent og legg til første side (med dedup)
+    for ad in extract_info_from_json(initial_data):
+        if ad["Finnkode"] not in seen_ids:
+            seen_ids.add(ad["Finnkode"])
+            all_ads.append(ad)
 
     if page_size == 0:
         return all_ads
@@ -170,11 +174,14 @@ async def fetch_all_pages(session: aiohttp.ClientSession, base_url: str) -> list
         paged_url = f"{base_url}&offset={offset}"
         data = await fetch_json(session, paged_url)
         if data:
-            all_ads.extend(extract_info_from_json(data))
+            for ad in extract_info_from_json(data):
+                if ad["Finnkode"] not in seen_ids:
+                    seen_ids.add(ad["Finnkode"])
+                    all_ads.append(ad)
         else:
             logger.warning(f"Kunne ikke hente side med offset {offset}")
 
-    logger.info(f"Totalt hentet {len(all_ads)} annonser.")
+    logger.info(f"Totalt hentet {len(all_ads)} unike annonser (av {total_matches} treff fra API).")
     return all_ads
 
 
