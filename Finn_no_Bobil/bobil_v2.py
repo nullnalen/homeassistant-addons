@@ -473,6 +473,60 @@ def _log_dry_run_summary(ads: list[dict]) -> None:
     if len(ads) > 5:
         logger.info(f"  ... og {len(ads) - 5} til.")
 
+def mark_removed_ads(current_ads: list[dict], dry_run: bool = False) -> None:
+    """
+    Marker annonser som ikke lenger finnes i søkeresultatene som fjernet.
+    Setter Pris til 'Solgt/Fjernet' for annonser som ikke er i current_ads
+    og som ikke allerede er markert.
+    """
+    mode = "DRY RUN" if dry_run else "LIVE"
+    conn = connect_to_database()
+    if not conn:
+        return
+
+    try:
+        cursor = conn.cursor()
+        active_ids = {ad["Finnkode"] for ad in current_ads}
+
+        # Hent alle finnkoder som ikke allerede er markert som solgt/fjernet
+        cursor.execute(
+            "SELECT Finnkode FROM bobil WHERE Pris NOT LIKE %s AND Pris NOT LIKE %s",
+            ("%Solgt%", "%Fjernet%")
+        )
+        db_ids = {row[0] for row in cursor.fetchall()}
+
+        removed_ids = db_ids - active_ids
+        if not removed_ids:
+            logger.info(f"[{mode}] Ingen annonser fjernet fra Finn.")
+            return
+
+        logger.info(f"[{mode}] {len(removed_ids)} annonser ikke lenger i søkeresultater.")
+
+        for finnkode in removed_ids:
+            logger.info(f"[{mode}] Markerer Finnkode {finnkode} som Solgt/Fjernet.")
+            if not dry_run:
+                cursor.execute(
+                    "UPDATE bobil SET Pris = %s WHERE Finnkode = %s",
+                    ("Solgt/Fjernet", finnkode)
+                )
+                # Logg til prisendringer
+                try:
+                    cursor.execute(
+                        "INSERT INTO prisendringer (Finnkode, Pris) VALUES (%s, %s)",
+                        (finnkode, "Solgt/Fjernet")
+                    )
+                except Exception as e:
+                    logger.error(f"Feil ved logging av solgt-status for {finnkode}: {e}")
+
+        if not dry_run:
+            conn.commit()
+        logger.info(f"[{mode}] Markerte {len(removed_ids)} annonser som Solgt/Fjernet.")
+    except Exception as e:
+        logger.error(f"Feil ved markering av fjernede annonser: {e}")
+    finally:
+        conn.close()
+
+
 async def main() -> None:
     """
     Hovedfunksjon for scriptet.
@@ -490,6 +544,9 @@ async def main() -> None:
         detailed_ads = await fetch_and_combine_data(session, ads_data)
 
         update_database(detailed_ads, dry_run=DRY_RUN)
+
+        # Marker annonser som ikke lenger finnes i søkeresultatene
+        mark_removed_ads(detailed_ads, dry_run=DRY_RUN)
 
     logger.info("Avslutter script...")
 

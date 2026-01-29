@@ -236,6 +236,7 @@ def get_kjopsscore():
                 "KjopsScore": score,
                 "Soketreff": ", ".join(treff) if treff else "",
                 "FinnURL": f"https://www.finn.no/mobility/item/{r['Finnkode']}",
+                "ErNy": dager <= 1,
             })
 
         results.sort(key=lambda x: x["KjopsScore"], reverse=True)
@@ -331,7 +332,27 @@ def get_sokresultater(keywords_str):
         conn.close()
 
 
-def get_detaljer(page=1, per_page=50):
+def get_filter_options():
+    """Hent unike verdier for filterpanelet."""
+    conn = get_db()
+    if not conn:
+        return {"modeller": [], "typer": [], "girkasser": []}
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT Modell FROM bobil WHERE Modell IS NOT NULL ORDER BY Modell DESC")
+        modeller = [r[0] for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT Typebobil FROM bobil WHERE Typebobil IS NOT NULL AND Typebobil != 'Ikke oppgitt' ORDER BY Typebobil")
+        typer = [r[0] for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT Girkasse FROM bobil WHERE Girkasse IS NOT NULL AND Girkasse != 'Ikke oppgitt' ORDER BY Girkasse")
+        girkasser = [r[0] for r in cur.fetchall()]
+        return {"modeller": modeller, "typer": typer, "girkasser": girkasser}
+    except Exception:
+        return {"modeller": [], "typer": [], "girkasser": []}
+    finally:
+        conn.close()
+
+
+def get_detaljer(page=1, per_page=50, filters=None):
     """View 5: Detaljert oversikt med beregninger."""
     conn = get_db()
     if not conn:
@@ -339,8 +360,36 @@ def get_detaljer(page=1, per_page=50):
     try:
         cur = conn.cursor(dictionary=True)
 
-        # Totalt antall
-        cur.execute("SELECT COUNT(*) AS total FROM bobil")
+        # Bygg WHERE-klausul basert på filtre
+        where_parts = []
+        params = []
+        if filters:
+            if filters.get("modell_fra"):
+                where_parts.append("b.Modell >= %s")
+                params.append(filters["modell_fra"])
+            if filters.get("modell_til"):
+                where_parts.append("b.Modell <= %s")
+                params.append(filters["modell_til"])
+            if filters.get("pris_fra"):
+                where_parts.append("CAST(REGEXP_REPLACE(b.Pris, '[^0-9]', '') AS UNSIGNED) >= %s")
+                params.append(int(filters["pris_fra"]))
+            if filters.get("pris_til"):
+                where_parts.append("CAST(REGEXP_REPLACE(b.Pris, '[^0-9]', '') AS UNSIGNED) <= %s")
+                params.append(int(filters["pris_til"]))
+            if filters.get("type"):
+                where_parts.append("b.Typebobil = %s")
+                params.append(filters["type"])
+            if filters.get("girkasse"):
+                where_parts.append("b.Girkasse = %s")
+                params.append(filters["girkasse"])
+            if filters.get("skjul_solgt"):
+                where_parts.append("b.Pris NOT LIKE %s")
+                params.append("%Solgt%")
+
+        where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
+
+        # Totalt antall med filter
+        cur.execute(f"SELECT COUNT(*) AS total FROM bobil b {where_clause}", params)
         total = cur.fetchone()["total"]
 
         offset = (page - 1) * per_page
@@ -353,12 +402,13 @@ def get_detaljer(page=1, per_page=50):
                    MAX(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED)) AS HoyestePris
             FROM bobil b
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
+            {where_clause}
             GROUP BY b.Finnkode, b.Annonsenavn, b.Beskrivelse, b.Modell,
                      b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
                      b.Oppdatert, b.Pris, b.URL
             ORDER BY b.Modell DESC, b.Pris ASC
             LIMIT %s OFFSET %s
-        """, (per_page, offset))
+        """, params + [per_page, offset])
         rows = cur.fetchall()
 
         now = datetime.now()
@@ -369,6 +419,10 @@ def get_detaljer(page=1, per_page=50):
             r["LavestePrisF"] = format_price(parse_price(r["LavestePris"]))
             r["HoyestePrisF"] = format_price(parse_price(r["HoyestePris"]))
             r["FinnURL"] = f"https://www.finn.no/mobility/item/{r['Finnkode']}"
+
+            # Sjekk om annonsen er ny (siste 24 timer)
+            dato = parse_norwegian_date(r.get("Oppdatert", ""))
+            r["ErNy"] = dato and (now - dato).total_seconds() < 86400
 
             # Pris per km
             if pris and km and km > 0:
@@ -614,6 +668,132 @@ TEMPLATE = """
             overflow: hidden;
             text-overflow: ellipsis;
         }
+        th.sortable {
+            cursor: pointer;
+            user-select: none;
+        }
+        th.sortable:hover {
+            color: var(--text-color);
+        }
+        th.sortable::after {
+            content: ' ⇅';
+            font-size: 0.7em;
+            opacity: 0.4;
+        }
+        th.sort-asc::after {
+            content: ' ▲';
+            opacity: 0.8;
+        }
+        th.sort-desc::after {
+            content: ' ▼';
+            opacity: 0.8;
+        }
+        .new-badge {
+            display: inline-block;
+            background: #ff9800;
+            color: #000;
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 0.7em;
+            font-weight: 600;
+            margin-left: 4px;
+            vertical-align: middle;
+        }
+        /* Filterpanel */
+        .filter-panel {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+            align-items: flex-end;
+        }
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .filter-group label {
+            font-size: 0.75em;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .filter-group select,
+        .filter-group input[type="number"] {
+            padding: 6px 10px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-color);
+            color: var(--text-color);
+            font-size: 0.85em;
+            min-width: 120px;
+        }
+        /* Mobilvisning */
+        @media (max-width: 768px) {
+            body { padding: 10px; }
+            .tabs { gap: 2px; }
+            .tab { padding: 6px 10px; font-size: 0.8em; }
+            .content { padding: 12px; }
+            table { font-size: 0.75em; }
+            th, td { padding: 6px 4px; }
+            .filter-panel { flex-direction: column; }
+            .filter-group { width: 100%; }
+            .filter-group select,
+            .filter-group input[type="number"] { width: 100%; }
+            .status-bar { flex-direction: column; text-align: center; }
+            /* Card layout for mobilvisning */
+            .mobile-cards table { display: none; }
+            .mobile-cards .card-list { display: block; }
+        }
+        @media (min-width: 769px) {
+            .mobile-cards .card-list { display: none; }
+        }
+        .card-list {
+            display: none;
+        }
+        .card {
+            background: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 10px;
+        }
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .card-header a {
+            font-weight: 600;
+            font-size: 0.95em;
+        }
+        .card-details {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px 12px;
+            font-size: 0.8em;
+        }
+        .card-detail-label {
+            color: var(--text-muted);
+        }
+        tr.sold {
+            opacity: 0.5;
+        }
+        tr.sold td:first-child::before {
+            content: '';
+        }
+        .sold-badge {
+            display: inline-block;
+            background: #f44336;
+            color: #fff;
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 0.7em;
+            font-weight: 600;
+            margin-left: 4px;
+            vertical-align: middle;
+        }
     </style>
 </head>
 <body>
@@ -642,6 +822,36 @@ TEMPLATE = """
             </form>
         </div>
     </div>
+    <script>
+        // Sortering av tabeller
+        document.querySelectorAll('th.sortable').forEach(th => {
+            th.addEventListener('click', () => {
+                const table = th.closest('table');
+                const tbody = table.querySelector('tbody');
+                const idx = Array.from(th.parentNode.children).indexOf(th);
+                const type = th.dataset.sort || 'string';
+                const rows = Array.from(tbody.querySelectorAll('tr'));
+
+                // Toggle sorteringsretning
+                const isAsc = th.classList.contains('sort-asc');
+                table.querySelectorAll('th').forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
+                th.classList.add(isAsc ? 'sort-desc' : 'sort-asc');
+                const dir = isAsc ? -1 : 1;
+
+                rows.sort((a, b) => {
+                    let aVal = a.children[idx]?.textContent.trim() || '';
+                    let bVal = b.children[idx]?.textContent.trim() || '';
+                    if (type === 'number') {
+                        const aNum = parseFloat(aVal.replace(/[^\d.-]/g, '')) || 0;
+                        const bNum = parseFloat(bVal.replace(/[^\d.-]/g, '')) || 0;
+                        return (aNum - bNum) * dir;
+                    }
+                    return aVal.localeCompare(bVal, 'no') * dir;
+                });
+                rows.forEach(row => tbody.appendChild(row));
+            });
+        });
+    </script>
 </body>
 </html>
 """
@@ -677,13 +887,13 @@ def view_prisendringer():
     <table>
         <thead>
             <tr>
-                <th>Finnkode</th>
-                <th>Annonse</th>
-                <th>Modell</th>
-                <th>Pris</th>
-                <th>Laveste</th>
-                <th>Høyeste</th>
-                <th>Endringer</th>
+                <th class="sortable" data-sort="number">Finnkode</th>
+                <th class="sortable">Annonse</th>
+                <th class="sortable" data-sort="number">Modell</th>
+                <th class="sortable" data-sort="number">Pris</th>
+                <th class="sortable" data-sort="number">Laveste</th>
+                <th class="sortable" data-sort="number">Høyeste</th>
+                <th class="sortable" data-sort="number">Endringer</th>
             </tr>
         </thead>
         <tbody>
@@ -714,15 +924,15 @@ def view_kjopsscore():
     <table>
         <thead>
             <tr>
-                <th>Score</th>
-                <th>Finnkode</th>
-                <th>Annonse</th>
-                <th>Modell</th>
-                <th>Pris</th>
-                <th>Laveste</th>
-                <th>Høyeste</th>
-                <th>Endringer</th>
-                <th>Dager</th>
+                <th class="sortable" data-sort="number">Score</th>
+                <th class="sortable" data-sort="number">Finnkode</th>
+                <th class="sortable">Annonse</th>
+                <th class="sortable" data-sort="number">Modell</th>
+                <th class="sortable" data-sort="number">Pris</th>
+                <th class="sortable" data-sort="number">Laveste</th>
+                <th class="sortable" data-sort="number">Høyeste</th>
+                <th class="sortable" data-sort="number">Endringer</th>
+                <th class="sortable" data-sort="number">Dager</th>
                 <th>Søketreff</th>
             </tr>
         </thead>
@@ -733,11 +943,12 @@ def view_kjopsscore():
         if r["Soketreff"]:
             for t in r["Soketreff"].split(", "):
                 treff_html += f'<span class="keyword-tag">{t}</span>'
+        ny_badge = '<span class="new-badge">NY</span>' if r.get("ErNy") else ""
         html += f"""
             <tr>
                 <td class="score">{r['KjopsScore']}</td>
                 <td><a href="{r['FinnURL']}" target="_blank">{r['Finnkode']}</a></td>
-                <td class="truncate">{r['Annonsenavn'] or ''}</td>
+                <td class="truncate">{r['Annonsenavn'] or ''}{ny_badge}</td>
                 <td>{r['Modell'] or ''}</td>
                 <td>{r['NaaverendePris']}</td>
                 <td class="price-down">{r['LavestePris']}</td>
@@ -761,10 +972,10 @@ def view_prisutvikling():
     <table>
         <thead>
             <tr>
-                <th>Modellår</th>
-                <th>Periode</th>
-                <th>Gj.snittspris</th>
-                <th>Datapunkter</th>
+                <th class="sortable" data-sort="number">Modellår</th>
+                <th class="sortable">Periode</th>
+                <th class="sortable" data-sort="number">Gj.snittspris</th>
+                <th class="sortable" data-sort="number">Datapunkter</th>
             </tr>
         </thead>
         <tbody>
@@ -806,15 +1017,15 @@ def view_sok():
         <table>
             <thead>
                 <tr>
-                    <th>Finnkode</th>
-                    <th>Annonse</th>
-                    <th>Modell</th>
-                    <th>Pris</th>
-                    <th>Km</th>
-                    <th>Type</th>
-                    <th>Endringer</th>
-                    <th>Laveste</th>
-                    <th>Høyeste</th>
+                    <th class="sortable" data-sort="number">Finnkode</th>
+                    <th class="sortable">Annonse</th>
+                    <th class="sortable" data-sort="number">Modell</th>
+                    <th class="sortable" data-sort="number">Pris</th>
+                    <th class="sortable" data-sort="number">Km</th>
+                    <th class="sortable">Type</th>
+                    <th class="sortable" data-sort="number">Endringer</th>
+                    <th class="sortable" data-sort="number">Laveste</th>
+                    <th class="sortable" data-sort="number">Høyeste</th>
                     <th>Treff</th>
                 </tr>
             </thead>
@@ -848,28 +1059,108 @@ def view_sok():
 def view_detaljer():
     page = request.args.get("page", 1, type=int)
     per_page = 50
-    rows, total = get_detaljer(page, per_page)
+    filters = {
+        "modell_fra": request.args.get("modell_fra", ""),
+        "modell_til": request.args.get("modell_til", ""),
+        "pris_fra": request.args.get("pris_fra", ""),
+        "pris_til": request.args.get("pris_til", ""),
+        "type": request.args.get("type", ""),
+        "girkasse": request.args.get("girkasse", ""),
+        "skjul_solgt": request.args.get("skjul_solgt", ""),
+    }
+    rows, total = get_detaljer(page, per_page, filters)
 
-    if not rows:
+    if not rows and not any(filters.values()):
         return render_page("detaljer", '<p class="no-data">Ingen annonser funnet.</p>')
 
-    html = """
+    # Hent filteralternativer
+    filter_opts = get_filter_options()
+
+    # Bygg filter-URL uten page-param
+    def filter_qs():
+        parts = []
+        for k, v in filters.items():
+            if v:
+                parts.append(f"{k}={v}")
+        return "&".join(parts)
+
+    # Filterpanel
+    type_options = "".join(
+        f'<option value="{t}" {"selected" if filters.get("type") == t else ""}>{t}</option>'
+        for t in filter_opts["typer"]
+    )
+    gir_options = "".join(
+        f'<option value="{g}" {"selected" if filters.get("girkasse") == g else ""}>{g}</option>'
+        for g in filter_opts["girkasser"]
+    )
+    skjul_checked = "checked" if filters.get("skjul_solgt") else ""
+
+    html = f"""
+    <form class="filter-panel" method="GET" action="detaljer">
+        <div class="filter-group">
+            <label>Modellår fra</label>
+            <input type="number" name="modell_fra" value="{filters.get('modell_fra', '')}" placeholder="f.eks. 2010" min="1990" max="2030">
+        </div>
+        <div class="filter-group">
+            <label>Modellår til</label>
+            <input type="number" name="modell_til" value="{filters.get('modell_til', '')}" placeholder="f.eks. 2020" min="1990" max="2030">
+        </div>
+        <div class="filter-group">
+            <label>Pris fra</label>
+            <input type="number" name="pris_fra" value="{filters.get('pris_fra', '')}" placeholder="f.eks. 300000" step="50000">
+        </div>
+        <div class="filter-group">
+            <label>Pris til</label>
+            <input type="number" name="pris_til" value="{filters.get('pris_til', '')}" placeholder="f.eks. 700000" step="50000">
+        </div>
+        <div class="filter-group">
+            <label>Type bobil</label>
+            <select name="type">
+                <option value="">Alle</option>
+                {type_options}
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>Girkasse</label>
+            <select name="girkasse">
+                <option value="">Alle</option>
+                {gir_options}
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>&nbsp;</label>
+            <label style="font-size: 0.85em; text-transform: none; letter-spacing: normal; cursor: pointer;">
+                <input type="checkbox" name="skjul_solgt" value="1" {skjul_checked}> Skjul solgt
+            </label>
+        </div>
+        <div class="filter-group">
+            <label>&nbsp;</label>
+            <button type="submit" class="btn">Filtrer</button>
+        </div>
+    </form>
+    """
+
+    if not rows:
+        html += '<p class="no-data">Ingen annonser matcher filtrene.</p>'
+        return render_page("detaljer", html)
+
+    html += """
     <table>
         <thead>
             <tr>
-                <th>Finnkode</th>
-                <th>Annonse</th>
-                <th>Modell</th>
-                <th>Km</th>
-                <th>Pris</th>
-                <th>Laveste</th>
-                <th>Høyeste</th>
-                <th>Pris/km</th>
-                <th>Prutet 12%</th>
-                <th>Prutet 13%</th>
-                <th>Score</th>
-                <th>Type</th>
-                <th>Girkasse</th>
+                <th class="sortable" data-sort="number">Finnkode</th>
+                <th class="sortable">Annonse</th>
+                <th class="sortable" data-sort="number">Modell</th>
+                <th class="sortable" data-sort="number">Km</th>
+                <th class="sortable" data-sort="number">Pris</th>
+                <th class="sortable" data-sort="number">Laveste</th>
+                <th class="sortable" data-sort="number">Høyeste</th>
+                <th class="sortable" data-sort="number">Pris/km</th>
+                <th class="sortable" data-sort="number">Prutet 12%</th>
+                <th class="sortable" data-sort="number">Prutet 13%</th>
+                <th class="sortable" data-sort="number">Score</th>
+                <th class="sortable">Type</th>
+                <th class="sortable">Girkasse</th>
             </tr>
         </thead>
         <tbody>
@@ -877,10 +1168,14 @@ def view_detaljer():
     for r in rows:
         score_html = f"{r['KjopsScore']}" if r["KjopsScore"] is not None else "—"
         priskm_html = f"{r['PrisPerKm']}" if r["PrisPerKm"] is not None else "—"
+        is_sold = "solgt" in str(r.get("Pris", "")).lower() or "fjernet" in str(r.get("Pris", "")).lower()
+        row_class = ' class="sold"' if is_sold else ""
+        sold_badge = '<span class="sold-badge">Solgt</span>' if is_sold else ""
+        ny_badge = '<span class="new-badge">NY</span>' if r.get("ErNy") and not is_sold else ""
         html += f"""
-            <tr>
+            <tr{row_class}>
                 <td><a href="{r['FinnURL']}" target="_blank">{r['Finnkode']}</a></td>
-                <td class="truncate">{r['Annonsenavn'] or ''}</td>
+                <td class="truncate">{r['Annonsenavn'] or ''}{sold_badge}{ny_badge}</td>
                 <td>{r['Modell'] or ''}</td>
                 <td>{r.get('Kilometerstand', '')}</td>
                 <td>{r['NaaverendePris']}</td>
@@ -896,21 +1191,23 @@ def view_detaljer():
         """
     html += "</tbody></table>"
 
-    # Paginering
+    # Paginering med filter-params bevart
     total_pages = (total + per_page - 1) // per_page
+    fqs = filter_qs()
+    fqs_amp = f"&{fqs}" if fqs else ""
     if total_pages > 1:
         html += '<div class="pagination">'
         if page > 1:
-            html += f'<a href="detaljer?page={page - 1}">Forrige</a>'
+            html += f'<a href="detaljer?page={page - 1}{fqs_amp}">Forrige</a>'
         for p in range(1, total_pages + 1):
             if p == page:
                 html += f'<span class="current">{p}</span>'
             elif abs(p - page) <= 3 or p == 1 or p == total_pages:
-                html += f'<a href="detaljer?page={p}">{p}</a>'
+                html += f'<a href="detaljer?page={p}{fqs_amp}">{p}</a>'
             elif abs(p - page) == 4:
                 html += '<span>...</span>'
         if page < total_pages:
-            html += f'<a href="detaljer?page={page + 1}">Neste</a>'
+            html += f'<a href="detaljer?page={page + 1}{fqs_amp}">Neste</a>'
         html += '</div>'
 
     return render_page("detaljer", html)
