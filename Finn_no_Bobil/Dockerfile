@@ -2,7 +2,7 @@ ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
 LABEL maintainer="Kristian Kaldager <kaldager.kristian@gmail.com>"
-LABEL io.hass.version="0.58"
+LABEL io.hass.version="0.59"
 
 RUN apk add --no-cache python3 py3-pip
 
@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir -r /requirements.txt
 
 # Kopier rootfs (S6-overlay konfigurasjon)
 COPY rootfs /
+RUN chmod +x /etc/s6-overlay/s6-rc.d/bobil/run /etc/s6-overlay/s6-rc.d/bobil/finish
 
 # Kopier skript
 COPY bobil_v2.py /usr/bin/bobil_v2.py
