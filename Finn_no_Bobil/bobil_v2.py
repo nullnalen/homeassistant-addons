@@ -373,6 +373,7 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
             ]
             if row:
                 endringer = []
+                pris_endret = False
                 for idx, (gammel, ny) in enumerate(zip(row, nye_verdier)):
                     if felt_navn[idx] == "Pris":
                         try:
@@ -381,17 +382,36 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
                             gammel_int = None
                         if gammel_int != ny:
                             endringer.append(f"{felt_navn[idx]}: {gammel_int} -> {ny}")
+                            pris_endret = True
                     else:
                         if str(gammel) != str(ny):
                             endringer.append(f"{felt_navn[idx]}: '{gammel}' -> '{ny}'")
                 if endringer:
                     endrede_annonser += 1
                     logger.info(f"[{mode}] Endringer for Finnkode {finnkode}: {', '.join(endringer)}")
+                    # Logg prisendring til prisendringer-tabellen
+                    if pris_endret and not dry_run:
+                        try:
+                            cursor.execute(
+                                "INSERT INTO prisendringer (Finnkode, Pris) VALUES (%s, %s)",
+                                (finnkode, ny_pris_int)
+                            )
+                        except Exception as e:
+                            logger.error(f"Feil ved logging av prisendring for {finnkode}: {e}")
                 else:
                     uendrede_annonser += 1
             else:
                 nye_annonser += 1
                 logger.info(f"[{mode}] Ny annonse: Finnkode {finnkode} — {ad['Annonsenavn']} ({normalize_and_format_price(ad['Pris'])})")
+                # Logg første pris til prisendringer-tabellen
+                if not dry_run:
+                    try:
+                        cursor.execute(
+                            "INSERT INTO prisendringer (Finnkode, Pris) VALUES (%s, %s)",
+                            (finnkode, ny_pris_int)
+                        )
+                    except Exception as e:
+                        logger.error(f"Feil ved logging av første pris for {finnkode}: {e}")
 
             if not dry_run:
                 query = """
