@@ -147,8 +147,8 @@ def get_prisendringer():
         cur.execute("""
             SELECT b.Finnkode, b.Annonsenavn, b.Modell, b.Pris,
                    COUNT(p.Pris) AS AntallEndringer,
-                   MIN(p.Pris) AS LavestePris,
-                   MAX(p.Pris) AS HoyestePris,
+                   MIN(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED)) AS LavestePris,
+                   MAX(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED)) AS HoyestePris,
                    b.URL
             FROM bobil b
             JOIN prisendringer p ON b.Finnkode = p.Finnkode
@@ -178,10 +178,10 @@ def get_kjopsscore():
         cur = conn.cursor(dictionary=True)
         cur.execute("""
             SELECT b.Finnkode, b.Annonsenavn, b.Modell, b.Pris, b.Kilometerstand,
-                   b.Oppdatert, b.Beskrivelse, b.Annonsenavn AS Tittel,
+                   b.Oppdatert, b.Beskrivelse,
                    COUNT(p.Pris) AS AntallEndringer,
-                   MIN(p.Pris) AS LavestePris,
-                   MAX(p.Pris) AS HoyestePris
+                   MIN(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED)) AS LavestePris,
+                   MAX(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED)) AS HoyestePris
             FROM bobil b
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
             WHERE b.Pris NOT LIKE %s
@@ -196,7 +196,8 @@ def get_kjopsscore():
 
         for r in rows:
             pris = parse_price(r["Pris"])
-            hoyeste = parse_price(r["HoyestePris"])
+            hoyeste = r["HoyestePris"]  # Allerede int fra CAST
+            laveste = r["LavestePris"]
             dato = parse_norwegian_date(r["Oppdatert"])
 
             if not pris or not dato:
@@ -206,12 +207,12 @@ def get_kjopsscore():
             if dager > 60:
                 continue
 
-            # Kjøpsscore: prisfall% * dager + 5 * antall endringer
+            # Kjøpsscore: prisfall% * (dager+1) + 5 * antall endringer + dager
             prisfall_pct = 0
             if hoyeste and hoyeste > 0 and hoyeste > pris:
                 prisfall_pct = ((hoyeste - pris) / hoyeste) * 100
 
-            score = round(prisfall_pct * (dager + 1) + r["AntallEndringer"] * 5)
+            score = round(prisfall_pct * (dager + 1) + r["AntallEndringer"] * 5 + dager)
 
             # Søketreff
             tekst = f"{r['Annonsenavn']} {r.get('Beskrivelse', '')}".lower()
@@ -222,7 +223,7 @@ def get_kjopsscore():
                 "Annonsenavn": r["Annonsenavn"],
                 "Modell": r["Modell"],
                 "NaaverendePris": format_price(pris),
-                "LavestePris": format_price(parse_price(r["LavestePris"])),
+                "LavestePris": format_price(laveste),
                 "HoyestePris": format_price(hoyeste),
                 "AntallEndringer": r["AntallEndringer"],
                 "DagerPaaMarkedet": dager,
@@ -296,8 +297,8 @@ def get_sokresultater(keywords_str):
                    b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
                    b.Oppdatert, b.Pris,
                    COUNT(p.Pris) AS AntallEndringer,
-                   MIN(p.Pris) AS LavestePris,
-                   MAX(p.Pris) AS HoyestePris
+                   MIN(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED)) AS LavestePris,
+                   MAX(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED)) AS HoyestePris
             FROM bobil b
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
             WHERE {conditions}
@@ -342,8 +343,8 @@ def get_detaljer(page=1, per_page=50):
                    b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
                    b.Oppdatert, b.Pris, b.URL,
                    COUNT(p.Pris) AS AntallEndringer,
-                   MIN(p.Pris) AS LavestePris,
-                   MAX(p.Pris) AS HoyestePris
+                   MIN(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED)) AS LavestePris,
+                   MAX(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED)) AS HoyestePris
             FROM bobil b
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
             GROUP BY b.Finnkode, b.Annonsenavn, b.Beskrivelse, b.Modell,
