@@ -184,10 +184,10 @@ def get_kjopsscore():
                    MAX(p.Pris) AS HoyestePris
             FROM bobil b
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
-            WHERE b.Pris NOT LIKE '%%Solgt%%'
+            WHERE b.Pris NOT LIKE %s
             GROUP BY b.Finnkode, b.Annonsenavn, b.Modell, b.Pris,
                      b.Kilometerstand, b.Oppdatert, b.Beskrivelse
-        """)
+        """, ("%Solgt%",))
         rows = cur.fetchall()
 
         results = []
@@ -247,18 +247,19 @@ def get_prisutvikling():
         return []
     try:
         cur = conn.cursor(dictionary=True)
-        cur.execute("""
-            SELECT b.Modell,
-                   DATE_FORMAT(p.Tidspunkt, '%%Y-%%m') AS Periode,
-                   ROUND(AVG(p.Pris)) AS GjSnittPris,
-                   COUNT(*) AS Antall
-            FROM prisendringer p
-            JOIN bobil b ON p.Finnkode = b.Finnkode
-            WHERE b.Modell IS NOT NULL
-              AND p.Pris NOT LIKE '%%Solgt%%'
-            GROUP BY b.Modell, DATE_FORMAT(p.Tidspunkt, '%%Y-%%m')
-            ORDER BY b.Modell DESC, Periode
-        """)
+        cur.execute(
+            "SELECT b.Modell,"
+            " DATE_FORMAT(p.Tidspunkt, %s) AS Periode,"
+            " ROUND(AVG(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED))) AS GjSnittPris,"
+            " COUNT(*) AS Antall"
+            " FROM prisendringer p"
+            " JOIN bobil b ON p.Finnkode = b.Finnkode"
+            " WHERE b.Modell IS NOT NULL"
+            " AND p.Pris NOT LIKE %s"
+            " GROUP BY b.Modell, DATE_FORMAT(p.Tidspunkt, %s)"
+            " ORDER BY b.Modell DESC, Periode",
+            ("%Y-%m", "%Solgt%", "%Y-%m")
+        )
         rows = cur.fetchall()
         for r in rows:
             r["GjSnittPrisF"] = format_price(parse_price(r["GjSnittPris"]))
