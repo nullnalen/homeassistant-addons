@@ -1,0 +1,17 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Finn.no Bobil Add-on: Starter webserver og scraper
+# ==============================================================================
+
+bashio::log.info "Starter Finn.no Bobil add-on..."
+
+mkdir -p /data
+
+# Eksporter konfigurasjonen fra options.json som miljøvariabler
+export SUPERVISOR_OPTIONS=$(</data/options.json)
+
+bashio::log.info "Starter webserver på port 8100..."
+
+# Start Python-webapplikasjonen
+exec python3 -u /usr/bin/bobil_web.py

@@ -474,5 +474,10 @@ async def main() -> None:
     logger.info("Avslutter script...")
 
 
-if __name__ == "__main__":
+def run_scraper():
+    """Wrapper for å kjøre scraperen. Kan kalles fra bobil_web.py."""
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    run_scraper()

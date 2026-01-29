@@ -1,3 +1,5 @@
 aiohttp
 beautifulsoup4
 mysql-connector-python
+flask
+waitress

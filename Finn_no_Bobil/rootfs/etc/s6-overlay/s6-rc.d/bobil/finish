@@ -1,0 +1,12 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Finn.no Bobil Add-on: Håndterer avslutning
+# ==============================================================================
+
+bashio::log.info "Bobil add-on avsluttet med kode: ${1}"
+
+if [[ "${1}" -ne 0 ]] && [[ "${1}" -ne 256 ]]; then
+    bashio::log.warning "Bobil krasjet, venter 5 sekunder før restart..."
+    sleep 5
+fi

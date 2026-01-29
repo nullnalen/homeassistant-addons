@@ -1,8 +1,8 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.19
-FROM $BUILD_FROM
+ARG BUILD_FROM
+FROM ${BUILD_FROM}
 
 LABEL maintainer="Kristian Kaldager <kaldager.kristian@gmail.com>"
-LABEL io.hass.version="0.57"
+LABEL io.hass.version="0.58"
 
 RUN apk add --no-cache python3 py3-pip
 
@@ -14,14 +14,15 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY requirements.txt /
 RUN pip install --no-cache-dir -r /requirements.txt
 
-# Kopier skript og kjørefiler
-COPY bobil_v2.py /
-COPY run.sh /
+# Kopier rootfs (S6-overlay konfigurasjon)
+COPY rootfs /
+
+# Kopier skript
+COPY bobil_v2.py /usr/bin/bobil_v2.py
+COPY bobil_web.py /usr/bin/bobil_web.py
+RUN chmod +x /usr/bin/bobil_v2.py /usr/bin/bobil_web.py
+
 RUN mkdir -p /data
 
-# Gjør run.sh kjørbar
-RUN chmod a+x /run.sh
-
-# Start add-on
-CMD [ "/run.sh" ]
-
+# Eksponer ingress-port
+EXPOSE 8100
