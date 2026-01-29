@@ -1,6 +1,6 @@
 name: "Finn no Bobil"
 description: "Addon traverserer finn på jakt etter bobiler og lagrer historikk i database"
-version: "0.53"
+version: "0.54"
 slug: "finn_no_bobil"
 init: false
 arch:
@@ -16,12 +16,22 @@ options:
   databasepassword: "database password"
   databasename: "database name"
   databaseport: "database port"
+  dry_run: false
   price_from: 300000
   price_to: 700000
   mileage_to: 122000
   year_from: 2006
   no_of_sleepers_from: 4
   weight_to: 3501
+  # Finn.no lokasjonskoder (region-ID-er fra finn.no):
+  #   22042 = Agder
+  #   20003 = Akershus
+  #   20007 = Buskerud
+  #   22034 = Innlandet
+  #   20061 = Oslo
+  #   20009 = Telemark
+  #   20008 = Vestfold
+  #   20002 = Østfold
   locations:
     - "22042"
     - "20003"
@@ -31,6 +41,10 @@ options:
     - "20009"
     - "20008"
     - "20002"
+  # Bobilsegmenter på finn.no:
+  #   1 = Integrert
+  #   2 = Delintegrert
+  #   3 = Alkove
   mobile_home_segments:
     - 1
     - 2
@@ -42,6 +56,7 @@ schema:
   databasepassword: "str"
   databasename: "str"
   databaseport: "str"
+  dry_run: "bool"
   price_from: "int"
   price_to: "int"
   mileage_to: "int"

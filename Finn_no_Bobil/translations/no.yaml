@@ -1,0 +1,64 @@
+configuration:
+  databasehost:
+    name: Databasevert
+    description: >-
+      Vertsnavn eller IP-adresse til MySQL/MariaDB-serveren.
+  databaseusername:
+    name: Databasebrukernavn
+    description: >-
+      Brukernavn for databasetilkoblingen.
+  databasepassword:
+    name: Databasepassord
+    description: >-
+      Passord for databasetilkoblingen.
+  databasename:
+    name: Databasenavn
+    description: >-
+      Navnet på databasen som inneholder bobil-tabellen.
+  databaseport:
+    name: Databaseport
+    description: >-
+      Port for MySQL-tilkobling (standard: 3306).
+  dry_run:
+    name: Testkjøring
+    description: >-
+      Når aktivert henter addonet data og sammenligner med databasen,
+      men skriver ingen endringer. Nyttig for testing.
+  price_from:
+    name: Minimumspris (kr)
+    description: >-
+      Laveste pris i norske kroner for søket.
+  price_to:
+    name: Maksimumspris (kr)
+    description: >-
+      Høyeste pris i norske kroner for søket.
+  mileage_to:
+    name: Maks kilometerstand
+    description: >-
+      Maksimum kilometerstand.
+  year_from:
+    name: Tidligste årsmodell
+    description: >-
+      Tidligste årsmodell som inkluderes i søket.
+  no_of_sleepers_from:
+    name: Minimum soveplasser
+    description: >-
+      Minimum antall soveplasser.
+  weight_to:
+    name: Maks vekt (kg)
+    description: >-
+      Maksimum totalvekt i kilogram.
+  locations:
+    name: Lokasjoner
+    description: >-
+      Liste med finn.no-regionkoder. Se dokumentasjonsfanen for komplett
+      liste over koder og tilhørende regioner.
+  mobile_home_segments:
+    name: Bobilsegmenter
+    description: >-
+      Bobiltyper å søke etter: 1 = Integrert, 2 = Delintegrert,
+      3 = Alkove.
+  sort:
+    name: Sortering
+    description: >-
+      Sorteringsrekkefølge (f.eks. YEAR_DESC, PRICE_ASC, PRICE_DESC).

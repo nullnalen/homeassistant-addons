@@ -65,6 +65,7 @@ def build_search_url(opts: dict) -> str:
     return f"{FINN_API_BASE}?{urlencode(params)}"
 
 LISTINGS_PAGE_URL = build_search_url(options)
+DRY_RUN = options.get("dry_run", False)
 DATE_FORMAT = "%d. %b. %Y %H:%M"
 
 DB_CONFIG = {
@@ -300,22 +301,36 @@ def format_kilometerstand(km: str) -> str:
         logger.error(f"Feil ved formatering av kilometerstand: {e}")
         return "Ukjent"
 
-def update_database(ads: list[dict]) -> None:
+def update_database(ads: list[dict], dry_run: bool = False) -> None:
     """
     Oppdater database med annonser.
     Logger eksplisitt hvis noen felt endres.
-    Pris lagres nå som int i databasen.
-    Merk: For asynkron database, vurder aiomysql eller lignende bibliotek.
+    Pris lagres som int i databasen.
+
+    Hvis dry_run=True: kobler til DB og leser eksisterende data for sammenligning,
+    men utfører ingen INSERT/UPDATE. Logger hva som ville blitt endret.
     """
-    logger.info("Starter databaseoppdatering for %d annonser.", len(ads))
+    mode = "DRY RUN" if dry_run else "LIVE"
+    logger.info(f"[{mode}] Starter databaseoppdatering for {len(ads)} annonser.")
+
     conn = connect_to_database()
     if not conn:
+        if dry_run:
+            logger.warning("[DRY RUN] Ingen DB-tilkobling — kan ikke sammenligne med eksisterende data.")
+            _log_dry_run_summary(ads)
+            return
         logger.error("Ingen tilkobling til databasen. Avbryter oppdatering.")
         return
+
     try:
         cursor = conn.cursor()
         if not ads:
             logger.warning("Ingen annonser å oppdatere i databasen.")
+
+        nye_annonser = 0
+        endrede_annonser = 0
+        uendrede_annonser = 0
+
         for ad in ads:
             finnkode = ad["Finnkode"]
             ny_pris_int = normalize_and_format_price(ad["Pris"], output_format=False)
@@ -359,44 +374,55 @@ def update_database(ads: list[dict]) -> None:
                         if str(gammel) != str(ny):
                             endringer.append(f"{felt_navn[idx]}: '{gammel}' -> '{ny}'")
                 if endringer:
-                    logger.info(f"Endringer for Finnkode {finnkode}: {', '.join(endringer)}")
+                    endrede_annonser += 1
+                    logger.info(f"[{mode}] Endringer for Finnkode {finnkode}: {', '.join(endringer)}")
+                else:
+                    uendrede_annonser += 1
             else:
-                logger.info(f"Ny annonse lagres med Finnkode {finnkode}")
+                nye_annonser += 1
+                logger.info(f"[{mode}] Ny annonse: Finnkode {finnkode} — {ad['Annonsenavn']} ({normalize_and_format_price(ad['Pris'])})")
 
-            query = """
-                INSERT INTO bobil (Finnkode, Annonsenavn, Modell, Kilometerstand, Girkasse, Beskrivelse, Nyttelast, Typebobil, Oppdatert, URL, Pris)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    Annonsenavn = VALUES(Annonsenavn),
-                    Modell = VALUES(Modell),
-                    Kilometerstand = VALUES(Kilometerstand),
-                    Girkasse = VALUES(Girkasse),
-                    Beskrivelse = VALUES(Beskrivelse),
-                    Nyttelast = VALUES(Nyttelast),
-                    Typebobil = VALUES(Typebobil),
-                    Oppdatert = VALUES(Oppdatert),
-                    URL = VALUES(URL),
-                    Pris = VALUES(Pris)
-            """
-            data = (
-                finnkode,
-                ad["Annonsenavn"],
-                ad["Modell"],
-                format_kilometerstand(ad["Kilometerstand"]),
-                ad["Detaljer"].get("Girkasse", "Ikke oppgitt"),
-                ad["Detaljer"].get("Beskrivelse", "Ikke tilgjengelig"),
-                ad["Detaljer"].get("Nyttelast", "Ikke oppgitt"),
-                ad["Detaljer"].get("Type bobil", "Ikke oppgitt"),
-                ad["Oppdatert"],
-                ad["URL"],
-                ny_pris_int
-            )
-            try:
-                cursor.execute(query, data)
-            except Exception as e:
-                logger.error(f"Feil ved lagring av annonse {finnkode}: {e}")
-        conn.commit()
-        logger.info(f"Lagret {len(ads)} annonser i databasen.")
+            if not dry_run:
+                query = """
+                    INSERT INTO bobil (Finnkode, Annonsenavn, Modell, Kilometerstand, Girkasse, Beskrivelse, Nyttelast, Typebobil, Oppdatert, URL, Pris)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        Annonsenavn = VALUES(Annonsenavn),
+                        Modell = VALUES(Modell),
+                        Kilometerstand = VALUES(Kilometerstand),
+                        Girkasse = VALUES(Girkasse),
+                        Beskrivelse = VALUES(Beskrivelse),
+                        Nyttelast = VALUES(Nyttelast),
+                        Typebobil = VALUES(Typebobil),
+                        Oppdatert = VALUES(Oppdatert),
+                        URL = VALUES(URL),
+                        Pris = VALUES(Pris)
+                """
+                data = (
+                    finnkode,
+                    ad["Annonsenavn"],
+                    ad["Modell"],
+                    format_kilometerstand(ad["Kilometerstand"]),
+                    ad["Detaljer"].get("Girkasse", "Ikke oppgitt"),
+                    ad["Detaljer"].get("Beskrivelse", "Ikke tilgjengelig"),
+                    ad["Detaljer"].get("Nyttelast", "Ikke oppgitt"),
+                    ad["Detaljer"].get("Type bobil", "Ikke oppgitt"),
+                    ad["Oppdatert"],
+                    ad["URL"],
+                    ny_pris_int
+                )
+                try:
+                    cursor.execute(query, data)
+                except Exception as e:
+                    logger.error(f"Feil ved lagring av annonse {finnkode}: {e}")
+
+        if not dry_run:
+            conn.commit()
+
+        logger.info(
+            f"[{mode}] Oppsummering: {nye_annonser} nye, {endrede_annonser} endret, "
+            f"{uendrede_annonser} uendret av {len(ads)} annonser."
+        )
     except mysql.connector.Error as err:
         logger.error(f"Feil ved databaseoppdatering: {err}")
     except Exception as e:
@@ -404,11 +430,25 @@ def update_database(ads: list[dict]) -> None:
     finally:
         conn.close()
 
+
+def _log_dry_run_summary(ads: list[dict]) -> None:
+    """Logg en oppsummering av hentet data når DB ikke er tilgjengelig i dry_run."""
+    logger.info(f"[DRY RUN] Hentet {len(ads)} annonser fra FINN:")
+    for ad in ads[:5]:
+        logger.info(
+            f"  {ad['Finnkode']} — {ad['Annonsenavn']} — "
+            f"{normalize_and_format_price(ad['Pris'])} — {ad['Modell']}"
+        )
+    if len(ads) > 5:
+        logger.info(f"  ... og {len(ads) - 5} til.")
+
 async def main() -> None:
     """
     Hovedfunksjon for scriptet.
     """
     logger.info("Starter script...")
+    if DRY_RUN:
+        logger.info("*** DRY RUN MODUS — ingen data vil bli skrevet til databasen ***")
     logger.info(f"Søke-URL: {LISTINGS_PAGE_URL}")
     async with aiohttp.ClientSession() as session:
         ads_data = await fetch_all_pages(session, LISTINGS_PAGE_URL)
@@ -418,7 +458,7 @@ async def main() -> None:
 
         detailed_ads = await fetch_and_combine_data(session, ads_data)
 
-        update_database(detailed_ads)
+        update_database(detailed_ads, dry_run=DRY_RUN)
 
     logger.info("Avslutter script...")
 

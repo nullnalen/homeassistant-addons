@@ -1,0 +1,64 @@
+configuration:
+  databasehost:
+    name: Database Host
+    description: >-
+      Hostname or IP address of the MySQL/MariaDB server.
+  databaseusername:
+    name: Database Username
+    description: >-
+      Username for the database connection.
+  databasepassword:
+    name: Database Password
+    description: >-
+      Password for the database connection.
+  databasename:
+    name: Database Name
+    description: >-
+      Name of the database containing the bobil table.
+  databaseport:
+    name: Database Port
+    description: >-
+      Port for the MySQL connection (default: 3306).
+  dry_run:
+    name: Dry Run
+    description: >-
+      When enabled, the addon fetches data and compares with the database
+      but does not write any changes. Useful for testing.
+  price_from:
+    name: Minimum Price (NOK)
+    description: >-
+      Minimum price in Norwegian kroner for the search.
+  price_to:
+    name: Maximum Price (NOK)
+    description: >-
+      Maximum price in Norwegian kroner for the search.
+  mileage_to:
+    name: Maximum Mileage (km)
+    description: >-
+      Maximum mileage in kilometers.
+  year_from:
+    name: Earliest Model Year
+    description: >-
+      Earliest model year to include in the search.
+  no_of_sleepers_from:
+    name: Minimum Sleeper Berths
+    description: >-
+      Minimum number of sleeping berths.
+  weight_to:
+    name: Maximum Weight (kg)
+    description: >-
+      Maximum total weight in kilograms.
+  locations:
+    name: Locations
+    description: >-
+      List of finn.no region codes. See the documentation tab for a
+      complete list of codes and their regions.
+  mobile_home_segments:
+    name: Mobile Home Segments
+    description: >-
+      Mobile home types to search for: 1 = Integrated, 2 = Semi-integrated,
+      3 = Alcove.
+  sort:
+    name: Sort Order
+    description: >-
+      Sort order for search results (e.g. YEAR_DESC, PRICE_ASC, PRICE_DESC).
