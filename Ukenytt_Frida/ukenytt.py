@@ -8,10 +8,12 @@ Mottar ukenytt-PDF-filer via HTTP og konverterer dem til Home Assistant sensorer
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 
 import pandas as pd
+import pdfplumber
 import requests
 import tabula
 from flask import Flask, jsonify, request, render_template_string
@@ -38,11 +40,30 @@ try:
 except (json.JSONDecodeError, TypeError):
     CHILDREN = ["Barn1"]
 
+# Versjon - MÅ holdes synkronisert med config.yaml og Dockerfile
+ADDON_VERSION = "1.0.18"
+
+# Konstanter
+MAX_INFO_LENGTH = 500
+MAX_PDF_SIZE = 10 * 1024 * 1024  # 10 MB
+WEEKDAYS = ["Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag"]
+WEEKDAYS_LOWER = ["mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag", "søndag"]
+
 # Mappe for lagring av PDF-filer
 DATA_DIR = Path("/data/ukenytt")
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 app = Flask(__name__)
+
+
+def _safe_sensor_name(child_name: str) -> str:
+    """Genererer sensornavn-vennlig streng (kun alfanumerisk og _)."""
+    return "".join(c for c in child_name.lower() if c.isalnum() or c in "_")
+
+
+def _safe_file_name(child_name: str) -> str:
+    """Genererer filnavn-vennlig streng (alfanumerisk, - og _)."""
+    return "".join(c for c in child_name.lower() if c.isalnum() or c in "-_")
 
 
 # HTML-mal for Ingress-visning
@@ -233,8 +254,7 @@ INGRESS_TEMPLATE = """
 
 def get_child_data(child_name: str) -> dict:
     """Henter lagret data for et barn fra sensor eller fil."""
-    safe_name = "".join(c for c in child_name.lower() if c.isalnum() or c in "_")
-    sensor_name = f"sensor.{safe_name}_ukenytt_tabell"
+    sensor_name = f"sensor.{_safe_sensor_name(child_name)}_ukenytt_tabell"
     url = f"{HA_URL}/api/states/{sensor_name}"
 
     headers = {
@@ -256,8 +276,7 @@ def get_child_data(child_name: str) -> dict:
         pass
 
     # Hent full info fra fil hvis tilgjengelig
-    safe_name_file = "".join(c for c in child_name.lower() if c.isalnum() or c in "-_")
-    info_path = DATA_DIR / f"{safe_name_file}_info.txt"
+    info_path = DATA_DIR / f"{_safe_file_name(child_name)}_info.txt"
     if info_path.exists():
         data["info"] = info_path.read_text(encoding="utf-8")
 
@@ -309,8 +328,25 @@ def api_index():
 
 def get_pdf_path(child_name: str) -> Path:
     """Returnerer stien til PDF-filen for et barn."""
-    safe_name = "".join(c for c in child_name.lower() if c.isalnum() or c in "-_")
-    return DATA_DIR / f"{safe_name}.pdf"
+    return DATA_DIR / f"{_safe_file_name(child_name)}.pdf"
+
+
+def _get_original_filename_path(child_name: str) -> Path:
+    """Returnerer stien til filen som lagrer det originale filnavnet."""
+    return DATA_DIR / f"{_safe_file_name(child_name)}_filename.txt"
+
+
+def save_original_filename(child_name: str, filename: str) -> None:
+    """Lagrer originalt filnavn for bruk ved reprocessing."""
+    _get_original_filename_path(child_name).write_text(filename, encoding="utf-8")
+
+
+def get_original_filename(child_name: str) -> str | None:
+    """Henter lagret originalt filnavn."""
+    path = _get_original_filename_path(child_name)
+    if path.exists():
+        return path.read_text(encoding="utf-8").strip()
+    return None
 
 
 def parse_pdf(file_path: Path) -> tuple[dict, list]:
@@ -323,7 +359,7 @@ def parse_pdf(file_path: Path) -> tuple[dict, list]:
         # Bruk java_options for å unngå JPype (subprocess-modus)
         tables = tabula.read_pdf(
             str(file_path), pages=1, multiple_tables=True, stream=True,
-            java_options=None  # Tvinger subprocess-modus
+            java_options=["-Xmx256m"]
         )
     except Exception as e:
         logger.error("Feil ved lesing av PDF: %s", e)
@@ -336,7 +372,7 @@ def parse_pdf(file_path: Path) -> tuple[dict, list]:
     if df.empty:
         raise ValueError("Tabellen i PDF-en er tom")
 
-    ordered_weekdays = ["Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag"]
+    ordered_weekdays = WEEKDAYS
     indices = {day: df[df.iloc[:, 0] == day].index.min() for day in ordered_weekdays}
     last_index = len(df) - 1
 
@@ -362,14 +398,13 @@ def parse_pdf(file_path: Path) -> tuple[dict, list]:
 def extract_pdf_text(file_path: Path) -> str:
     """Leser all tekst fra PDF-en (inkludert overskrifter og tekst utenfor tabeller)."""
     try:
-        import pdfplumber
         with pdfplumber.open(str(file_path)) as pdf:
             text = ""
             for page in pdf.pages:
                 text += page.extract_text() or ""
             return text
     except Exception as e:
-        logger.warning("Kunne ikke lese PDF-tekst med pdfplumber: %s", e)
+        logger.warning("Kunne ikke lese PDF-tekst med pdfplumber for %s: %s", file_path.name, e, exc_info=True)
         return ""
 
 
@@ -379,7 +414,6 @@ def extract_week_number(file_path: Path, pdf_tables: list = None, pdf_text: str 
     Prøver først filnavn (f.eks. 'uke 4.pdf', 'uke4.pdf', 'Ukenytt_uke_5.pdf'),
     deretter søker i PDF-teksten (overskrifter) etter 'Uke XX' mønster.
     """
-    import re
 
     logger.info("Ekstraherer ukenummer fra fil: %s", file_path.name)
 
@@ -420,7 +454,6 @@ def extract_week_number(file_path: Path, pdf_tables: list = None, pdf_text: str 
 
 def extract_extra_text(pdf_text: str) -> str:
     """Ekstraherer tekst som kommer etter tabellen (informasjon, beskjeder etc)."""
-    import re
 
     if not pdf_text:
         return ""
@@ -430,7 +463,7 @@ def extract_extra_text(pdf_text: str) -> str:
     extra_lines = []
     past_table = False
 
-    weekdays = ['mandag', 'tirsdag', 'onsdag', 'torsdag', 'fredag', 'lørdag', 'søndag']
+    weekdays = WEEKDAYS_LOWER
 
     for line in lines:
         line_lower = line.lower().strip()
@@ -451,8 +484,7 @@ def extract_extra_text(pdf_text: str) -> str:
 
 def save_info_file(child_name: str, info_text: str) -> Path:
     """Lagrer full info-tekst til fil for et barn."""
-    safe_name = "".join(c for c in child_name.lower() if c.isalnum() or c in "-_")
-    info_path = DATA_DIR / f"{safe_name}_info.txt"
+    info_path = DATA_DIR / f"{_safe_file_name(child_name)}_info.txt"
     info_path.write_text(info_text, encoding="utf-8")
     logger.info("Lagret info-tekst til %s (%d tegn)", info_path, len(info_text))
     return info_path
@@ -469,8 +501,7 @@ def update_home_assistant_sensor(
     child_name: str, data: dict, week_number: str, extra_text: str = ""
 ) -> bool:
     """Oppdaterer Home Assistant sensor for et barn."""
-    safe_name = "".join(c for c in child_name.lower() if c.isalnum() or c in "_")
-    sensor_name = f"sensor.{safe_name}_ukenytt_tabell"
+    sensor_name = f"sensor.{_safe_sensor_name(child_name)}_ukenytt_tabell"
     url = f"{HA_URL}/api/states/{sensor_name}"
 
     headers = {
@@ -482,10 +513,10 @@ def update_home_assistant_sensor(
     info_truncated = None
     has_full_info = False
     if extra_text:
-        if len(extra_text) > 500:
+        if len(extra_text) > MAX_INFO_LENGTH:
             # Lagre full tekst til fil
             save_info_file(child_name, extra_text)
-            info_truncated = truncate_text(extra_text, 500)
+            info_truncated = truncate_text(extra_text, MAX_INFO_LENGTH)
             has_full_info = True
         else:
             info_truncated = extra_text
@@ -535,9 +566,9 @@ def process_pdf_for_child(child_name: str, original_filename: str = None) -> tup
         pdf_text = extract_pdf_text(pdf_path)
 
         # Bruk originalt filnavn for ukenummer hvis tilgjengelig
-        if original_filename:
-            from pathlib import Path as P
-            week_number = extract_week_number(P(original_filename), tables, pdf_text)
+        effective_filename = original_filename or get_original_filename(child_name)
+        if effective_filename:
+            week_number = extract_week_number(Path(effective_filename), tables, pdf_text)
         else:
             week_number = extract_week_number(pdf_path, tables, pdf_text)
 
@@ -617,6 +648,10 @@ def upload_pdf():
         logger.info("Mottatt fil med originalnavn: %s", original_filename)
         file_data = file.read()
 
+    # Valider filstørrelse
+    if len(file_data) > MAX_PDF_SIZE:
+        return jsonify({"error": f"Filen er for stor ({len(file_data)} bytes). Maks {MAX_PDF_SIZE} bytes."}), 400
+
     # Valider at det er en PDF
     if not file_data.startswith(b"%PDF"):
         return jsonify({"error": "Ugyldig filformat - må være PDF"}), 400
@@ -627,6 +662,8 @@ def upload_pdf():
 
     try:
         pdf_path.write_bytes(file_data)
+        if original_filename:
+            save_original_filename(child_name, original_filename)
         logger.info("PDF lagret for %s: %s", child_name, pdf_path)
     except IOError as e:
         logger.error("Kunne ikke lagre fil: %s", e)
@@ -655,7 +692,15 @@ def process_existing():
 
     Query-parametere:
         child: Navn på barnet (valgfritt - prosesserer alle hvis ikke angitt)
+        api_key: API-nøkkel for autentisering (påkrevd hvis konfigurert)
     """
+    # Sjekk API-nøkkel hvis konfigurert
+    if API_KEY:
+        provided_key = request.args.get("api_key") or request.headers.get("X-API-Key")
+        if provided_key != API_KEY:
+            logger.warning("Ugyldig API-nøkkel forsøk på /process fra %s", request.remote_addr)
+            return jsonify({"error": "Ugyldig API-nøkkel"}), 401
+
     child_name = request.args.get("child", "").strip()
 
     if child_name:
@@ -685,8 +730,7 @@ def status():
     status_info = {}
     for child in CHILDREN:
         pdf_path = get_pdf_path(child)
-        safe_name = "".join(c for c in child.lower() if c.isalnum() or c in "-_")
-        info_path = DATA_DIR / f"{safe_name}_info.txt"
+        info_path = DATA_DIR / f"{_safe_file_name(child)}_info.txt"
         status_info[child] = {
             "has_pdf": pdf_path.exists(),
             "pdf_size": pdf_path.stat().st_size if pdf_path.exists() else None,
@@ -707,8 +751,7 @@ def get_info(child_name: str):
     child_index = children_lower.index(child_name.lower())
     child_name = CHILDREN[child_index]
 
-    safe_name = "".join(c for c in child_name.lower() if c.isalnum() or c in "-_")
-    info_path = DATA_DIR / f"{safe_name}_info.txt"
+    info_path = DATA_DIR / f"{_safe_file_name(child_name)}_info.txt"
 
     if not info_path.exists():
         return jsonify({"error": f"Ingen info-fil funnet for {child_name}"}), 404
@@ -723,7 +766,7 @@ def get_info(child_name: str):
 
 def startup_process():
     """Kjører ved oppstart - prosesserer eksisterende PDFer."""
-    logger.info("Starter Ukenytt add-on v1.0.0")
+    logger.info("Starter Ukenytt add-on v%s", ADDON_VERSION)
     logger.info("Konfigurerte barn: %s", CHILDREN)
     logger.info("Data-mappe: %s", DATA_DIR)
     logger.info("Home Assistant URL: %s", HA_URL)

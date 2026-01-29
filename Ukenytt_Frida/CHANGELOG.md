@@ -5,6 +5,23 @@ Alle vesentlige endringer i dette prosjektet vil bli dokumentert i denne filen.
 Formatet er basert på [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 og prosjektet følger [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.18] - 2026-01-29
+
+### Forbedret
+- Versjonsnummer vises nå korrekt i oppstartslogg (var hardkodet til v1.0.0)
+- Refaktorert duplisert safe_name-logikk til hjelpefunksjoner
+- Flyttet alle import-setninger til toppen av filen
+- Fjernet unødvendig re-import av Path i process_pdf_for_child
+- Bedre feillogging i extract_pdf_text() — inkluderer filnavn og full stack trace
+
+### Lagt til
+- Filstørrelsevalidering ved PDF-opplasting (maks 10 MB)
+- API-nøkkelsjekk på /process-endepunktet (manglet tidligere)
+- JVM-minnegrense (-Xmx256m) for tabula-py
+- Originalt filnavn lagres til disk — ukenummer beholdes ved reprocessing
+- pdfplumber eksplisitt i requirements.txt
+- Konstanter for magiske verdier (MAX_INFO_LENGTH, MAX_PDF_SIZE, WEEKDAYS)
+
 ## [1.0.0] - 2026-01-27
 
 ### Endret
