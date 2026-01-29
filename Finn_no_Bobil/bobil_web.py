@@ -108,6 +108,28 @@ def format_price(price_int):
     return f"{price_int:,.0f} kr".replace(",", " ")
 
 
+def format_age(date_str):
+    """Formater alder fra norsk datostreng til lesbar tekst som '2 dager siden'."""
+    dato = parse_norwegian_date(date_str)
+    if not dato:
+        return "Ukjent"
+    delta = datetime.now() - dato
+    dager = delta.days
+    if dager == 0:
+        timer = delta.seconds // 3600
+        if timer == 0:
+            return "Nå"
+        return f"{timer}t siden"
+    if dager == 1:
+        return "I går"
+    if dager < 30:
+        return f"{dager} dager"
+    if dager < 365:
+        mnd = dager // 30
+        return f"{mnd} mnd"
+    return f"{dager // 365} år"
+
+
 def get_db():
     """Opprett en ny DB-tilkobling per request."""
     try:
@@ -145,14 +167,14 @@ def get_prisendringer():
     try:
         cur = conn.cursor(dictionary=True)
         cur.execute("""
-            SELECT b.Finnkode, b.Annonsenavn, b.Modell, b.Pris,
+            SELECT b.Finnkode, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert,
                    COUNT(p.Pris) AS AntallEndringer,
                    MIN(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED)) AS LavestePris,
                    MAX(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED)) AS HoyestePris,
                    b.URL
             FROM bobil b
             JOIN prisendringer p ON b.Finnkode = p.Finnkode
-            GROUP BY b.Finnkode, b.Annonsenavn, b.Modell, b.Pris, b.URL
+            GROUP BY b.Finnkode, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert, b.URL
             ORDER BY AntallEndringer DESC
         """)
         rows = cur.fetchall()
@@ -161,6 +183,7 @@ def get_prisendringer():
             r["LavestePrisF"] = format_price(parse_price(r["LavestePris"]))
             r["HoyestePrisF"] = format_price(parse_price(r["HoyestePris"]))
             r["FinnURL"] = f"https://www.finn.no/mobility/item/{r['Finnkode']}"
+            r["Alder"] = format_age(r.get("Oppdatert", ""))
         return rows
     except Exception as e:
         logger.error("Feil i get_prisendringer: %s", e)
@@ -321,6 +344,7 @@ def get_sokresultater(keywords_str):
             r["LavestePrisF"] = format_price(parse_price(r["LavestePris"]))
             r["HoyestePrisF"] = format_price(parse_price(r["HoyestePris"]))
             r["FinnURL"] = f"https://www.finn.no/mobility/item/{r['Finnkode']}"
+            r["Alder"] = format_age(r.get("Oppdatert", ""))
             # Finn hvilke termer som ga treff
             tekst = f"{r['Annonsenavn']} {r.get('Beskrivelse', '')}".lower()
             r["Soketreff"] = ", ".join(t for t in terms if t.lower() in tekst)
@@ -423,6 +447,7 @@ def get_detaljer(page=1, per_page=50, filters=None):
             # Sjekk om annonsen er ny (siste 24 timer)
             dato = parse_norwegian_date(r.get("Oppdatert", ""))
             r["ErNy"] = dato and (now - dato).total_seconds() < 86400
+            r["Alder"] = format_age(r.get("Oppdatert", ""))
 
             # Pris per km
             if pris and km and km > 0:
@@ -894,6 +919,7 @@ def view_prisendringer():
                 <th class="sortable" data-sort="number">Laveste</th>
                 <th class="sortable" data-sort="number">Høyeste</th>
                 <th class="sortable" data-sort="number">Endringer</th>
+                <th class="sortable">Sist sett</th>
             </tr>
         </thead>
         <tbody>
@@ -908,6 +934,7 @@ def view_prisendringer():
                 <td class="price-down">{r['LavestePrisF']}</td>
                 <td class="price-up">{r['HoyestePrisF']}</td>
                 <td><strong>{r['AntallEndringer']}</strong></td>
+                <td>{r['Alder']}</td>
             </tr>
         """
     html += "</tbody></table>"
@@ -1026,6 +1053,7 @@ def view_sok():
                     <th class="sortable" data-sort="number">Endringer</th>
                     <th class="sortable" data-sort="number">Laveste</th>
                     <th class="sortable" data-sort="number">Høyeste</th>
+                    <th class="sortable">Sist sett</th>
                     <th>Treff</th>
                 </tr>
             </thead>
@@ -1047,6 +1075,7 @@ def view_sok():
                     <td>{r['AntallEndringer']}</td>
                     <td class="price-down">{r['LavestePrisF']}</td>
                     <td class="price-up">{r['HoyestePrisF']}</td>
+                    <td>{r['Alder']}</td>
                     <td>{treff_html}</td>
                 </tr>
             """
@@ -1161,6 +1190,7 @@ def view_detaljer():
                 <th class="sortable" data-sort="number">Score</th>
                 <th class="sortable">Type</th>
                 <th class="sortable">Girkasse</th>
+                <th class="sortable">Sist sett</th>
             </tr>
         </thead>
         <tbody>
@@ -1187,6 +1217,7 @@ def view_detaljer():
                 <td class="score">{score_html}</td>
                 <td>{r.get('Typebobil', '')}</td>
                 <td>{r.get('Girkasse', '')}</td>
+                <td>{r['Alder']}</td>
             </tr>
         """
     html += "</tbody></table>"
