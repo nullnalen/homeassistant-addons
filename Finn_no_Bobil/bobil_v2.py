@@ -42,7 +42,30 @@ else:
         logger.error("Ukjent feil ved lasting av SUPERVISOR_OPTIONS: %s", e)
         sys.exit(1)
 
-LISTINGS_PAGE_URL = "https://www.finn.no/mobility/search/api/search/SEARCH_ID_CAR_MOBILE_HOME?location=22042&location=20003&location=20007&location=22034&location=20061&location=20009&location=20008&location=20002&mileage_to=122000&mobile_home_segment=3&mobile_home_segment=1&mobile_home_segment=2&no_of_sleepers_from=4&price_from=300000&price_to=700000&sort=YEAR_DESC&stored-id=65468215&weight_to=3501&year_from=2006"
+FINN_API_BASE = "https://www.finn.no/mobility/search/api/search/SEARCH_ID_CAR_MOBILE_HOME"
+
+def build_search_url(opts: dict) -> str:
+    """
+    Bygg søke-URL fra konfigurerbare parametere.
+    """
+    from urllib.parse import urlencode
+    params = []
+    for loc in opts.get("locations", []):
+        params.append(("location", loc))
+    for seg in opts.get("mobile_home_segments", []):
+        params.append(("mobile_home_segment", seg))
+    params.extend([
+        ("price_from", opts.get("price_from", 300000)),
+        ("price_to", opts.get("price_to", 700000)),
+        ("mileage_to", opts.get("mileage_to", 122000)),
+        ("year_from", opts.get("year_from", 2006)),
+        ("no_of_sleepers_from", opts.get("no_of_sleepers_from", 4)),
+        ("weight_to", opts.get("weight_to", 3501)),
+        ("sort", opts.get("sort", "YEAR_DESC")),
+    ])
+    return f"{FINN_API_BASE}?{urlencode(params)}"
+
+LISTINGS_PAGE_URL = build_search_url(options)
 DATE_FORMAT = "%d. %b. %Y %H:%M"
 
 DB_CONFIG = {
@@ -71,12 +94,29 @@ def connect_to_database() -> mysql.connector.connection.MySQLConnection | None:
 async def fetch_json(session: aiohttp.ClientSession, url: str) -> dict | None:
     """
     Hent JSON-data fra gitt URL.
+    Validerer at responsen inneholder forventet struktur.
     """
     logger.info("Henter JSON fra FINN API...")
     try:
         async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}) as response:
-            response.raise_for_status()
-            return await response.json()
+            if response.status != 200:
+                logger.error(f"FINN API returnerte HTTP {response.status} for {url}")
+                return None
+            data = await response.json()
+            if not isinstance(data, dict):
+                logger.error(f"Uventet responstype fra FINN API: {type(data).__name__} (forventet dict)")
+                return None
+            if "docs" not in data:
+                logger.error(
+                    "FINN API-responsen mangler 'docs'-feltet. "
+                    "API-strukturen kan ha endret seg. "
+                    f"Nøkler i responsen: {list(data.keys())}"
+                )
+                return None
+            return data
+    except aiohttp.ContentTypeError as e:
+        logger.error(f"FINN API returnerte ikke JSON (mulig HTML-feilside): {e}")
+        return None
     except Exception as e:
         logger.error(f"Feil ved henting av JSON fra {url}: {e}")
         return None
@@ -86,7 +126,6 @@ async def fetch_all_pages(session: aiohttp.ClientSession, base_url: str) -> list
     Henter alle sider fra FINN API med paginering.
     """
     all_ads = []
-    page_size = 20
     offset = 0
 
     logger.info("Henter første side med offset 0...")
@@ -95,21 +134,28 @@ async def fetch_all_pages(session: aiohttp.ClientSession, base_url: str) -> list
         logger.error("Kunne ikke hente første side.")
         return []
 
-    # Prøv å hente total_matches, men bruk fallback hvis det er 0
-    total_matches = initial_data.get("metadata", {}).get("total_matches", 0)
+    # Hent totalt antall treff fra metadata
+    metadata = initial_data.get("metadata", {})
+    result_size = metadata.get("result_size", {})
+    total_matches = result_size.get("match_count", 0)
     if total_matches == 0:
         docs = initial_data.get("docs", [])
         if docs:
             total_matches = len(docs)
-            logger.warning(f"metadata['total_matches'] returnerte 0, bruker fallback: {total_matches}")
+            logger.warning(f"match_count ikke funnet i metadata, bruker fallback: {total_matches}")
         else:
             logger.error("Ingen annonser funnet (docs er tom).")
             return []
 
-    logger.info(f"Totalt antall annonser: {total_matches}")
+    # Bruk faktisk sidesize fra første respons
+    page_size = len(initial_data.get("docs", []))
+    logger.info(f"Totalt antall annonser: {total_matches}, sidesize: {page_size}")
 
     # Hent og legg til første side
     all_ads.extend(extract_info_from_json(initial_data))
+
+    if page_size == 0:
+        return all_ads
 
     # Hent videre sider med offset
     for offset in range(page_size, total_matches, page_size):
@@ -129,21 +175,42 @@ async def fetch_all_pages(session: aiohttp.ClientSession, base_url: str) -> list
 def extract_info_from_json(json_data: dict) -> list[dict]:
     """
     Ekstraher relevante felter fra FINN JSON-data.
+    Validerer at hver annonse har kritiske felter.
     """
     try:
         ads = json_data.get("docs", [])
+        if not ads:
+            return []
+
+        # Sjekk at første annonse har forventede nøkler
+        first = ads[0]
+        expected_keys = {"id", "heading", "canonical_url"}
+        missing = expected_keys - set(first.keys())
+        if missing:
+            logger.error(
+                f"FINN API-annonser mangler forventede felter: {missing}. "
+                f"Tilgjengelige nøkler: {list(first.keys())}. "
+                "API-strukturen kan ha endret seg."
+            )
+            return []
+
         extracted_data = []
         for ad in ads:
+            finnkode = ad.get("id")
+            url = ad.get("canonical_url")
+            if not finnkode or not url:
+                logger.warning(f"Hopper over annonse uten id/url: {ad.get('heading', 'ukjent')}")
+                continue
             timestamp = ad.get("timestamp")
             formatted_date = datetime.fromtimestamp(timestamp / 1000).strftime(DATE_FORMAT) if timestamp else "Ukjent"
             extracted_data.append({
-                "Finnkode": ad.get("id"),
+                "Finnkode": finnkode,
                 "Annonsenavn": ad.get("heading"),
                 "Pris": ad.get("price", {}).get("amount"),
                 "Modell": ad.get("year"),
                 "Kilometerstand": ad.get("mileage"),
                 "Oppdatert": formatted_date,
-                "URL": ad.get("canonical_url"),
+                "URL": url,
                 "Detaljer": {}
             })
         return extracted_data
@@ -368,6 +435,7 @@ async def main() -> None:
     Hovedfunksjon for scriptet.
     """
     logger.info("Starter script...")
+    logger.info(f"Søke-URL: {LISTINGS_PAGE_URL}")
     async with aiohttp.ClientSession() as session:
         ads_data = await fetch_all_pages(session, LISTINGS_PAGE_URL)
         if not ads_data:

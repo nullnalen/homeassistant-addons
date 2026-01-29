@@ -1,6 +1,6 @@
 name: "Finn no Bobil"
 description: "Addon traverserer finn på jakt etter bobiler og lagrer historikk i database"
-version: "0.52"
+version: "0.53"
 slug: "finn_no_bobil"
 init: false
 arch:
@@ -16,10 +16,41 @@ options:
   databasepassword: "database password"
   databasename: "database name"
   databaseport: "database port"
+  price_from: 300000
+  price_to: 700000
+  mileage_to: 122000
+  year_from: 2006
+  no_of_sleepers_from: 4
+  weight_to: 3501
+  locations:
+    - "22042"
+    - "20003"
+    - "20007"
+    - "22034"
+    - "20061"
+    - "20009"
+    - "20008"
+    - "20002"
+  mobile_home_segments:
+    - 1
+    - 2
+    - 3
+  sort: "YEAR_DESC"
 schema:
   databasehost: "str"
   databaseusername: "str"
   databasepassword: "str"
   databasename: "str"
   databaseport: "str"
+  price_from: "int"
+  price_to: "int"
+  mileage_to: "int"
+  year_from: "int"
+  no_of_sleepers_from: "int"
+  weight_to: "int"
+  locations:
+    - "str"
+  mobile_home_segments:
+    - "int"
+  sort: "str"
 
