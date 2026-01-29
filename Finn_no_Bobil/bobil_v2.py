@@ -49,9 +49,15 @@ def build_search_url(opts: dict) -> str:
     """
     from urllib.parse import urlencode
     params = []
-    for loc in opts.get("locations", []):
+    locations = opts.get("locations", [])
+    if not isinstance(locations, list):
+        locations = [locations]
+    for loc in locations:
         params.append(("location", loc))
-    for seg in opts.get("mobile_home_segments", []):
+    segments = opts.get("mobile_home_segments", [])
+    if not isinstance(segments, list):
+        segments = [segments]
+    for seg in segments:
         params.append(("mobile_home_segment", seg))
     params.extend([
         ("price_from", opts.get("price_from", 300000)),
