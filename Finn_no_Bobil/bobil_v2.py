@@ -133,10 +133,10 @@ async def fetch_all_pages(session: aiohttp.ClientSession, base_url: str) -> list
     """
     all_ads = []
     seen_ids = set()
-    offset = 0
+    page = 1
 
-    logger.info("Henter første side med offset 0...")
-    initial_data = await fetch_json(session, f"{base_url}&offset={offset}")
+    logger.info("Henter side 1...")
+    initial_data = await fetch_json(session, f"{base_url}&page={page}")
     if not initial_data:
         logger.error("Kunne ikke hente første side.")
         return []
@@ -156,7 +156,8 @@ async def fetch_all_pages(session: aiohttp.ClientSession, base_url: str) -> list
 
     # Bruk faktisk sidesize fra første respons
     page_size = len(initial_data.get("docs", []))
-    logger.info(f"Totalt antall annonser: {total_matches}, sidesize: {page_size}")
+    total_pages = (total_matches + page_size - 1) // page_size if page_size > 0 else 1
+    logger.info(f"Totalt antall annonser: {total_matches}, sidesize: {page_size}, sider: {total_pages}")
 
     # Hent og legg til første side (med dedup)
     for ad in extract_info_from_json(initial_data):
@@ -164,14 +165,11 @@ async def fetch_all_pages(session: aiohttp.ClientSession, base_url: str) -> list
             seen_ids.add(ad["Finnkode"])
             all_ads.append(ad)
 
-    if page_size == 0:
-        return all_ads
-
-    # Hent videre sider med offset
-    for offset in range(page_size, total_matches, page_size):
-        logger.debug(f"Henter side med offset {offset}")
+    # Hent videre sider
+    for page in range(2, total_pages + 1):
+        logger.debug(f"Henter side {page} av {total_pages}")
         await asyncio.sleep(0.2)  # Rate limit
-        paged_url = f"{base_url}&offset={offset}"
+        paged_url = f"{base_url}&page={page}"
         data = await fetch_json(session, paged_url)
         if data:
             for ad in extract_info_from_json(data):
@@ -179,7 +177,7 @@ async def fetch_all_pages(session: aiohttp.ClientSession, base_url: str) -> list
                     seen_ids.add(ad["Finnkode"])
                     all_ads.append(ad)
         else:
-            logger.warning(f"Kunne ikke hente side med offset {offset}")
+            logger.warning(f"Kunne ikke hente side {page}")
 
     logger.info(f"Totalt hentet {len(all_ads)} unike annonser (av {total_matches} treff fra API).")
     return all_ads
