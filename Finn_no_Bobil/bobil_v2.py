@@ -6,7 +6,6 @@ import re
 import logging
 import asyncio
 import aiohttp
-import subprocess
 import mysql.connector
 from datetime import datetime
 from bs4 import BeautifulSoup
@@ -16,29 +15,21 @@ from tabulate import tabulate
 RUN_LOCALLY = os.getenv("RUN_LOCALLY", "false").lower() == "true"
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-if not logger.hasHandlers():
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.DEBUG)
-    console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-    logger.addHandler(console_handler)
-else:
-    # Remove duplicate handlers if any
-    logger.handlers.clear()
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.DEBUG)
-    console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-    logger.addHandler(console_handler)
+logger.handlers.clear()
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.DEBUG)
+console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+logger.addHandler(console_handler)
 
 if RUN_LOCALLY:
-    # Kjører lokalt med hardkodede databaseverdier (ingen bruk av SUPERVISOR_OPTIONS)
+    # Kjører lokalt — les konfig fra miljøvariabler
     logger.info("Kjører lokalt med testkonfig.")
-
     options = {
-        "databasehost": "192.168.1.66",       # Database host er satt til lokal IP
-        "databaseusername": "homeassistant",  # Databasebruker
-        "databasepassword": "FridaHenrik",    # Databasepassord
-        "databasename": "finn_no",            # Databasenavn
-        "databaseport": "3306"                # Databaseport
+        "databasehost": os.getenv("DB_HOST", "localhost"),
+        "databaseusername": os.getenv("DB_USER", ""),
+        "databasepassword": os.getenv("DB_PASSWORD", ""),
+        "databasename": os.getenv("DB_NAME", "finn_no"),
+        "databaseport": os.getenv("DB_PORT", "3306")
     }
 else:
     try:
@@ -203,12 +194,17 @@ def extract_detailed_ad_info(html_content: str) -> dict:
         logger.error(f"Feil under detaljuttrekk: {e}")
         return {}
 
-async def fetch_and_combine_data(session, ads):
+async def fetch_and_combine_data(session, ads, max_concurrent=5):
+    semaphore = asyncio.Semaphore(max_concurrent)
+
     async def fetch_details(ad):
-        html = await fetch_html(session, ad["URL"])
-        if html:
-            ad["Detaljer"] = extract_detailed_ad_info(html)
-        return ad
+        async with semaphore:
+            await asyncio.sleep(0.2)
+            html = await fetch_html(session, ad["URL"])
+            if html:
+                ad["Detaljer"] = extract_detailed_ad_info(html)
+            return ad
+
     return await asyncio.gather(*(fetch_details(ad) for ad in ads))
 
 def normalize_and_format_price(price: str, output_format: bool = True) -> str | int | None:
@@ -380,10 +376,7 @@ async def main() -> None:
 
         detailed_ads = await fetch_and_combine_data(session, ads_data)
 
-        if not RUN_LOCALLY:
-            update_database(detailed_ads)
-        else:
-            update_database(detailed_ads)
+        update_database(detailed_ads)
 
     logger.info("Avslutter script...")
 
