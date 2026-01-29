@@ -196,7 +196,7 @@ def get_kjopsscore():
 
         for r in rows:
             pris = parse_price(r["Pris"])
-            hoyeste = r["HoyestePris"]  # Allerede int fra CAST
+            hoyeste = r["HoyestePris"]  # Allerede int fra CAST, eller None
             laveste = r["LavestePris"]
             dato = parse_norwegian_date(r["Oppdatert"])
 
@@ -207,9 +207,15 @@ def get_kjopsscore():
             if dager > 60:
                 continue
 
+            # Fallback til nåværende pris hvis ingen prishistorikk
+            if not hoyeste:
+                hoyeste = pris
+            if not laveste:
+                laveste = pris
+
             # Kjøpsscore: prisfall% * (dager+1) + 5 * antall endringer + dager
             prisfall_pct = 0
-            if hoyeste and hoyeste > 0 and hoyeste > pris:
+            if hoyeste > 0 and hoyeste > pris:
                 prisfall_pct = ((hoyeste - pris) / hoyeste) * 100
 
             score = round(prisfall_pct * (dager + 1) + r["AntallEndringer"] * 5 + dager)
