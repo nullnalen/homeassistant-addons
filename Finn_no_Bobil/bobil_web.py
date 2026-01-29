@@ -64,8 +64,8 @@ def parse_norwegian_date(date_str):
             if no in s:
                 s = re.sub(rf"\b{no}\.?\b", f"{num:02d}", s)
                 break
-        # Forventet format nå: "25. 01 2025 14:30"
-        m = re.match(r"(\d{1,2})\.\s*(\d{2})\s+(\d{4})\s+(\d{2}):(\d{2})", s)
+        # Forventet format nå: "25. 01. 2025 14:30" eller "25. 01 2025 14:30"
+        m = re.match(r"(\d{1,2})\.\s*(\d{2})\.?\s+(\d{4})\s+(\d{2}):(\d{2})", s)
         if m:
             return datetime(int(m.group(3)), int(m.group(2)), int(m.group(1)),
                             int(m.group(4)), int(m.group(5)))
