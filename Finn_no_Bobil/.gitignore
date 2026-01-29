@@ -1,0 +1,23 @@
+# Konfigurasjonsfiler med sensitiv data
+options.json
+
+# Data-mappe
+/data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

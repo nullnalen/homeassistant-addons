@@ -9,7 +9,6 @@ import aiohttp
 import mysql.connector
 from datetime import datetime
 from bs4 import BeautifulSoup
-from tabulate import tabulate
 
 # RUN_LOCALLY blir False hvis miljøvariabelen ikke er satt eller ikke finnes.
 RUN_LOCALLY = os.getenv("RUN_LOCALLY", "false").lower() == "true"
@@ -81,7 +80,7 @@ def connect_to_database() -> mysql.connector.connection.MySQLConnection | None:
     Koble til MySQL-databasen.
     """
     try:
-        conn = mysql.connector.connect(**DB_CONFIG, connection_timeout=10, autocommit=True)
+        conn = mysql.connector.connect(**DB_CONFIG, connection_timeout=10)
         logger.info("Koblet til databasen.")
         return conn
     except mysql.connector.Error as err:
@@ -301,28 +300,6 @@ def format_kilometerstand(km: str) -> str:
         logger.error(f"Feil ved formatering av kilometerstand: {e}")
         return "Ukjent"
 
-def display_ads(ads: list[dict]) -> None:
-    """
-    Vis annonser i tabellformat.
-    """
-    from textwrap import shorten
-    table_data = [
-        [
-            ad["Finnkode"],
-            ad["Annonsenavn"],
-            normalize_and_format_price(ad["Pris"]),
-            ad["Modell"],
-            format_kilometerstand(ad["Kilometerstand"]),
-            ad["Oppdatert"],
-            ad["Detaljer"].get("Girkasse", ""),
-            ad["Detaljer"].get("Type bobil", ""),
-            ad["Detaljer"].get("Nyttelast", ""),
-            shorten(ad["Detaljer"].get("Beskrivelse", ""), width=60, placeholder="...")
-        ] for ad in ads
-    ]
-    headers = ["Finnkode", "Tittel", "Pris", "Modell", "Km", "Oppdatert", "Girkasse", "Type", "Nyttelast", "Beskrivelse"]
-    print(tabulate(table_data, headers=headers, tablefmt="grid"))
-
 def update_database(ads: list[dict]) -> None:
     """
     Oppdater database med annonser.
@@ -331,11 +308,11 @@ def update_database(ads: list[dict]) -> None:
     Merk: For asynkron database, vurder aiomysql eller lignende bibliotek.
     """
     logger.info("Starter databaseoppdatering for %d annonser.", len(ads))
+    conn = connect_to_database()
+    if not conn:
+        logger.error("Ingen tilkobling til databasen. Avbryter oppdatering.")
+        return
     try:
-        conn = connect_to_database()
-        if not conn:
-            logger.error("Ingen tilkobling til databasen. Avbryter oppdatering.")
-            return
         cursor = conn.cursor()
         if not ads:
             logger.warning("Ingen annonser å oppdatere i databasen.")
@@ -371,7 +348,6 @@ def update_database(ads: list[dict]) -> None:
             if row:
                 endringer = []
                 for idx, (gammel, ny) in enumerate(zip(row, nye_verdier)):
-                    # Sammenlign som str for alle felt unntatt Pris (int)
                     if felt_navn[idx] == "Pris":
                         try:
                             gammel_int = int(re.sub(r"[^\d]", "", str(gammel)))
@@ -415,20 +391,18 @@ def update_database(ads: list[dict]) -> None:
                 ad["URL"],
                 ny_pris_int
             )
-            logger.debug(f"SQL: {query}")
-            logger.debug(f"Data: {data}")
             try:
                 cursor.execute(query, data)
             except Exception as e:
                 logger.error(f"Feil ved lagring av annonse {finnkode}: {e}")
-        logger.info(f"Lagret {len(ads)} annonser i databasen.")
         conn.commit()
-        cursor.close()
-        conn.close()
+        logger.info(f"Lagret {len(ads)} annonser i databasen.")
     except mysql.connector.Error as err:
         logger.error(f"Feil ved databaseoppdatering: {err}")
     except Exception as e:
         logger.error(f"Uventet feil ved databaseoppdatering: {e}")
+    finally:
+        conn.close()
 
 async def main() -> None:
     """
