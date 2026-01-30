@@ -41,7 +41,7 @@ except (json.JSONDecodeError, TypeError):
     CHILDREN = ["Barn1"]
 
 # Versjon - MÅ holdes synkronisert med config.yaml og Dockerfile
-ADDON_VERSION = "1.0.18"
+ADDON_VERSION = "1.0.19"
 
 # Konstanter
 MAX_INFO_LENGTH = 500
@@ -490,6 +490,30 @@ def save_info_file(child_name: str, info_text: str) -> Path:
     return info_path
 
 
+def _get_sensor_state_path(child_name: str) -> Path:
+    """Returnerer stien til JSON-filen som lagrer sensor-state for et barn."""
+    return DATA_DIR / f"{_safe_file_name(child_name)}_sensor.json"
+
+
+def save_sensor_state(child_name: str, payload: dict) -> None:
+    """Lagrer sensor-payload til disk for persistens over restarter."""
+    state_path = _get_sensor_state_path(child_name)
+    state_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info("Lagret sensor-state til %s", state_path)
+
+
+def load_sensor_state(child_name: str) -> dict | None:
+    """Laster lagret sensor-state fra disk."""
+    state_path = _get_sensor_state_path(child_name)
+    if not state_path.exists():
+        return None
+    try:
+        return json.loads(state_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, IOError) as e:
+        logger.warning("Kunne ikke laste sensor-state for %s: %s", child_name, e)
+        return None
+
+
 def truncate_text(text: str, max_length: int = 500) -> str:
     """Truncerer tekst til maks lengde med '...' hvis nødvendig."""
     if not text or len(text) <= max_length:
@@ -509,13 +533,12 @@ def update_home_assistant_sensor(
         "Content-Type": "application/json",
     }
 
-    # Lagre full info-tekst til fil hvis den er lang
+    # Lagre full info-tekst til fil uansett lengde (for persistens)
     info_truncated = None
     has_full_info = False
     if extra_text:
+        save_info_file(child_name, extra_text)
         if len(extra_text) > MAX_INFO_LENGTH:
-            # Lagre full tekst til fil
-            save_info_file(child_name, extra_text)
             info_truncated = truncate_text(extra_text, MAX_INFO_LENGTH)
             has_full_info = True
         else:
@@ -540,6 +563,7 @@ def update_home_assistant_sensor(
         response = requests.post(url, headers=headers, json=payload, timeout=10)
         if response.status_code in (200, 201):
             logger.info("Sensor '%s' oppdatert med uke %s", sensor_name, week_number)
+            save_sensor_state(child_name, payload)
             return True
         logger.error(
             "Feil ved oppdatering av sensor: %s - %s",
@@ -764,21 +788,52 @@ def get_info(child_name: str):
     })
 
 
+def restore_sensor_from_state(child_name: str) -> bool:
+    """Gjenoppretter sensor fra lagret JSON-state (raskere enn PDF-reprosessering)."""
+    payload = load_sensor_state(child_name)
+    if not payload:
+        return False
+
+    sensor_name = f"sensor.{_safe_sensor_name(child_name)}_ukenytt_tabell"
+    url = f"{HA_URL}/api/states/{sensor_name}"
+    headers = {
+        "Authorization": f"Bearer {HA_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        if response.status_code in (200, 201):
+            logger.info("Sensor '%s' gjenopprettet fra lagret state", sensor_name)
+            return True
+        logger.warning("Kunne ikke gjenopprette sensor '%s': %s", sensor_name, response.status_code)
+        return False
+    except requests.RequestException as e:
+        logger.warning("Nettverksfeil ved gjenoppretting av sensor '%s': %s", sensor_name, e)
+        return False
+
+
 def startup_process():
-    """Kjører ved oppstart - prosesserer eksisterende PDFer."""
+    """Kjører ved oppstart - gjenoppretter sensorer fra lagret state eller reprosesserer PDFer."""
     logger.info("Starter Ukenytt add-on v%s", ADDON_VERSION)
     logger.info("Konfigurerte barn: %s", CHILDREN)
     logger.info("Data-mappe: %s", DATA_DIR)
     logger.info("Home Assistant URL: %s", HA_URL)
 
     for child in CHILDREN:
+        # Prøv rask gjenoppretting fra lagret sensor-state først
+        if restore_sensor_from_state(child):
+            logger.info("Sensor for %s gjenopprettet fra lagret state", child)
+            continue
+
+        # Fallback: reprosesser PDF hvis state-fil mangler
         pdf_path = get_pdf_path(child)
         if pdf_path.exists():
             logger.info("Fant eksisterende PDF for %s, prosesserer...", child)
             success, message = process_pdf_for_child(child)
             logger.info("  -> %s", message)
         else:
-            logger.info("Ingen PDF funnet for %s", child)
+            logger.info("Ingen PDF eller lagret state funnet for %s", child)
 
 
 if __name__ == "__main__":
