@@ -169,8 +169,8 @@ def get_prisendringer():
         cur.execute("""
             SELECT b.Finnkode, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert,
                    COUNT(p.Pris) AS AntallEndringer,
-                   MIN(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED)) AS LavestePris,
-                   MAX(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED)) AS HoyestePris,
+                   MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
+                   MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris,
                    b.URL
             FROM bobil b
             JOIN prisendringer p ON b.Finnkode = p.Finnkode
@@ -203,8 +203,8 @@ def get_kjopsscore():
             SELECT b.Finnkode, b.Annonsenavn, b.Modell, b.Pris, b.Kilometerstand,
                    b.Oppdatert, b.Beskrivelse,
                    COUNT(p.Pris) AS AntallEndringer,
-                   MIN(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED)) AS LavestePris,
-                   MAX(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED)) AS HoyestePris
+                   MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
+                   MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris
             FROM bobil b
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
             WHERE b.Pris NOT LIKE %s
@@ -281,7 +281,7 @@ def get_prisutvikling():
         cur.execute(
             "SELECT b.Modell,"
             " DATE_FORMAT(p.Tidspunkt, %s) AS Periode,"
-            " ROUND(AVG(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED))) AS GjSnittPris,"
+            " ROUND(AVG(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0))) AS GjSnittPris,"
             " COUNT(*) AS Antall"
             " FROM prisendringer p"
             " JOIN bobil b ON p.Finnkode = b.Finnkode"
@@ -327,8 +327,8 @@ def get_sokresultater(keywords_str):
                    b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
                    b.Oppdatert, b.Pris,
                    COUNT(p.Pris) AS AntallEndringer,
-                   MIN(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED)) AS LavestePris,
-                   MAX(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED)) AS HoyestePris
+                   MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
+                   MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris
             FROM bobil b
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
             WHERE {conditions}
@@ -422,8 +422,8 @@ def get_detaljer(page=1, per_page=50, filters=None):
                    b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
                    b.Oppdatert, b.Pris, b.URL,
                    COUNT(p.Pris) AS AntallEndringer,
-                   MIN(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED)) AS LavestePris,
-                   MAX(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED)) AS HoyestePris
+                   MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
+                   MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris
             FROM bobil b
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
             {where_clause}
@@ -1177,7 +1177,6 @@ def view_detaljer():
     <table>
         <thead>
             <tr>
-                <th class="sortable" data-sort="number">Finnkode</th>
                 <th class="sortable">Annonse</th>
                 <th class="sortable" data-sort="number">Modell</th>
                 <th class="sortable" data-sort="number">Km</th>
@@ -1185,18 +1184,13 @@ def view_detaljer():
                 <th class="sortable" data-sort="number">Laveste</th>
                 <th class="sortable" data-sort="number">Høyeste</th>
                 <th class="sortable" data-sort="number">Pris/km</th>
-                <th class="sortable" data-sort="number">Prutet 12%</th>
-                <th class="sortable" data-sort="number">Prutet 13%</th>
-                <th class="sortable" data-sort="number">Score</th>
                 <th class="sortable">Type</th>
-                <th class="sortable">Girkasse</th>
                 <th class="sortable">Sist sett</th>
             </tr>
         </thead>
         <tbody>
     """
     for r in rows:
-        score_html = f"{r['KjopsScore']}" if r["KjopsScore"] is not None else "—"
         priskm_html = f"{r['PrisPerKm']}" if r["PrisPerKm"] is not None else "—"
         is_sold = "solgt" in str(r.get("Pris", "")).lower() or "fjernet" in str(r.get("Pris", "")).lower()
         row_class = ' class="sold"' if is_sold else ""
@@ -1204,19 +1198,14 @@ def view_detaljer():
         ny_badge = '<span class="new-badge">NY</span>' if r.get("ErNy") and not is_sold else ""
         html += f"""
             <tr{row_class}>
-                <td><a href="{r['FinnURL']}" target="_blank">{r['Finnkode']}</a></td>
-                <td class="truncate">{r['Annonsenavn'] or ''}{sold_badge}{ny_badge}</td>
+                <td class="truncate"><a href="{r['FinnURL']}" target="_blank">{r['Annonsenavn'] or r['Finnkode']}</a>{sold_badge}{ny_badge}</td>
                 <td>{r['Modell'] or ''}</td>
                 <td>{r.get('Kilometerstand', '')}</td>
                 <td>{r['NaaverendePris']}</td>
                 <td class="price-down">{r['LavestePrisF']}</td>
                 <td class="price-up">{r['HoyestePrisF']}</td>
                 <td>{priskm_html}</td>
-                <td>{r['Prutet12']}</td>
-                <td>{r['Prutet13']}</td>
-                <td class="score">{score_html}</td>
                 <td>{r.get('Typebobil', '')}</td>
-                <td>{r.get('Girkasse', '')}</td>
                 <td>{r['Alder']}</td>
             </tr>
         """
