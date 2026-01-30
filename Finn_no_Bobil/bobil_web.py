@@ -945,11 +945,11 @@ TEMPLATE = """
     <div class="container">
         <h1>Bobil — Finn.no Oversikt</h1>
         <nav class="tabs">
-            <a href="prisendringer" class="tab {{ 'active' if active_tab == 'prisendringer' }}">Prisendringer</a>
-            <a href="kjopsscore" class="tab {{ 'active' if active_tab == 'kjopsscore' }}">Kjøpsscore</a>
-            <a href="prisutvikling" class="tab {{ 'active' if active_tab == 'prisutvikling' }}">Prisutvikling</a>
-            <a href="sok" class="tab {{ 'active' if active_tab == 'sok' }}">Nøkkelord-søk</a>
-            <a href="detaljer" class="tab {{ 'active' if active_tab == 'detaljer' }}">Detaljert</a>
+            <a href="{{ bp }}prisendringer" class="tab {{ 'active' if active_tab == 'prisendringer' }}">Prisendringer</a>
+            <a href="{{ bp }}kjopsscore" class="tab {{ 'active' if active_tab == 'kjopsscore' }}">Kjøpsscore</a>
+            <a href="{{ bp }}prisutvikling" class="tab {{ 'active' if active_tab == 'prisutvikling' }}">Prisutvikling</a>
+            <a href="{{ bp }}sok" class="tab {{ 'active' if active_tab == 'sok' }}">Nøkkelord-søk</a>
+            <a href="{{ bp }}detaljer" class="tab {{ 'active' if active_tab == 'detaljer' }}">Detaljert</a>
         </nav>
 
         <div class="content">
@@ -962,7 +962,7 @@ TEMPLATE = """
                 {% if last_scrape %} | Sist oppdatert: {{ last_scrape }}{% endif %}
                 {% if scraper_running %} | Scraping pågår...{% endif %}
             </span>
-            <form method="POST" action="scrape" style="display:inline">
+            <form method="POST" action="{{ bp }}scrape" style="display:inline">
                 <button type="submit" class="btn" {{ 'disabled' if scraper_running }}>Oppdater nå</button>
             </form>
         </div>
@@ -1004,7 +1004,7 @@ TEMPLATE = """
 """
 
 
-def render_page(active_tab, content_html):
+def render_page(active_tab, content_html, base_path=""):
     """Render en side med felles layout."""
     last_scrape = None
     if scraper_status["last_run"]:
@@ -1013,6 +1013,7 @@ def render_page(active_tab, content_html):
         TEMPLATE,
         active_tab=active_tab,
         content=content_html,
+        bp=base_path,
         total_listings=get_total_count(),
         last_scrape=last_scrape,
         scraper_running=scraper_status["running"],
@@ -1363,15 +1364,16 @@ def view_detaljer():
 @app.route("/annonse/<int:finnkode>")
 def view_annonse(finnkode):
     """Detaljside for en enkelt annonse med prishistorikk-graf."""
+    bp = "../"
     conn = get_db()
     if not conn:
-        return render_page("detaljer", '<p class="no-data">Ingen databasetilkobling.</p>')
+        return render_page("detaljer", '<p class="no-data">Ingen databasetilkobling.</p>', base_path=bp)
     try:
         cur = conn.cursor(dictionary=True)
         cur.execute("SELECT * FROM bobil WHERE Finnkode = %s", (finnkode,))
         ad = cur.fetchone()
         if not ad:
-            return render_page("detaljer", '<p class="no-data">Annonse ikke funnet.</p>')
+            return render_page("detaljer", '<p class="no-data">Annonse ikke funnet.</p>', base_path=bp)
 
         # Hent prishistorikk
         cur.execute(
@@ -1403,7 +1405,7 @@ def view_annonse(finnkode):
 
         html = f"""
         <div style="margin-bottom: 15px;">
-            <a href="detaljer" style="font-size: 0.85em;">&larr; Tilbake til oversikt</a>
+            <a href="../detaljer" style="font-size: 0.85em;">&larr; Tilbake</a>
         </div>
         <h2 style="margin-bottom: 10px; color: var(--text-color);">
             <a href="{finn_url}" target="_blank">{ad.get('Annonsenavn', finnkode)}</a>
@@ -1499,10 +1501,10 @@ def view_annonse(finnkode):
                 html += f"<tr><td>{ts_str}</td><td>{format_price(pval) if pval else p['Pris']}</td></tr>"
             html += "</tbody></table>"
 
-        return render_page("detaljer", html)
+        return render_page("detaljer", html, base_path=bp)
     except Exception as e:
         logger.error("Feil i view_annonse: %s", e)
-        return render_page("detaljer", '<p class="no-data">Feil ved henting av annonse.</p>')
+        return render_page("detaljer", '<p class="no-data">Feil ved henting av annonse.</p>', base_path=bp)
     finally:
         conn.close()
 
