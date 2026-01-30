@@ -97,35 +97,52 @@ def connect_to_database() -> mysql.connector.connection.MySQLConnection | None:
         logger.error(f"Uventet feil ved tilkobling til databasen: {e}")
         return None
 
-async def fetch_json(session: aiohttp.ClientSession, url: str) -> dict | None:
+async def fetch_json(session: aiohttp.ClientSession, url: str, max_retries: int = 3) -> dict | None:
     """
-    Hent JSON-data fra gitt URL.
+    Hent JSON-data fra gitt URL med retry ved feil.
     Validerer at responsen inneholder forventet struktur.
     """
     logger.info("Henter JSON fra FINN API...")
-    try:
-        async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}) as response:
-            if response.status != 200:
-                logger.error(f"FINN API returnerte HTTP {response.status} for {url}")
+    for attempt in range(1, max_retries + 1):
+        try:
+            async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                if response.status == 429:
+                    wait = 2 ** attempt
+                    logger.warning(f"Rate limited (429), venter {wait}s (forsøk {attempt}/{max_retries})")
+                    await asyncio.sleep(wait)
+                    continue
+                if response.status >= 500:
+                    wait = 2 ** attempt
+                    logger.warning(f"Serverfeil HTTP {response.status}, venter {wait}s (forsøk {attempt}/{max_retries})")
+                    await asyncio.sleep(wait)
+                    continue
+                if response.status != 200:
+                    logger.error(f"FINN API returnerte HTTP {response.status} for {url}")
+                    return None
+                data = await response.json()
+                if not isinstance(data, dict):
+                    logger.error(f"Uventet responstype fra FINN API: {type(data).__name__} (forventet dict)")
+                    return None
+                if "docs" not in data:
+                    logger.error(
+                        "FINN API-responsen mangler 'docs'-feltet. "
+                        "API-strukturen kan ha endret seg. "
+                        f"Nøkler i responsen: {list(data.keys())}"
+                    )
+                    return None
+                return data
+        except (aiohttp.ContentTypeError, aiohttp.ClientError, asyncio.TimeoutError) as e:
+            wait = 2 ** attempt
+            logger.warning(f"Nettverksfeil (forsøk {attempt}/{max_retries}): {e}. Venter {wait}s...")
+            if attempt < max_retries:
+                await asyncio.sleep(wait)
+            else:
+                logger.error(f"Ga opp etter {max_retries} forsøk for {url}: {e}")
                 return None
-            data = await response.json()
-            if not isinstance(data, dict):
-                logger.error(f"Uventet responstype fra FINN API: {type(data).__name__} (forventet dict)")
-                return None
-            if "docs" not in data:
-                logger.error(
-                    "FINN API-responsen mangler 'docs'-feltet. "
-                    "API-strukturen kan ha endret seg. "
-                    f"Nøkler i responsen: {list(data.keys())}"
-                )
-                return None
-            return data
-    except aiohttp.ContentTypeError as e:
-        logger.error(f"FINN API returnerte ikke JSON (mulig HTML-feilside): {e}")
-        return None
-    except Exception as e:
-        logger.error(f"Feil ved henting av JSON fra {url}: {e}")
-        return None
+        except Exception as e:
+            logger.error(f"Uventet feil ved henting av JSON fra {url}: {e}")
+            return None
+    return None
 
 async def fetch_all_pages(session: aiohttp.ClientSession, base_url: str) -> list[dict]:
     """
@@ -214,6 +231,21 @@ def extract_info_from_json(json_data: dict) -> list[dict]:
                 continue
             timestamp = ad.get("timestamp")
             formatted_date = datetime.fromtimestamp(timestamp / 1000).strftime(DATE_FORMAT) if timestamp else "Ukjent"
+            # Hent bilde-URL fra API (første bilde)
+            images = ad.get("images", [])
+            image_url = ""
+            if images:
+                img = images[0] if isinstance(images[0], dict) else {}
+                image_url = img.get("url", img.get("uri", ""))
+                # Finn.no bruker ofte path-baserte URLs
+                if image_url and not image_url.startswith("http"):
+                    image_url = f"https://images.finncdn.no/dynamic/480x360c/{image_url}"
+
+            # Hent lokasjon
+            location = ad.get("location", "")
+            if isinstance(location, dict):
+                location = location.get("name", "")
+
             extracted_data.append({
                 "Finnkode": finnkode,
                 "Annonsenavn": ad.get("heading"),
@@ -222,6 +254,8 @@ def extract_info_from_json(json_data: dict) -> list[dict]:
                 "Kilometerstand": ad.get("mileage"),
                 "Oppdatert": formatted_date,
                 "URL": url,
+                "ImageURL": image_url,
+                "Lokasjon": location,
                 "Detaljer": {}
             })
         return extracted_data
@@ -229,17 +263,34 @@ def extract_info_from_json(json_data: dict) -> list[dict]:
         logger.error(f"Feil ved ekstraksjon av JSON-data: {e}")
         return []
 
-async def fetch_html(session: aiohttp.ClientSession, url: str) -> str | None:
+async def fetch_html(session: aiohttp.ClientSession, url: str, max_retries: int = 3) -> str | None:
     """
-    Hent HTML-innhold fra gitt URL.
+    Hent HTML-innhold fra gitt URL med retry ved feil.
     """
-    try:
-        async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}) as response:
-            response.raise_for_status()
-            return await response.text()
-    except Exception as e:
-        logger.error(f"Feil ved henting av HTML fra {url}: {e}")
-        return None
+    for attempt in range(1, max_retries + 1):
+        try:
+            async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                if response.status == 429 or response.status >= 500:
+                    wait = 2 ** attempt
+                    logger.warning(f"HTTP {response.status} for {url}, venter {wait}s (forsøk {attempt}/{max_retries})")
+                    if attempt < max_retries:
+                        await asyncio.sleep(wait)
+                        continue
+                    return None
+                response.raise_for_status()
+                return await response.text()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            wait = 2 ** attempt
+            logger.warning(f"Nettverksfeil for {url} (forsøk {attempt}/{max_retries}): {e}")
+            if attempt < max_retries:
+                await asyncio.sleep(wait)
+            else:
+                logger.error(f"Ga opp HTML-henting etter {max_retries} forsøk for {url}: {e}")
+                return None
+        except Exception as e:
+            logger.error(f"Uventet feil ved henting av HTML fra {url}: {e}")
+            return None
+    return None
 
 def extract_detailed_ad_info(html_content: str) -> dict:
     """
@@ -341,6 +392,8 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
         nye_annonser = 0
         endrede_annonser = 0
         uendrede_annonser = 0
+        nye_titler = []
+        prisfall_titler = []
 
         for ad in ads:
             finnkode = ad["Finnkode"]
@@ -351,13 +404,13 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
 
             # Hent eksisterende verdier for alle felter
             cursor.execute(
-                "SELECT Annonsenavn, Modell, Kilometerstand, Girkasse, Beskrivelse, Nyttelast, Typebobil, Oppdatert, URL, Pris FROM bobil WHERE Finnkode = %s",
+                "SELECT Annonsenavn, Modell, Kilometerstand, Girkasse, Beskrivelse, Nyttelast, Typebobil, Oppdatert, URL, Pris, ImageURL, Lokasjon FROM bobil WHERE Finnkode = %s",
                 (finnkode,)
             )
             row = cursor.fetchone()
             felt_navn = [
                 "Annonsenavn", "Modell", "Kilometerstand", "Girkasse", "Beskrivelse",
-                "Nyttelast", "Typebobil", "Oppdatert", "URL", "Pris"
+                "Nyttelast", "Typebobil", "Oppdatert", "URL", "Pris", "ImageURL", "Lokasjon"
             ]
             nye_verdier = [
                 ad["Annonsenavn"],
@@ -369,7 +422,9 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
                 ad["Detaljer"].get("Type bobil", "Ikke oppgitt"),
                 ad["Oppdatert"],
                 ad["URL"],
-                ny_pris_int
+                ny_pris_int,
+                ad.get("ImageURL", ""),
+                ad.get("Lokasjon", ""),
             ]
             if row:
                 endringer = []
@@ -389,6 +444,17 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
                 if endringer:
                     endrede_annonser += 1
                     logger.info(f"[{mode}] Endringer for Finnkode {finnkode}: {', '.join(endringer)}")
+                    # Spor prisfall for varsling
+                    if pris_endret:
+                        try:
+                            gammel_pris = int(re.sub(r"[^\d]", "", str(row[felt_navn.index("Pris")])))
+                            if ny_pris_int < gammel_pris:
+                                diff = gammel_pris - ny_pris_int
+                                prisfall_titler.append(
+                                    f"{ad['Annonsenavn']}: {normalize_and_format_price(gammel_pris)} → {normalize_and_format_price(ny_pris_int)} (-{normalize_and_format_price(diff)})"
+                                )
+                        except Exception:
+                            pass
                     # Logg prisendring til prisendringer-tabellen
                     if pris_endret and not dry_run:
                         try:
@@ -402,6 +468,7 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
                     uendrede_annonser += 1
             else:
                 nye_annonser += 1
+                nye_titler.append(f"{ad['Annonsenavn']} ({normalize_and_format_price(ad['Pris'])})")
                 logger.info(f"[{mode}] Ny annonse: Finnkode {finnkode} — {ad['Annonsenavn']} ({normalize_and_format_price(ad['Pris'])})")
                 # Logg første pris til prisendringer-tabellen
                 if not dry_run:
@@ -415,8 +482,8 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
 
             if not dry_run:
                 query = """
-                    INSERT INTO bobil (Finnkode, Annonsenavn, Modell, Kilometerstand, Girkasse, Beskrivelse, Nyttelast, Typebobil, Oppdatert, URL, Pris)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO bobil (Finnkode, Annonsenavn, Modell, Kilometerstand, Girkasse, Beskrivelse, Nyttelast, Typebobil, Oppdatert, URL, Pris, ImageURL, Lokasjon)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE
                         Annonsenavn = VALUES(Annonsenavn),
                         Modell = VALUES(Modell),
@@ -427,7 +494,9 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
                         Typebobil = VALUES(Typebobil),
                         Oppdatert = VALUES(Oppdatert),
                         URL = VALUES(URL),
-                        Pris = VALUES(Pris)
+                        Pris = VALUES(Pris),
+                        ImageURL = VALUES(ImageURL),
+                        Lokasjon = VALUES(Lokasjon)
                 """
                 data = (
                     finnkode,
@@ -440,7 +509,9 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
                     ad["Detaljer"].get("Type bobil", "Ikke oppgitt"),
                     ad["Oppdatert"],
                     ad["URL"],
-                    ny_pris_int
+                    ny_pris_int,
+                    ad.get("ImageURL", ""),
+                    ad.get("Lokasjon", ""),
                 )
                 try:
                     cursor.execute(query, data)
@@ -454,6 +525,19 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
             f"[{mode}] Oppsummering: {nye_annonser} nye, {endrede_annonser} endret, "
             f"{uendrede_annonser} uendret av {len(ads)} annonser."
         )
+
+        # Send HA-varsling ved nye annonser eller prisfall
+        if not dry_run and (nye_titler or prisfall_titler):
+            parts = []
+            if nye_titler:
+                parts.append(f"**{len(nye_titler)} nye annonser:**\n" + "\n".join(f"- {t}" for t in nye_titler[:10]))
+                if len(nye_titler) > 10:
+                    parts.append(f"... og {len(nye_titler) - 10} til")
+            if prisfall_titler:
+                parts.append(f"**{len(prisfall_titler)} prisfall:**\n" + "\n".join(f"- {t}" for t in prisfall_titler[:10]))
+                if len(prisfall_titler) > 10:
+                    parts.append(f"... og {len(prisfall_titler) - 10} til")
+            send_ha_notification("Bobil-oppdatering", "\n\n".join(parts))
     except mysql.connector.Error as err:
         logger.error(f"Feil ved databaseoppdatering: {err}")
     except Exception as e:
@@ -490,8 +574,7 @@ def mark_removed_ads(current_ads: list[dict], dry_run: bool = False) -> None:
 
         # Hent alle finnkoder som ikke allerede er markert som solgt/fjernet
         cursor.execute(
-            "SELECT Finnkode FROM bobil WHERE Pris NOT LIKE %s AND Pris NOT LIKE %s",
-            ("%Solgt%", "%Fjernet%")
+            "SELECT Finnkode FROM bobil WHERE Solgt = 0 OR Solgt IS NULL"
         )
         db_ids = {row[0] for row in cursor.fetchall()}
 
@@ -506,8 +589,8 @@ def mark_removed_ads(current_ads: list[dict], dry_run: bool = False) -> None:
             logger.info(f"[{mode}] Markerer Finnkode {finnkode} som Solgt/Fjernet.")
             if not dry_run:
                 cursor.execute(
-                    "UPDATE bobil SET Pris = %s WHERE Finnkode = %s",
-                    ("Solgt/Fjernet", finnkode)
+                    "UPDATE bobil SET Solgt = 1 WHERE Finnkode = %s",
+                    (finnkode,)
                 )
                 # Logg til prisendringer
                 try:
@@ -525,6 +608,30 @@ def mark_removed_ads(current_ads: list[dict], dry_run: bool = False) -> None:
         logger.error(f"Feil ved markering av fjernede annonser: {e}")
     finally:
         conn.close()
+
+
+def send_ha_notification(title: str, message: str) -> None:
+    """Send varsling til Home Assistant via Supervisor API."""
+    import urllib.request
+    token = os.getenv("SUPERVISOR_TOKEN")
+    if not token:
+        logger.debug("Ingen SUPERVISOR_TOKEN, hopper over HA-varsling.")
+        return
+    try:
+        data = json.dumps({"title": title, "message": message}).encode()
+        req = urllib.request.Request(
+            "http://supervisor/core/api/services/persistent_notification/create",
+            data=data,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=10)
+        logger.info("HA-varsling sendt: %s", title)
+    except Exception as e:
+        logger.warning("Kunne ikke sende HA-varsling: %s", e)
 
 
 async def main() -> None:

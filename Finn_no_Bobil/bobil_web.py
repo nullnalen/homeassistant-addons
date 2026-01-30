@@ -12,6 +12,7 @@ import threading
 from datetime import datetime
 
 import mysql.connector
+from mysql.connector import pooling
 from flask import Flask, render_template_string, request, redirect, url_for, jsonify
 from waitress import serve
 
@@ -109,35 +110,115 @@ def format_price(price_int):
 
 
 def format_age(date_str):
-    """Formater alder fra norsk datostreng til lesbar tekst som '2 dager siden'."""
+    """Formater alder fra norsk datostreng til lesbar tekst med fargeklasse."""
     dato = parse_norwegian_date(date_str)
     if not dato:
-        return "Ukjent"
+        return "Ukjent", "age-unknown"
     delta = datetime.now() - dato
     dager = delta.days
     if dager == 0:
         timer = delta.seconds // 3600
         if timer == 0:
-            return "Nå"
-        return f"{timer}t siden"
+            return "Nå", "age-fresh"
+        return f"{timer}t siden", "age-fresh"
     if dager == 1:
-        return "I går"
+        return "I går", "age-fresh"
+    if dager < 7:
+        return f"{dager} dager", "age-fresh"
     if dager < 30:
-        return f"{dager} dager"
+        return f"{dager} dager", "age-weeks"
     if dager < 365:
         mnd = dager // 30
-        return f"{mnd} mnd"
-    return f"{dager // 365} år"
+        return f"{mnd} mnd", "age-old"
+    return f"{dager // 365} år", "age-old"
+
+
+_db_pool = None
+
+
+def _get_pool():
+    """Lazy-init connection pool."""
+    global _db_pool
+    if _db_pool is None:
+        try:
+            _db_pool = pooling.MySQLConnectionPool(
+                pool_name="bobil_pool",
+                pool_size=5,
+                pool_reset_session=True,
+                connection_timeout=10,
+                **DB_CONFIG,
+            )
+            logger.info("DB connection pool opprettet (pool_size=5).")
+        except Exception as e:
+            logger.error("Kunne ikke opprette connection pool: %s", e)
+            return None
+    return _db_pool
 
 
 def get_db():
-    """Opprett en ny DB-tilkobling per request."""
+    """Hent en tilkobling fra connection pool."""
+    pool = _get_pool()
+    if pool:
+        try:
+            return pool.get_connection()
+        except Exception as e:
+            logger.error("Kunne ikke hente tilkobling fra pool: %s", e)
+    # Fallback til direkte tilkobling
     try:
         conn = mysql.connector.connect(**DB_CONFIG, connection_timeout=10)
         return conn
     except Exception as e:
         logger.error("DB-tilkoblingsfeil: %s", e)
         return None
+
+
+def ensure_db_columns():
+    """Sørg for at nye kolonner og indekser finnes i databasen."""
+    conn = get_db()
+    if not conn:
+        return
+    try:
+        cur = conn.cursor()
+        # Nye kolonner
+        for col, coltype in [("ImageURL", "TEXT"), ("Lokasjon", "VARCHAR(255)"), ("Solgt", "TINYINT(1) DEFAULT 0")]:
+            try:
+                cur.execute(f"ALTER TABLE bobil ADD COLUMN {col} {coltype}")
+                logger.info("La til kolonne %s i bobil-tabellen.", col)
+            except mysql.connector.Error as e:
+                if e.errno == 1060:  # Duplicate column
+                    pass
+                else:
+                    logger.error("Feil ved ALTER TABLE for %s: %s", col, e)
+        # Migrer eksisterende solgt/fjernet-rader til Solgt=1
+        try:
+            cur.execute("UPDATE bobil SET Solgt = 1 WHERE Pris LIKE '%Solgt%' OR Pris LIKE '%Fjernet%'")
+            if cur.rowcount > 0:
+                logger.info("Migrerte %d rader med Solgt/Fjernet til Solgt=1.", cur.rowcount)
+        except Exception as e:
+            logger.error("Feil ved migrering av solgt-status: %s", e)
+
+        # Indekser for raskere spørringer
+        indexes = [
+            ("idx_prisendringer_finnkode", "prisendringer", "Finnkode"),
+            ("idx_prisendringer_tidspunkt", "prisendringer", "Tidspunkt"),
+            ("idx_prisendringer_finnkode_tidspunkt", "prisendringer", "Finnkode, Tidspunkt"),
+            ("idx_bobil_modell", "bobil", "Modell"),
+            ("idx_bobil_pris", "bobil", "Pris(50)"),
+        ]
+        for idx_name, table, columns in indexes:
+            try:
+                cur.execute(f"CREATE INDEX {idx_name} ON {table} ({columns})")
+                logger.info("Opprettet indeks %s på %s.", idx_name, table)
+            except mysql.connector.Error as e:
+                if e.errno == 1061:  # Duplicate key name
+                    pass
+                else:
+                    logger.error("Feil ved opprettelse av indeks %s: %s", idx_name, e)
+        conn.commit()
+    except Exception as e:
+        logger.error("Feil i ensure_db_columns: %s", e)
+    finally:
+        conn.close()
 
 
 def get_total_count():
@@ -183,7 +264,7 @@ def get_prisendringer():
             r["LavestePrisF"] = format_price(parse_price(r["LavestePris"]))
             r["HoyestePrisF"] = format_price(parse_price(r["HoyestePris"]))
             r["FinnURL"] = f"https://www.finn.no/mobility/item/{r['Finnkode']}"
-            r["Alder"] = format_age(r.get("Oppdatert", ""))
+            r["Alder"], r["AlderClass"] = format_age(r.get("Oppdatert", ""))
         return rows
     except Exception as e:
         logger.error("Feil i get_prisendringer: %s", e)
@@ -207,10 +288,10 @@ def get_kjopsscore():
                    MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris
             FROM bobil b
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
-            WHERE b.Pris NOT LIKE %s
+            WHERE (b.Solgt = 0 OR b.Solgt IS NULL)
             GROUP BY b.Finnkode, b.Annonsenavn, b.Modell, b.Pris,
                      b.Kilometerstand, b.Oppdatert, b.Beskrivelse
-        """, ("%Solgt%",))
+        """)
         rows = cur.fetchall()
 
         results = []
@@ -344,7 +425,7 @@ def get_sokresultater(keywords_str):
             r["LavestePrisF"] = format_price(parse_price(r["LavestePris"]))
             r["HoyestePrisF"] = format_price(parse_price(r["HoyestePris"]))
             r["FinnURL"] = f"https://www.finn.no/mobility/item/{r['Finnkode']}"
-            r["Alder"] = format_age(r.get("Oppdatert", ""))
+            r["Alder"], r["AlderClass"] = format_age(r.get("Oppdatert", ""))
             # Finn hvilke termer som ga treff
             tekst = f"{r['Annonsenavn']} {r.get('Beskrivelse', '')}".lower()
             r["Soketreff"] = ", ".join(t for t in terms if t.lower() in tekst)
@@ -407,8 +488,7 @@ def get_detaljer(page=1, per_page=50, filters=None):
                 where_parts.append("b.Girkasse = %s")
                 params.append(filters["girkasse"])
             if filters.get("skjul_solgt"):
-                where_parts.append("b.Pris NOT LIKE %s")
-                params.append("%Solgt%")
+                where_parts.append("(b.Solgt = 0 OR b.Solgt IS NULL)")
 
         where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
 
@@ -420,7 +500,7 @@ def get_detaljer(page=1, per_page=50, filters=None):
         cur.execute(f"""
             SELECT b.Finnkode, b.Annonsenavn, b.Beskrivelse, b.Modell,
                    b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
-                   b.Oppdatert, b.Pris, b.URL,
+                   b.Oppdatert, b.Pris, b.URL, b.ImageURL, b.Lokasjon, b.Solgt,
                    COUNT(p.Pris) AS AntallEndringer,
                    MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
                    MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris
@@ -429,7 +509,7 @@ def get_detaljer(page=1, per_page=50, filters=None):
             {where_clause}
             GROUP BY b.Finnkode, b.Annonsenavn, b.Beskrivelse, b.Modell,
                      b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
-                     b.Oppdatert, b.Pris, b.URL
+                     b.Oppdatert, b.Pris, b.URL, b.ImageURL, b.Lokasjon, b.Solgt
             ORDER BY b.Modell DESC, b.Pris ASC
             LIMIT %s OFFSET %s
         """, params + [per_page, offset])
@@ -447,7 +527,7 @@ def get_detaljer(page=1, per_page=50, filters=None):
             # Sjekk om annonsen er ny (siste 24 timer)
             dato = parse_norwegian_date(r.get("Oppdatert", ""))
             r["ErNy"] = dato and (now - dato).total_seconds() < 86400
-            r["Alder"] = format_age(r.get("Oppdatert", ""))
+            r["Alder"], r["AlderClass"] = format_age(r.get("Oppdatert", ""))
 
             # Pris per km
             if pris and km and km > 0:
@@ -808,6 +888,23 @@ TEMPLATE = """
         tr.sold td:first-child::before {
             content: '';
         }
+        .thumb {
+            width: 80px;
+            height: 60px;
+            object-fit: cover;
+            border-radius: 4px;
+            vertical-align: middle;
+        }
+        .detail-img {
+            max-width: 480px;
+            width: 100%;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .age-fresh { color: #4caf50; }
+        .age-weeks { color: #ff9800; }
+        .age-old { color: #f44336; }
+        .age-unknown { color: var(--text-muted); }
         .sold-badge {
             display: inline-block;
             background: #f44336;
@@ -927,14 +1024,14 @@ def view_prisendringer():
     for r in rows:
         html += f"""
             <tr>
-                <td><a href="{r['FinnURL']}" target="_blank">{r['Finnkode']}</a></td>
+                <td><a href="annonse/{r['Finnkode']}">{r['Finnkode']}</a></td>
                 <td class="truncate">{r['Annonsenavn'] or ''}</td>
                 <td>{r['Modell'] or ''}</td>
                 <td>{r['NaaverendePris']}</td>
                 <td class="price-down">{r['LavestePrisF']}</td>
                 <td class="price-up">{r['HoyestePrisF']}</td>
                 <td><strong>{r['AntallEndringer']}</strong></td>
-                <td>{r['Alder']}</td>
+                <td class="{r['AlderClass']}">{r['Alder']}</td>
             </tr>
         """
     html += "</tbody></table>"
@@ -974,7 +1071,7 @@ def view_kjopsscore():
         html += f"""
             <tr>
                 <td class="score">{r['KjopsScore']}</td>
-                <td><a href="{r['FinnURL']}" target="_blank">{r['Finnkode']}</a></td>
+                <td><a href="annonse/{r['Finnkode']}">{r['Finnkode']}</a></td>
                 <td class="truncate">{r['Annonsenavn'] or ''}{ny_badge}</td>
                 <td>{r['Modell'] or ''}</td>
                 <td>{r['NaaverendePris']}</td>
@@ -1066,7 +1163,7 @@ def view_sok():
                     treff_html += f'<span class="keyword-tag">{t}</span>'
             html += f"""
                 <tr>
-                    <td><a href="{r['FinnURL']}" target="_blank">{r['Finnkode']}</a></td>
+                    <td><a href="annonse/{r['Finnkode']}">{r['Finnkode']}</a></td>
                     <td class="truncate">{r['Annonsenavn'] or ''}</td>
                     <td>{r['Modell'] or ''}</td>
                     <td>{r['NaaverendePris']}</td>
@@ -1075,7 +1172,7 @@ def view_sok():
                     <td>{r['AntallEndringer']}</td>
                     <td class="price-down">{r['LavestePrisF']}</td>
                     <td class="price-up">{r['HoyestePrisF']}</td>
-                    <td>{r['Alder']}</td>
+                    <td class="{r['AlderClass']}">{r['Alder']}</td>
                     <td>{treff_html}</td>
                 </tr>
             """
@@ -1177,6 +1274,7 @@ def view_detaljer():
     <table>
         <thead>
             <tr>
+                <th></th>
                 <th class="sortable">Annonse</th>
                 <th class="sortable" data-sort="number">Modell</th>
                 <th class="sortable" data-sort="number">Km</th>
@@ -1184,7 +1282,7 @@ def view_detaljer():
                 <th class="sortable" data-sort="number">Laveste</th>
                 <th class="sortable" data-sort="number">Høyeste</th>
                 <th class="sortable" data-sort="number">Pris/km</th>
-                <th class="sortable">Type</th>
+                <th class="sortable">Lokasjon</th>
                 <th class="sortable">Sist sett</th>
             </tr>
         </thead>
@@ -1192,21 +1290,25 @@ def view_detaljer():
     """
     for r in rows:
         priskm_html = f"{r['PrisPerKm']}" if r["PrisPerKm"] is not None else "—"
-        is_sold = "solgt" in str(r.get("Pris", "")).lower() or "fjernet" in str(r.get("Pris", "")).lower()
+        is_sold = bool(r.get("Solgt")) or "solgt" in str(r.get("Pris", "")).lower()
         row_class = ' class="sold"' if is_sold else ""
         sold_badge = '<span class="sold-badge">Solgt</span>' if is_sold else ""
         ny_badge = '<span class="new-badge">NY</span>' if r.get("ErNy") and not is_sold else ""
+        img_url = r.get("ImageURL", "") or ""
+        thumb_html = f'<img src="{img_url}" class="thumb" alt="">' if img_url else ""
+        lokasjon = r.get("Lokasjon", "") or ""
         html += f"""
             <tr{row_class}>
-                <td class="truncate"><a href="{r['FinnURL']}" target="_blank">{r['Annonsenavn'] or r['Finnkode']}</a>{sold_badge}{ny_badge}</td>
+                <td>{thumb_html}</td>
+                <td class="truncate"><a href="annonse/{r['Finnkode']}">{r['Annonsenavn'] or r['Finnkode']}</a>{sold_badge}{ny_badge}</td>
                 <td>{r['Modell'] or ''}</td>
                 <td>{r.get('Kilometerstand', '')}</td>
                 <td>{r['NaaverendePris']}</td>
                 <td class="price-down">{r['LavestePrisF']}</td>
                 <td class="price-up">{r['HoyestePrisF']}</td>
                 <td>{priskm_html}</td>
-                <td>{r.get('Typebobil', '')}</td>
-                <td>{r['Alder']}</td>
+                <td>{lokasjon}</td>
+                <td class="{r['AlderClass']}">{r['Alder']}</td>
             </tr>
         """
     html += "</tbody></table>"
@@ -1231,6 +1333,153 @@ def view_detaljer():
         html += '</div>'
 
     return render_page("detaljer", html)
+
+
+@app.route("/annonse/<int:finnkode>")
+def view_annonse(finnkode):
+    """Detaljside for en enkelt annonse med prishistorikk-graf."""
+    conn = get_db()
+    if not conn:
+        return render_page("detaljer", '<p class="no-data">Ingen databasetilkobling.</p>')
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute("SELECT * FROM bobil WHERE Finnkode = %s", (finnkode,))
+        ad = cur.fetchone()
+        if not ad:
+            return render_page("detaljer", '<p class="no-data">Annonse ikke funnet.</p>')
+
+        # Hent prishistorikk
+        cur.execute(
+            "SELECT Tidspunkt, Pris FROM prisendringer WHERE Finnkode = %s ORDER BY Tidspunkt ASC",
+            (finnkode,)
+        )
+        prishistorikk = cur.fetchall()
+
+        pris = parse_price(ad["Pris"])
+        km = parse_km(ad.get("Kilometerstand"))
+        alder_txt, alder_cls = format_age(ad.get("Oppdatert", ""))
+        finn_url = f"https://www.finn.no/mobility/item/{finnkode}"
+
+        # Bygg Chart.js data
+        chart_labels = []
+        chart_data = []
+        for p in prishistorikk:
+            ts = p["Tidspunkt"]
+            if isinstance(ts, datetime):
+                chart_labels.append(ts.strftime("%d.%m.%Y"))
+            else:
+                chart_labels.append(str(ts))
+            pris_val = parse_price(p["Pris"])
+            chart_data.append(pris_val if pris_val else 0)
+
+        image_url = ad.get("ImageURL", "") or ""
+        lokasjon = ad.get("Lokasjon", "") or ""
+        img_html = f'<img src="{image_url}" class="detail-img" alt="">' if image_url else ""
+
+        html = f"""
+        <div style="margin-bottom: 15px;">
+            <a href="detaljer" style="font-size: 0.85em;">&larr; Tilbake til oversikt</a>
+        </div>
+        <h2 style="margin-bottom: 10px; color: var(--text-color);">
+            <a href="{finn_url}" target="_blank">{ad.get('Annonsenavn', finnkode)}</a>
+        </h2>
+        {img_html}
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin-bottom: 20px; font-size: 0.9em;">
+            <div><span style="color: var(--text-muted);">Finnkode:</span> <a href="{finn_url}" target="_blank">{finnkode}</a></div>
+            <div><span style="color: var(--text-muted);">Modell:</span> {ad.get('Modell', '—')}</div>
+            <div><span style="color: var(--text-muted);">Pris:</span> {format_price(pris)}</div>
+            <div><span style="color: var(--text-muted);">Km:</span> {ad.get('Kilometerstand', '—')}</div>
+            <div><span style="color: var(--text-muted);">Type:</span> {ad.get('Typebobil', '—')}</div>
+            <div><span style="color: var(--text-muted);">Girkasse:</span> {ad.get('Girkasse', '—')}</div>
+            <div><span style="color: var(--text-muted);">Nyttelast:</span> {ad.get('Nyttelast', '—')}</div>
+            <div><span style="color: var(--text-muted);">Lokasjon:</span> {lokasjon or '—'}</div>
+            <div><span style="color: var(--text-muted);">Sist sett:</span> <span class="{alder_cls}">{alder_txt}</span></div>
+        </div>
+        <div style="color: var(--text-muted); font-size: 0.85em; margin-bottom: 20px;">
+            {ad.get('Beskrivelse', '')}
+        </div>
+        """
+
+        if chart_data and len(chart_data) > 1:
+            import json as json_mod
+            html += f"""
+            <h3 style="color: var(--primary-color); margin-bottom: 10px;">Prishistorikk</h3>
+            <div style="max-width: 700px; margin-bottom: 20px;">
+                <canvas id="prisChart"></canvas>
+            </div>
+            <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+            <script>
+                new Chart(document.getElementById('prisChart'), {{
+                    type: 'line',
+                    data: {{
+                        labels: {json_mod.dumps(chart_labels)},
+                        datasets: [{{
+                            label: 'Pris (kr)',
+                            data: {json_mod.dumps(chart_data)},
+                            borderColor: '#4caf50',
+                            backgroundColor: 'rgba(76,175,80,0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 4,
+                            pointBackgroundColor: '#4caf50'
+                        }}]
+                    }},
+                    options: {{
+                        responsive: true,
+                        plugins: {{
+                            legend: {{ display: false }},
+                            tooltip: {{
+                                callbacks: {{
+                                    label: ctx => ctx.parsed.y.toLocaleString('no-NO') + ' kr'
+                                }}
+                            }}
+                        }},
+                        scales: {{
+                            y: {{
+                                ticks: {{
+                                    callback: v => (v/1000) + 'k',
+                                    color: '#9e9e9e'
+                                }},
+                                grid: {{ color: 'rgba(255,255,255,0.05)' }}
+                            }},
+                            x: {{
+                                ticks: {{ color: '#9e9e9e', maxRotation: 45 }},
+                                grid: {{ color: 'rgba(255,255,255,0.05)' }}
+                            }}
+                        }}
+                    }}
+                }});
+            </script>
+            """
+        elif prishistorikk:
+            html += '<p style="color: var(--text-muted);">Kun ett datapunkt i prishistorikken.</p>'
+        else:
+            html += '<p style="color: var(--text-muted);">Ingen prishistorikk registrert.</p>'
+
+        # Prisendringer-tabell
+        if prishistorikk:
+            html += """
+            <h3 style="color: var(--primary-color); margin: 20px 0 10px;">Prisendringer</h3>
+            <table style="max-width: 500px;">
+                <thead><tr><th>Tidspunkt</th><th>Pris</th></tr></thead>
+                <tbody>
+            """
+            for p in reversed(prishistorikk):
+                ts = p["Tidspunkt"]
+                if isinstance(ts, datetime):
+                    ts_str = ts.strftime("%d.%m.%Y %H:%M")
+                else:
+                    ts_str = str(ts)
+                pval = parse_price(p["Pris"])
+                html += f"<tr><td>{ts_str}</td><td>{format_price(pval) if pval else p['Pris']}</td></tr>"
+            html += "</tbody></table>"
+
+        return render_page("detaljer", html)
+    except Exception as e:
+        logger.error("Feil i view_annonse: %s", e)
+        return render_page("detaljer", '<p class="no-data">Feil ved henting av annonse.</p>')
+    finally:
+        conn.close()
 
 
 @app.route("/scrape", methods=["POST"])
@@ -1258,8 +1507,12 @@ def api_status():
 if __name__ == "__main__":
     logger.info("Starter Bobil web UI på port 8100...")
 
+    # Sørg for at nye kolonner finnes
+    ensure_db_columns()
+
     # Start planlagt scraping i bakgrunnen
-    schedule_scraper(interval_hours=6)
+    scrape_interval = options.get("scrape_interval", 6)
+    schedule_scraper(interval_hours=scrape_interval)
 
     # Start webserveren
     serve(app, host="0.0.0.0", port=8100)
