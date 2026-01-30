@@ -1405,7 +1405,7 @@ def view_annonse(finnkode):
 
         html = f"""
         <div style="margin-bottom: 15px;">
-            <a href="../detaljer" style="font-size: 0.85em;">&larr; Tilbake</a>
+            <a href="javascript:history.back()" style="font-size: 0.85em;">&larr; Tilbake</a>
         </div>
         <h2 style="margin-bottom: 10px; color: var(--text-color);">
             <a href="{finn_url}" target="_blank">{ad.get('Annonsenavn', finnkode)}</a>
