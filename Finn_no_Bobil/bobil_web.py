@@ -261,9 +261,15 @@ def get_prisendringer():
         """)
         rows = cur.fetchall()
         for r in rows:
-            r["NaaverendePris"] = format_price(parse_price(r["Pris"]))
-            r["LavestePrisF"] = format_price(parse_price(r["LavestePris"]))
-            r["HoyestePrisF"] = format_price(parse_price(r["HoyestePris"]))
+            pris = parse_price(r["Pris"])
+            laveste = parse_price(r["LavestePris"])
+            hoyeste = parse_price(r["HoyestePris"])
+            # Hvis nåværende pris mangler (f.eks. solgt), bruk siste kjente pris
+            if not pris and laveste:
+                pris = laveste
+            r["NaaverendePris"] = format_price(pris)
+            r["LavestePrisF"] = format_price(laveste)
+            r["HoyestePrisF"] = format_price(hoyeste)
             r["FinnURL"] = f"https://www.finn.no/mobility/item/{r['Finnkode']}"
             r["Alder"], r["AlderClass"], r["AlderSort"] = format_age(r.get("Oppdatert", ""))
         return rows
@@ -422,9 +428,18 @@ def get_sokresultater(keywords_str):
         rows = cur.fetchall()
 
         for r in rows:
-            r["NaaverendePris"] = format_price(parse_price(r["Pris"]))
-            r["LavestePrisF"] = format_price(parse_price(r["LavestePris"]))
-            r["HoyestePrisF"] = format_price(parse_price(r["HoyestePris"]))
+            pris = parse_price(r["Pris"])
+            laveste = parse_price(r["LavestePris"])
+            hoyeste = parse_price(r["HoyestePris"])
+            if not pris and laveste:
+                pris = laveste
+            if not laveste and pris:
+                laveste = pris
+            if not hoyeste and pris:
+                hoyeste = pris
+            r["NaaverendePris"] = format_price(pris)
+            r["LavestePrisF"] = format_price(laveste)
+            r["HoyestePrisF"] = format_price(hoyeste)
             r["FinnURL"] = f"https://www.finn.no/mobility/item/{r['Finnkode']}"
             r["Alder"], r["AlderClass"], r["AlderSort"] = format_age(r.get("Oppdatert", ""))
             # Finn hvilke termer som ga treff
@@ -520,9 +535,16 @@ def get_detaljer(page=1, per_page=50, filters=None):
         for r in rows:
             pris = parse_price(r["Pris"])
             km = parse_km(r["Kilometerstand"])
+            laveste = parse_price(r["LavestePris"])
+            hoyeste = parse_price(r["HoyestePris"])
+            # Fallback til nåværende pris hvis ingen prishistorikk
+            if not laveste and pris:
+                laveste = pris
+            if not hoyeste and pris:
+                hoyeste = pris
             r["NaaverendePris"] = format_price(pris)
-            r["LavestePrisF"] = format_price(parse_price(r["LavestePris"]))
-            r["HoyestePrisF"] = format_price(parse_price(r["HoyestePris"]))
+            r["LavestePrisF"] = format_price(laveste)
+            r["HoyestePrisF"] = format_price(hoyeste)
             r["FinnURL"] = f"https://www.finn.no/mobility/item/{r['Finnkode']}"
 
             # Sjekk om annonsen er ny (siste 24 timer)
