@@ -41,7 +41,7 @@ except (json.JSONDecodeError, TypeError):
     CHILDREN = ["Barn1"]
 
 # Versjon - MÅ holdes synkronisert med config.yaml og Dockerfile
-ADDON_VERSION = "1.0.20"
+ADDON_VERSION = "1.0.21"
 
 # Konstanter
 MAX_INFO_LENGTH = 500

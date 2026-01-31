@@ -12,8 +12,7 @@ RUN apk add --no-cache \
     py3-pandas \
     py3-flask \
     py3-requests \
-    openjdk17-jre-headless \
-    libjpeg-turbo \
+    openjdk17-jre \
     lcms2 \
     fontconfig \
     ttf-dejavu
@@ -47,4 +46,4 @@ LABEL \
     io.hass.name="Ukenytt" \
     io.hass.description="Mottar ukenytt-PDF via HTTP og konverterer til Home Assistant sensorer" \
     io.hass.type="addon" \
-    io.hass.version="1.0.20"
+    io.hass.version="1.0.21"
