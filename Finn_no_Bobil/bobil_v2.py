@@ -7,7 +7,7 @@ import logging
 import asyncio
 import aiohttp
 import mysql.connector
-from datetime import datetime
+from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 
 # RUN_LOCALLY blir False hvis miljøvariabelen ikke er satt eller ikke finnes.
@@ -72,7 +72,7 @@ def build_search_url(opts: dict) -> str:
 
 LISTINGS_PAGE_URL = build_search_url(options)
 DRY_RUN = options.get("dry_run", False)
-DATE_FORMAT = "%d. %b. %Y %H:%M"
+DATE_FORMAT = "%d. %m. %Y %H:%M"
 
 DB_CONFIG = {
     "host": options.get("databasehost", ""),
@@ -394,6 +394,7 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
         uendrede_annonser = 0
         nye_titler = []
         prisfall_titler = []
+        nye_prislogger = []  # (finnkode, pris) for nye annonser — skrives etter bobil-INSERT
 
         for ad in ads:
             finnkode = ad["Finnkode"]
@@ -470,15 +471,9 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
                 nye_annonser += 1
                 nye_titler.append(f"{ad['Annonsenavn']} ({normalize_and_format_price(ad['Pris'])})")
                 logger.info(f"[{mode}] Ny annonse: Finnkode {finnkode} — {ad['Annonsenavn']} ({normalize_and_format_price(ad['Pris'])})")
-                # Logg første pris til prisendringer-tabellen
+                # Samle opp for prislogg etter bobil-INSERT (FK-rekkefølge)
                 if not dry_run:
-                    try:
-                        cursor.execute(
-                            "INSERT INTO prisendringer (Finnkode, Pris) VALUES (%s, %s)",
-                            (finnkode, ny_pris_int)
-                        )
-                    except Exception as e:
-                        logger.error(f"Feil ved logging av første pris for {finnkode}: {e}")
+                    nye_prislogger.append((finnkode, ny_pris_int))
 
             if not dry_run:
                 query = """
@@ -520,6 +515,17 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
 
         if not dry_run:
             conn.commit()
+            # Logg første pris for nye annonser etter bobil-INSERT er commitet (FK-krav)
+            for fk, pris in nye_prislogger:
+                try:
+                    cursor.execute(
+                        "INSERT INTO prisendringer (Finnkode, Pris) VALUES (%s, %s)",
+                        (fk, pris)
+                    )
+                except Exception as e:
+                    logger.error(f"Feil ved logging av første pris for {fk}: {e}")
+            if nye_prislogger:
+                conn.commit()
 
         logger.info(
             f"[{mode}] Oppsummering: {nye_annonser} nye, {endrede_annonser} endret, "
@@ -559,9 +565,9 @@ def _log_dry_run_summary(ads: list[dict]) -> None:
 
 def mark_removed_ads(current_ads: list[dict], dry_run: bool = False) -> None:
     """
-    Marker annonser som ikke lenger finnes i søkeresultatene som fjernet.
-    Setter Pris til 'Solgt/Fjernet' for annonser som ikke er i current_ads
-    og som ikke allerede er markert.
+    Oppdater SistSett for aktive annonser, og marker som solgt de som ikke
+    har vært i søkeresultatet på over 48 timer. Dette unngår feilmerking av
+    annonser som midlertidig faller utenfor søkefilteret (f.eks. prisøkning).
     """
     mode = "DRY RUN" if dry_run else "LIVE"
     conn = connect_to_database()
@@ -570,29 +576,49 @@ def mark_removed_ads(current_ads: list[dict], dry_run: bool = False) -> None:
 
     try:
         cursor = conn.cursor()
+
+        # Sørg for at SistSett-kolonnen finnes
+        try:
+            cursor.execute("ALTER TABLE bobil ADD COLUMN SistSett DATETIME NULL")
+            logger.info("La til kolonne SistSett i bobil-tabellen.")
+            conn.commit()
+        except Exception as e:
+            if "Duplicate column" not in str(e) and "1060" not in str(e):
+                logger.error(f"Feil ved ALTER TABLE SistSett: {e}")
+
         active_ids = {ad["Finnkode"] for ad in current_ads}
+        now = datetime.now()
 
-        # Hent alle finnkoder som ikke allerede er markert som solgt/fjernet
+        # Oppdater SistSett for alle annonser vi ser i dag
+        if not dry_run and active_ids:
+            cursor.executemany(
+                "UPDATE bobil SET SistSett = %s WHERE Finnkode = %s",
+                [(now, fk) for fk in active_ids]
+            )
+
+        # Hent aktive annonser som ikke er sett på over 48 timer
         cursor.execute(
-            "SELECT Finnkode FROM bobil WHERE Solgt = 0 OR Solgt IS NULL"
+            "SELECT Finnkode FROM bobil WHERE (Solgt = 0 OR Solgt IS NULL) "
+            "AND (SistSett IS NULL OR SistSett < %s)",
+            (now - timedelta(hours=48),)
         )
-        db_ids = {row[0] for row in cursor.fetchall()}
+        stale_ids = {row[0] for row in cursor.fetchall()} - active_ids
 
-        removed_ids = db_ids - active_ids
-        if not removed_ids:
-            logger.info(f"[{mode}] Ingen annonser fjernet fra Finn.")
+        if not stale_ids:
+            logger.info(f"[{mode}] Ingen annonser å markere som solgt.")
+            if not dry_run:
+                conn.commit()
             return
 
-        logger.info(f"[{mode}] {len(removed_ids)} annonser ikke lenger i søkeresultater.")
+        logger.info(f"[{mode}] {len(stale_ids)} annonser ikke sett på over 48t — markeres som solgt.")
 
-        for finnkode in removed_ids:
+        for finnkode in stale_ids:
             logger.info(f"[{mode}] Markerer Finnkode {finnkode} som Solgt/Fjernet.")
             if not dry_run:
                 cursor.execute(
                     "UPDATE bobil SET Solgt = 1 WHERE Finnkode = %s",
                     (finnkode,)
                 )
-                # Logg til prisendringer
                 try:
                     cursor.execute(
                         "INSERT INTO prisendringer (Finnkode, Pris) VALUES (%s, %s)",
@@ -603,7 +629,7 @@ def mark_removed_ads(current_ads: list[dict], dry_run: bool = False) -> None:
 
         if not dry_run:
             conn.commit()
-        logger.info(f"[{mode}] Markerte {len(removed_ids)} annonser som Solgt/Fjernet.")
+        logger.info(f"[{mode}] Markerte {len(stale_ids)} annonser som Solgt/Fjernet.")
     except Exception as e:
         logger.error(f"Feil ved markering av fjernede annonser: {e}")
     finally:

@@ -14,6 +14,13 @@ from datetime import datetime
 import mysql.connector
 from mysql.connector import pooling
 from flask import Flask, render_template_string, request, redirect, url_for, jsonify
+from markupsafe import escape
+
+def e(val):
+    """HTML-escape en verdi. Returnerer tom streng for None."""
+    if val is None:
+        return ""
+    return str(escape(val))
 from waitress import serve
 
 # Logging
@@ -47,25 +54,25 @@ scraper_status = {
     "error": None,
 }
 
-# Norske måneder for datoparsing
-NO_MONTHS = {
-    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "mai": 5, "jun": 6,
-    "jul": 7, "aug": 8, "sep": 9, "okt": 10, "nov": 11, "des": 12,
+# Månedsnavn til tall — norsk og engelsk
+MONTH_MAP = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "mai": 5, "may": 5,
+    "jun": 6, "jul": 7, "aug": 8, "sep": 9, "okt": 10, "oct": 10,
+    "nov": 11, "des": 12, "dec": 12,
 }
 
 
 def parse_norwegian_date(date_str):
-    """Parse norsk datostreng som '25. jan. 2025 14:30' til datetime."""
+    """Parse datostreng som '25. jan. 2025 14:30' eller '25. May. 2026 14:31' til datetime."""
     if not date_str or date_str == "Ukjent":
         return None
     try:
-        # Fjern punktum etter måned og normaliser
         s = date_str.strip().lower()
-        for no, num in NO_MONTHS.items():
-            if no in s:
-                s = re.sub(rf"\b{no}\.?\b", f"{num:02d}", s)
+        for name, num in MONTH_MAP.items():
+            if name in s:
+                s = re.sub(rf"\b{name}\.?\b", f"{num:02d}", s)
                 break
-        # Forventet format nå: "25. 01. 2025 14:30" eller "25. 01 2025 14:30"
+        # Forventet format nå: "25. 05. 2026 14:31"
         m = re.match(r"(\d{1,2})\.\s*(\d{2})\.?\s+(\d{4})\s+(\d{2}):(\d{2})", s)
         if m:
             return datetime(int(m.group(3)), int(m.group(2)), int(m.group(1)),
@@ -311,11 +318,11 @@ def get_kjopsscore():
             laveste = r["LavestePris"]
             dato = parse_norwegian_date(r["Oppdatert"])
 
-            if not pris or not dato:
+            if not pris:
                 continue
 
-            dager = (now - dato).days
-            if dager > 60:
+            dager = (now - dato).days if dato else 0
+            if dato and dager > 60:
                 continue
 
             # Fallback til nåværende pris hvis ingen prishistorikk
@@ -612,11 +619,13 @@ def run_scraper_background():
 
 def schedule_scraper(interval_hours=6):
     """Start periodisk scraping i bakgrunnstråd."""
+    import time
+
     def loop():
         while True:
             logger.info("Starter planlagt scraping...")
             run_scraper_background()
-            threading.Event().wait(interval_hours * 3600)
+            time.sleep(interval_hours * 3600)
 
     t = threading.Thread(target=loop, daemon=True, name="scraper-scheduler")
     t.start()
@@ -1050,14 +1059,14 @@ def view_prisendringer():
     for r in rows:
         html += f"""
             <tr>
-                <td><a href="annonse/{r['Finnkode']}">{r['Finnkode']}</a></td>
-                <td class="truncate">{r['Annonsenavn'] or ''}</td>
-                <td>{r['Modell'] or ''}</td>
-                <td>{r['NaaverendePris']}</td>
-                <td class="price-down">{r['LavestePrisF']}</td>
-                <td class="price-up">{r['HoyestePrisF']}</td>
-                <td><strong>{r['AntallEndringer']}</strong></td>
-                <td class="{r['AlderClass']}" data-sort-value="{r['AlderSort']}">{r['Alder']}</td>
+                <td><a href="annonse/{e(r['Finnkode'])}">{e(r['Finnkode'])}</a></td>
+                <td class="truncate">{e(r['Annonsenavn'])}</td>
+                <td>{e(r['Modell'])}</td>
+                <td>{e(r['NaaverendePris'])}</td>
+                <td class="price-down">{e(r['LavestePrisF'])}</td>
+                <td class="price-up">{e(r['HoyestePrisF'])}</td>
+                <td><strong>{e(r['AntallEndringer'])}</strong></td>
+                <td class="{e(r['AlderClass'])}" data-sort-value="{e(r['AlderSort'])}">{e(r['Alder'])}</td>
             </tr>
         """
     html += "</tbody></table>"
@@ -1092,19 +1101,19 @@ def view_kjopsscore():
         treff_html = ""
         if r["Soketreff"]:
             for t in r["Soketreff"].split(", "):
-                treff_html += f'<span class="keyword-tag">{t}</span>'
+                treff_html += f'<span class="keyword-tag">{e(t)}</span>'
         ny_badge = '<span class="new-badge">NY</span>' if r.get("ErNy") else ""
         html += f"""
             <tr>
-                <td class="score">{r['KjopsScore']}</td>
-                <td><a href="annonse/{r['Finnkode']}">{r['Finnkode']}</a></td>
-                <td class="truncate">{r['Annonsenavn'] or ''}{ny_badge}</td>
-                <td>{r['Modell'] or ''}</td>
-                <td>{r['NaaverendePris']}</td>
-                <td class="price-down">{r['LavestePris']}</td>
-                <td class="price-up">{r['HoyestePris']}</td>
-                <td>{r['AntallEndringer']}</td>
-                <td>{r['DagerPaaMarkedet']}</td>
+                <td class="score">{e(r['KjopsScore'])}</td>
+                <td><a href="annonse/{e(r['Finnkode'])}">{e(r['Finnkode'])}</a></td>
+                <td class="truncate">{e(r['Annonsenavn'])}{ny_badge}</td>
+                <td>{e(r['Modell'])}</td>
+                <td>{e(r['NaaverendePris'])}</td>
+                <td class="price-down">{e(r['LavestePris'])}</td>
+                <td class="price-up">{e(r['HoyestePris'])}</td>
+                <td>{e(r['AntallEndringer'])}</td>
+                <td>{e(r['DagerPaaMarkedet'])}</td>
                 <td>{treff_html}</td>
             </tr>
         """
@@ -1136,10 +1145,10 @@ def view_prisutvikling():
         style = ' style="border-top: 2px solid var(--border-color)"' if modell_display else ""
         html += f"""
             <tr{style}>
-                <td><strong>{modell_display}</strong></td>
-                <td>{r['Periode']}</td>
-                <td>{r['GjSnittPrisF']}</td>
-                <td>{r['Antall']}</td>
+                <td><strong>{e(modell_display)}</strong></td>
+                <td>{e(r['Periode'])}</td>
+                <td>{e(r['GjSnittPrisF'])}</td>
+                <td>{e(r['Antall'])}</td>
             </tr>
         """
         prev_modell = r["Modell"]
@@ -1154,7 +1163,7 @@ def view_sok():
 
     html = f"""
     <form class="search-form" method="GET" action="sok">
-        <input type="text" name="q" value="{keywords}"
+        <input type="text" name="q" value="{e(keywords)}"
                placeholder="Søk etter nøkkelord (kommaseparert, f.eks: køye, familie, vendbare seter)">
         <button type="submit" class="btn">Søk</button>
     </form>
@@ -1186,19 +1195,19 @@ def view_sok():
             treff_html = ""
             if r.get("Soketreff"):
                 for t in r["Soketreff"].split(", "):
-                    treff_html += f'<span class="keyword-tag">{t}</span>'
+                    treff_html += f'<span class="keyword-tag">{e(t)}</span>'
             html += f"""
                 <tr>
-                    <td><a href="annonse/{r['Finnkode']}">{r['Finnkode']}</a></td>
-                    <td class="truncate">{r['Annonsenavn'] or ''}</td>
-                    <td>{r['Modell'] or ''}</td>
-                    <td>{r['NaaverendePris']}</td>
-                    <td>{r.get('Kilometerstand', '')}</td>
-                    <td>{r.get('Typebobil', '')}</td>
-                    <td>{r['AntallEndringer']}</td>
-                    <td class="price-down">{r['LavestePrisF']}</td>
-                    <td class="price-up">{r['HoyestePrisF']}</td>
-                    <td class="{r['AlderClass']}" data-sort-value="{r['AlderSort']}">{r['Alder']}</td>
+                    <td><a href="annonse/{e(r['Finnkode'])}">{e(r['Finnkode'])}</a></td>
+                    <td class="truncate">{e(r['Annonsenavn'])}</td>
+                    <td>{e(r['Modell'])}</td>
+                    <td>{e(r['NaaverendePris'])}</td>
+                    <td>{e(r.get('Kilometerstand'))}</td>
+                    <td>{e(r.get('Typebobil'))}</td>
+                    <td>{e(r['AntallEndringer'])}</td>
+                    <td class="price-down">{e(r['LavestePrisF'])}</td>
+                    <td class="price-up">{e(r['HoyestePrisF'])}</td>
+                    <td class="{e(r['AlderClass'])}" data-sort-value="{e(r['AlderSort'])}">{e(r['Alder'])}</td>
                     <td>{treff_html}</td>
                 </tr>
             """
@@ -1315,26 +1324,26 @@ def view_detaljer():
         <tbody>
     """
     for r in rows:
-        priskm_html = f"{r['PrisPerKm']}" if r["PrisPerKm"] is not None else "—"
+        priskm_html = e(r['PrisPerKm']) if r["PrisPerKm"] is not None else "—"
         is_sold = bool(r.get("Solgt")) or "solgt" in str(r.get("Pris", "")).lower()
         row_class = ' class="sold"' if is_sold else ""
         sold_badge = '<span class="sold-badge">Solgt</span>' if is_sold else ""
         ny_badge = '<span class="new-badge">NY</span>' if r.get("ErNy") and not is_sold else ""
         img_url = r.get("ImageURL", "") or ""
-        thumb_html = f'<img src="{img_url}" class="thumb" alt="">' if img_url else ""
+        thumb_html = f'<img src="{e(img_url)}" class="thumb" alt="">' if img_url else ""
         lokasjon = r.get("Lokasjon", "") or ""
         html += f"""
             <tr{row_class}>
                 <td>{thumb_html}</td>
-                <td class="truncate"><a href="annonse/{r['Finnkode']}">{r['Annonsenavn'] or r['Finnkode']}</a>{sold_badge}{ny_badge}</td>
-                <td>{r['Modell'] or ''}</td>
-                <td>{r.get('Kilometerstand', '')}</td>
-                <td>{r['NaaverendePris']}</td>
-                <td class="price-down">{r['LavestePrisF']}</td>
-                <td class="price-up">{r['HoyestePrisF']}</td>
+                <td class="truncate"><a href="annonse/{e(r['Finnkode'])}">{e(r['Annonsenavn'] or r['Finnkode'])}</a>{sold_badge}{ny_badge}</td>
+                <td>{e(r['Modell'])}</td>
+                <td>{e(r.get('Kilometerstand'))}</td>
+                <td>{e(r['NaaverendePris'])}</td>
+                <td class="price-down">{e(r['LavestePrisF'])}</td>
+                <td class="price-up">{e(r['HoyestePrisF'])}</td>
                 <td>{priskm_html}</td>
-                <td>{lokasjon}</td>
-                <td class="{r['AlderClass']}" data-sort-value="{r['AlderSort']}">{r['Alder']}</td>
+                <td>{e(lokasjon)}</td>
+                <td class="{e(r['AlderClass'])}" data-sort-value="{e(r['AlderSort'])}">{e(r['Alder'])}</td>
             </tr>
         """
     html += "</tbody></table>"
@@ -1401,29 +1410,29 @@ def view_annonse(finnkode):
 
         image_url = ad.get("ImageURL", "") or ""
         lokasjon = ad.get("Lokasjon", "") or ""
-        img_html = f'<img src="{image_url}" class="detail-img" alt="">' if image_url else ""
+        img_html = f'<img src="{e(image_url)}" class="detail-img" alt="">' if image_url else ""
 
         html = f"""
         <div style="margin-bottom: 15px;">
             <a href="javascript:history.back()" style="font-size: 0.85em;">&larr; Tilbake</a>
         </div>
         <h2 style="margin-bottom: 10px; color: var(--text-color);">
-            <a href="{finn_url}" target="_blank">{ad.get('Annonsenavn', finnkode)}</a>
+            <a href="{e(finn_url)}" target="_blank">{e(ad.get('Annonsenavn', finnkode))}</a>
         </h2>
         {img_html}
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin-bottom: 20px; font-size: 0.9em;">
-            <div><span style="color: var(--text-muted);">Finnkode:</span> <a href="{finn_url}" target="_blank">{finnkode}</a></div>
-            <div><span style="color: var(--text-muted);">Modell:</span> {ad.get('Modell', '—')}</div>
-            <div><span style="color: var(--text-muted);">Pris:</span> {format_price(pris)}</div>
-            <div><span style="color: var(--text-muted);">Km:</span> {ad.get('Kilometerstand', '—')}</div>
-            <div><span style="color: var(--text-muted);">Type:</span> {ad.get('Typebobil', '—')}</div>
-            <div><span style="color: var(--text-muted);">Girkasse:</span> {ad.get('Girkasse', '—')}</div>
-            <div><span style="color: var(--text-muted);">Nyttelast:</span> {ad.get('Nyttelast', '—')}</div>
-            <div><span style="color: var(--text-muted);">Lokasjon:</span> {lokasjon or '—'}</div>
-            <div><span style="color: var(--text-muted);">Sist sett:</span> <span class="{alder_cls}">{alder_txt}</span></div>
+            <div><span style="color: var(--text-muted);">Finnkode:</span> <a href="{e(finn_url)}" target="_blank">{e(finnkode)}</a></div>
+            <div><span style="color: var(--text-muted);">Modell:</span> {e(ad.get('Modell')) or '—'}</div>
+            <div><span style="color: var(--text-muted);">Pris:</span> {e(format_price(pris))}</div>
+            <div><span style="color: var(--text-muted);">Km:</span> {e(ad.get('Kilometerstand')) or '—'}</div>
+            <div><span style="color: var(--text-muted);">Type:</span> {e(ad.get('Typebobil')) or '—'}</div>
+            <div><span style="color: var(--text-muted);">Girkasse:</span> {e(ad.get('Girkasse')) or '—'}</div>
+            <div><span style="color: var(--text-muted);">Nyttelast:</span> {e(ad.get('Nyttelast')) or '—'}</div>
+            <div><span style="color: var(--text-muted);">Lokasjon:</span> {e(lokasjon) or '—'}</div>
+            <div><span style="color: var(--text-muted);">Sist sett:</span> <span class="{e(alder_cls)}">{e(alder_txt)}</span></div>
         </div>
         <div style="color: var(--text-muted); font-size: 0.85em; margin-bottom: 20px;">
-            {ad.get('Beskrivelse', '')}
+            {e(ad.get('Beskrivelse', ''))}
         </div>
         """
 
@@ -1498,7 +1507,8 @@ def view_annonse(finnkode):
                 else:
                     ts_str = str(ts)
                 pval = parse_price(p["Pris"])
-                html += f"<tr><td>{ts_str}</td><td>{format_price(pval) if pval else p['Pris']}</td></tr>"
+                pris_str = format_price(pval) if pval else p["Pris"]
+                html += f"<tr><td>{e(ts_str)}</td><td>{e(pris_str)}</td></tr>"
             html += "</tbody></table>"
 
         return render_page("detaljer", html, base_path=bp)
