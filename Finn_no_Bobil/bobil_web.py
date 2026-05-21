@@ -15,13 +15,14 @@ import mysql.connector
 from mysql.connector import pooling
 from flask import Flask, render_template_string, request, redirect, url_for, jsonify
 from markupsafe import escape
+from waitress import serve
+
 
 def esc(val):
-    """HTML-escape en verdi. Returnerer tom streng for None."""
+    """HTML-escape en verdi for trygg innbygging i HTML. Returnerer tom streng for None."""
     if val is None:
         return ""
     return str(escape(val))
-from waitress import serve
 
 # Logging
 logger = logging.getLogger("bobil_web")
@@ -62,7 +63,7 @@ MONTH_MAP = {
 }
 
 
-def parse_norwegian_datesc(date_str):
+def parse_norwegian_date(date_str):
     """Parse datostreng som '25. jan. 2025 14:30' eller '25. May. 2026 14:31' til datetime."""
     if not date_str or date_str == "Ukjent":
         return None
@@ -75,18 +76,18 @@ def parse_norwegian_datesc(date_str):
         # Forventet format nå: "25. 05. 2026 14:31"
         m = re.match(r"(\d{1,2})\.\s*(\d{2})\.?\s+(\d{4})\s+(\d{2}):(\d{2})", s)
         if m:
-            return datetimesc(int(m.group(3)), int(m.group(2)), int(m.group(1)),
+            return datetime(int(m.group(3)), int(m.group(2)), int(m.group(1)),
                             int(m.group(4)), int(m.group(5)))
     except Exception:
         pass
     return None
 
 
-def parse_pricesc(price_val):
+def parse_price(price_val):
     """Parse pris til int. Håndterer både int og streng-format."""
     if price_val is None:
         return None
-    if isinstancesc(price_val, (int, float)):
+    if isinstance(price_val, (int, float)):
         return int(price_val)
     s = str(price_val)
     if "solgt" in s.lower():
@@ -101,7 +102,7 @@ def parse_km(km_val):
     """Parse kilometerstand til int."""
     if km_val is None:
         return None
-    if isinstancesc(km_val, (int, float)):
+    if isinstance(km_val, (int, float)):
         return int(km_val)
     try:
         return int(re.sub(r"[^\d]", "", str(km_val)))
@@ -109,16 +110,16 @@ def parse_km(km_val):
         return None
 
 
-def format_pricesc(price_int):
+def format_price(price_int):
     """Formater int-pris til lesbar streng."""
     if not price_int:
         return "—"
-    return f"{price_int:,.0f} kr".replacesc(",", " ")
+    return f"{price_int:,.0f} kr".replace(",", " ")
 
 
-def format_agesc(date_str):
+def format_age(date_str):
     """Formater alder fra norsk datostreng til lesbar tekst, fargeklasse og sorteringsverdi."""
-    dato = parse_norwegian_datesc(date_str)
+    dato = parse_norwegian_date(date_str)
     if not dato:
         return "Ukjent", "age-unknown", 99999
     delta = datetime.now() - dato
@@ -190,7 +191,7 @@ def ensure_db_columns():
         # Nye kolonner
         for col, coltype in [("ImageURL", "TEXT"), ("Lokasjon", "VARCHAR(255)"), ("Solgt", "TINYINT(1) DEFAULT 0")]:
             try:
-                cur.executesc(f"ALTER TABLE bobil ADD COLUMN {col} {coltype}")
+                cur.execute(f"ALTER TABLE bobil ADD COLUMN {col} {coltype}")
                 logger.info("La til kolonne %s i bobil-tabellen.", col)
             except mysql.connector.Error as e:
                 if e.errno == 1060:  # Duplicate column
@@ -199,7 +200,7 @@ def ensure_db_columns():
                     logger.error("Feil ved ALTER TABLE for %s: %s", col, e)
         # Migrer eksisterende solgt/fjernet-rader til Solgt=1
         try:
-            cur.executesc("UPDATE bobil SET Solgt = 1 WHERE Pris LIKE '%Solgt%' OR Pris LIKE '%Fjernet%'")
+            cur.execute("UPDATE bobil SET Solgt = 1 WHERE Pris LIKE '%Solgt%' OR Pris LIKE '%Fjernet%'")
             if cur.rowcount > 0:
                 logger.info("Migrerte %d rader med Solgt/Fjernet til Solgt=1.", cur.rowcount)
         except Exception as e:
@@ -215,7 +216,7 @@ def ensure_db_columns():
         ]
         for idx_name, table, columns in indexes:
             try:
-                cur.executesc(f"CREATE INDEX {idx_name} ON {table} ({columns})")
+                cur.execute(f"CREATE INDEX {idx_name} ON {table} ({columns})")
                 logger.info("Opprettet indeks %s på %s.", idx_name, table)
             except mysql.connector.Error as e:
                 if e.errno == 1061:  # Duplicate key name
@@ -226,7 +227,7 @@ def ensure_db_columns():
     except Exception as e:
         logger.error("Feil i ensure_db_columns: %s", e)
     finally:
-        conn.closesc()
+        conn.close()
 
 
 def get_total_count():
@@ -236,12 +237,12 @@ def get_total_count():
         return 0
     try:
         cur = conn.cursor()
-        cur.executesc("SELECT COUNT(*) FROM bobil")
-        return cur.fetchonesc()[0]
+        cur.execute("SELECT COUNT(*) FROM bobil")
+        return cur.fetchone()[0]
     except Exception:
         return 0
     finally:
-        conn.closesc()
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +256,7 @@ def get_prisendringer():
         return []
     try:
         cur = conn.cursor(dictionary=True)
-        cur.executesc("""
+        cur.execute("""
             SELECT b.Finnkode, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert,
                    COUNT(p.Pris) AS AntallEndringer,
                    MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
@@ -268,33 +269,33 @@ def get_prisendringer():
         """)
         rows = cur.fetchall()
         for r in rows:
-            pris = parse_pricesc(r["Pris"])
-            laveste = parse_pricesc(r["LavestePris"])
-            hoyeste = parse_pricesc(r["HoyestePris"])
+            pris = parse_price(r["Pris"])
+            laveste = parse_price(r["LavestePris"])
+            hoyeste = parse_price(r["HoyestePris"])
             # Hvis nåværende pris mangler (f.eks. solgt), bruk siste kjente pris
             if not pris and laveste:
                 pris = laveste
-            r["NaaverendePris"] = format_pricesc(pris)
-            r["LavestePrisF"] = format_pricesc(laveste)
-            r["HoyestePrisF"] = format_pricesc(hoyeste)
+            r["NaaverendePris"] = format_price(pris)
+            r["LavestePrisF"] = format_price(laveste)
+            r["HoyestePrisF"] = format_price(hoyeste)
             r["FinnURL"] = f"https://www.finn.no/mobility/item/{r['Finnkode']}"
-            r["Alder"], r["AlderClass"], r["AlderSort"] = format_agesc(r.get("Oppdatert", ""))
+            r["Alder"], r["AlderClass"], r["AlderSort"] = format_age(r.get("Oppdatert", ""))
         return rows
     except Exception as e:
         logger.error("Feil i get_prisendringer: %s", e)
         return []
     finally:
-        conn.closesc()
+        conn.close()
 
 
-def get_kjopsscoresc():
+def get_kjopsscore():
     """View 2: Kjøpsscore — rangert liste."""
     conn = get_db()
     if not conn:
         return []
     try:
         cur = conn.cursor(dictionary=True)
-        cur.executesc("""
+        cur.execute("""
             SELECT b.Finnkode, b.Annonsenavn, b.Modell, b.Pris, b.Kilometerstand,
                    b.Oppdatert, b.Beskrivelse,
                    COUNT(p.Pris) AS AntallEndringer,
@@ -313,10 +314,10 @@ def get_kjopsscoresc():
         keywords = ["køye", "familie", "vendbare seter", "kapteinstoler"]
 
         for r in rows:
-            pris = parse_pricesc(r["Pris"])
+            pris = parse_price(r["Pris"])
             hoyeste = r["HoyestePris"]  # Allerede int fra CAST, eller None
             laveste = r["LavestePris"]
-            dato = parse_norwegian_datesc(r["Oppdatert"])
+            dato = parse_norwegian_date(r["Oppdatert"])
 
             if not pris:
                 continue
@@ -346,9 +347,9 @@ def get_kjopsscoresc():
                 "Finnkode": r["Finnkode"],
                 "Annonsenavn": r["Annonsenavn"],
                 "Modell": r["Modell"],
-                "NaaverendePris": format_pricesc(pris),
-                "LavestePris": format_pricesc(laveste),
-                "HoyestePris": format_pricesc(hoyeste),
+                "NaaverendePris": format_price(pris),
+                "LavestePris": format_price(laveste),
+                "HoyestePris": format_price(hoyeste),
                 "AntallEndringer": r["AntallEndringer"],
                 "DagerPaaMarkedet": dager,
                 "KjopsScore": score,
@@ -363,7 +364,7 @@ def get_kjopsscoresc():
         logger.error("Feil i get_kjopsscore: %s", e)
         return []
     finally:
-        conn.closesc()
+        conn.close()
 
 
 def get_prisutvikling():
@@ -373,7 +374,7 @@ def get_prisutvikling():
         return []
     try:
         cur = conn.cursor(dictionary=True)
-        cur.executesc(
+        cur.execute(
             "SELECT b.Modell,"
             " DATE_FORMAT(p.Tidspunkt, %s) AS Periode,"
             " ROUND(AVG(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0))) AS GjSnittPris,"
@@ -388,13 +389,13 @@ def get_prisutvikling():
         )
         rows = cur.fetchall()
         for r in rows:
-            r["GjSnittPrisF"] = format_pricesc(parse_pricesc(r["GjSnittPris"]))
+            r["GjSnittPrisF"] = format_price(parse_price(r["GjSnittPris"]))
         return rows
     except Exception as e:
         logger.error("Feil i get_prisutvikling: %s", e)
         return []
     finally:
-        conn.closesc()
+        conn.close()
 
 
 def get_sokresultater(keywords_str):
@@ -417,7 +418,7 @@ def get_sokresultater(keywords_str):
             params.extend([f"%{t}%", f"%{t}%"])
 
         cur = conn.cursor(dictionary=True)
-        cur.executesc(f"""
+        cur.execute(f"""
             SELECT b.Finnkode, b.Annonsenavn, b.Beskrivelse, b.Modell,
                    b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
                    b.Oppdatert, b.Pris,
@@ -435,20 +436,20 @@ def get_sokresultater(keywords_str):
         rows = cur.fetchall()
 
         for r in rows:
-            pris = parse_pricesc(r["Pris"])
-            laveste = parse_pricesc(r["LavestePris"])
-            hoyeste = parse_pricesc(r["HoyestePris"])
+            pris = parse_price(r["Pris"])
+            laveste = parse_price(r["LavestePris"])
+            hoyeste = parse_price(r["HoyestePris"])
             if not pris and laveste:
                 pris = laveste
             if not laveste and pris:
                 laveste = pris
             if not hoyeste and pris:
                 hoyeste = pris
-            r["NaaverendePris"] = format_pricesc(pris)
-            r["LavestePrisF"] = format_pricesc(laveste)
-            r["HoyestePrisF"] = format_pricesc(hoyeste)
+            r["NaaverendePris"] = format_price(pris)
+            r["LavestePrisF"] = format_price(laveste)
+            r["HoyestePrisF"] = format_price(hoyeste)
             r["FinnURL"] = f"https://www.finn.no/mobility/item/{r['Finnkode']}"
-            r["Alder"], r["AlderClass"], r["AlderSort"] = format_agesc(r.get("Oppdatert", ""))
+            r["Alder"], r["AlderClass"], r["AlderSort"] = format_age(r.get("Oppdatert", ""))
             # Finn hvilke termer som ga treff
             tekst = f"{r['Annonsenavn']} {r.get('Beskrivelse', '')}".lower()
             r["Soketreff"] = ", ".join(t for t in terms if t.lower() in tekst)
@@ -457,7 +458,7 @@ def get_sokresultater(keywords_str):
         logger.error("Feil i get_sokresultater: %s", e)
         return []
     finally:
-        conn.closesc()
+        conn.close()
 
 
 def get_filter_options():
@@ -467,17 +468,17 @@ def get_filter_options():
         return {"modeller": [], "typer": [], "girkasser": []}
     try:
         cur = conn.cursor()
-        cur.executesc("SELECT DISTINCT Modell FROM bobil WHERE Modell IS NOT NULL ORDER BY Modell DESC")
+        cur.execute("SELECT DISTINCT Modell FROM bobil WHERE Modell IS NOT NULL ORDER BY Modell DESC")
         modeller = [r[0] for r in cur.fetchall()]
-        cur.executesc("SELECT DISTINCT Typebobil FROM bobil WHERE Typebobil IS NOT NULL AND Typebobil != 'Ikke oppgitt' ORDER BY Typebobil")
+        cur.execute("SELECT DISTINCT Typebobil FROM bobil WHERE Typebobil IS NOT NULL AND Typebobil != 'Ikke oppgitt' ORDER BY Typebobil")
         typer = [r[0] for r in cur.fetchall()]
-        cur.executesc("SELECT DISTINCT Girkasse FROM bobil WHERE Girkasse IS NOT NULL AND Girkasse != 'Ikke oppgitt' ORDER BY Girkasse")
+        cur.execute("SELECT DISTINCT Girkasse FROM bobil WHERE Girkasse IS NOT NULL AND Girkasse != 'Ikke oppgitt' ORDER BY Girkasse")
         girkasser = [r[0] for r in cur.fetchall()]
         return {"modeller": modeller, "typer": typer, "girkasser": girkasser}
     except Exception:
         return {"modeller": [], "typer": [], "girkasser": []}
     finally:
-        conn.closesc()
+        conn.close()
 
 
 def get_detaljer(page=1, per_page=50, filters=None):
@@ -516,11 +517,11 @@ def get_detaljer(page=1, per_page=50, filters=None):
         where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
 
         # Totalt antall med filter
-        cur.executesc(f"SELECT COUNT(*) AS total FROM bobil b {where_clause}", params)
-        total = cur.fetchonesc()["total"]
+        cur.execute(f"SELECT COUNT(*) AS total FROM bobil b {where_clause}", params)
+        total = cur.fetchone()["total"]
 
         offset = (page - 1) * per_page
-        cur.executesc(f"""
+        cur.execute(f"""
             SELECT b.Finnkode, b.Annonsenavn, b.Beskrivelse, b.Modell,
                    b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
                    b.Oppdatert, b.Pris, b.URL, b.ImageURL, b.Lokasjon, b.Solgt,
@@ -540,24 +541,24 @@ def get_detaljer(page=1, per_page=50, filters=None):
 
         now = datetime.now()
         for r in rows:
-            pris = parse_pricesc(r["Pris"])
+            pris = parse_price(r["Pris"])
             km = parse_km(r["Kilometerstand"])
-            laveste = parse_pricesc(r["LavestePris"])
-            hoyeste = parse_pricesc(r["HoyestePris"])
+            laveste = parse_price(r["LavestePris"])
+            hoyeste = parse_price(r["HoyestePris"])
             # Fallback til nåværende pris hvis ingen prishistorikk
             if not laveste and pris:
                 laveste = pris
             if not hoyeste and pris:
                 hoyeste = pris
-            r["NaaverendePris"] = format_pricesc(pris)
-            r["LavestePrisF"] = format_pricesc(laveste)
-            r["HoyestePrisF"] = format_pricesc(hoyeste)
+            r["NaaverendePris"] = format_price(pris)
+            r["LavestePrisF"] = format_price(laveste)
+            r["HoyestePrisF"] = format_price(hoyeste)
             r["FinnURL"] = f"https://www.finn.no/mobility/item/{r['Finnkode']}"
 
             # Sjekk om annonsen er ny (siste 24 timer)
-            dato = parse_norwegian_datesc(r.get("Oppdatert", ""))
+            dato = parse_norwegian_date(r.get("Oppdatert", ""))
             r["ErNy"] = dato and (now - dato).total_seconds() < 86400
-            r["Alder"], r["AlderClass"], r["AlderSort"] = format_agesc(r.get("Oppdatert", ""))
+            r["Alder"], r["AlderClass"], r["AlderSort"] = format_age(r.get("Oppdatert", ""))
 
             # Pris per km
             if pris and km and km > 0:
@@ -567,8 +568,8 @@ def get_detaljer(page=1, per_page=50, filters=None):
 
             # Prutet
             if pris:
-                r["Prutet12"] = format_pricesc(round(pris * 0.88))
-                r["Prutet13"] = format_pricesc(round(pris * 0.87))
+                r["Prutet12"] = format_price(round(pris * 0.88))
+                r["Prutet13"] = format_price(round(pris * 0.87))
             else:
                 r["Prutet12"] = "—"
                 r["Prutet13"] = "—"
@@ -589,7 +590,7 @@ def get_detaljer(page=1, per_page=50, filters=None):
         logger.error("Feil i get_detaljer: %s", e)
         return [], 0
     finally:
-        conn.closesc()
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -988,7 +989,7 @@ TEMPLATE = """
 
                 // Toggle sorteringsretning
                 const isAsc = th.classList.contains('sort-asc');
-                table.querySelectorAll('th').forEach(h => h.classList.removesc('sort-asc', 'sort-desc'));
+                table.querySelectorAll('th').forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
                 th.classList.add(isAsc ? 'sort-desc' : 'sort-asc');
                 const dir = isAsc ? -1 : 1;
 
@@ -998,11 +999,11 @@ TEMPLATE = """
                     let aVal = aCell?.textContent.trim() || '';
                     let bVal = bCell?.textContent.trim() || '';
                     if (type === 'number') {
-                        const aNum = parseFloat(aCell?.dataset.sortValue ?? aVal.replacesc(/[^0-9.-]/g, '')) || 0;
-                        const bNum = parseFloat(bCell?.dataset.sortValue ?? bVal.replacesc(/[^0-9.-]/g, '')) || 0;
+                        const aNum = parseFloat(aCell?.dataset.sortValue ?? aVal.replace(/[^\d.-]/g, '')) || 0;
+                        const bNum = parseFloat(bCell?.dataset.sortValue ?? bVal.replace(/[^\d.-]/g, '')) || 0;
                         return (aNum - bNum) * dir;
                     }
-                    return aVal.localeComparesc(bVal, 'no') * dir;
+                    return aVal.localeCompare(bVal, 'no') * dir;
                 });
                 rows.forEach(row => tbody.appendChild(row));
             });
@@ -1013,11 +1014,11 @@ TEMPLATE = """
 """
 
 
-def render_pagesc(active_tab, content_html, base_path=""):
+def render_page(active_tab, content_html, base_path=""):
     """Render en side med felles layout."""
     last_scrape = None
     if scraper_status["last_run"]:
-        last_scrape = scraper_status["last_run"].strftimesc("%d.%m.%Y %H:%M")
+        last_scrape = scraper_status["last_run"].strftime("%d.%m.%Y %H:%M")
     return render_template_string(
         TEMPLATE,
         active_tab=active_tab,
@@ -1038,7 +1039,7 @@ def index():
 def view_prisendringer():
     rows = get_prisendringer()
     if not rows:
-        return render_pagesc("prisendringer", '<p class="no-data">Ingen prisendringer funnet.</p>')
+        return render_page("prisendringer", '<p class="no-data">Ingen prisendringer funnet.</p>')
 
     html = """
     <table>
@@ -1070,14 +1071,14 @@ def view_prisendringer():
             </tr>
         """
     html += "</tbody></table>"
-    return render_pagesc("prisendringer", html)
+    return render_page("prisendringer", html)
 
 
 @app.route("/kjopsscore")
-def view_kjopsscoresc():
-    rows = get_kjopsscoresc()
+def view_kjopsscore():
+    rows = get_kjopsscore()
     if not rows:
-        return render_pagesc("kjopsscore", '<p class="no-data">Ingen aktive annonser med score.</p>')
+        return render_page("kjopsscore", '<p class="no-data">Ingen aktive annonser med score.</p>')
 
     html = """
     <table>
@@ -1118,14 +1119,14 @@ def view_kjopsscoresc():
             </tr>
         """
     html += "</tbody></table>"
-    return render_pagesc("kjopsscore", html)
+    return render_page("kjopsscore", html)
 
 
 @app.route("/prisutvikling")
 def view_prisutvikling():
     rows = get_prisutvikling()
     if not rows:
-        return render_pagesc("prisutvikling", '<p class="no-data">Ingen prisdata funnet.</p>')
+        return render_page("prisutvikling", '<p class="no-data">Ingen prisdata funnet.</p>')
 
     html = """
     <table>
@@ -1153,7 +1154,7 @@ def view_prisutvikling():
         """
         prev_modell = r["Modell"]
     html += "</tbody></table>"
-    return render_pagesc("prisutvikling", html)
+    return render_page("prisutvikling", html)
 
 
 @app.route("/sok")
@@ -1213,7 +1214,7 @@ def view_sok():
             """
         html += "</tbody></table>"
 
-    return render_pagesc("sok", html)
+    return render_page("sok", html)
 
 
 @app.route("/detaljer")
@@ -1232,7 +1233,7 @@ def view_detaljer():
     rows, total = get_detaljer(page, per_page, filters)
 
     if not rows and not any(filters.values()):
-        return render_pagesc("detaljer", '<p class="no-data">Ingen annonser funnet.</p>')
+        return render_page("detaljer", '<p class="no-data">Ingen annonser funnet.</p>')
 
     # Hent filteralternativer
     filter_opts = get_filter_options()
@@ -1303,7 +1304,7 @@ def view_detaljer():
 
     if not rows:
         html += '<p class="no-data">Ingen annonser matcher filtrene.</p>'
-        return render_pagesc("detaljer", html)
+        return render_page("detaljer", html)
 
     html += """
     <table>
@@ -1356,7 +1357,7 @@ def view_detaljer():
         html += '<div class="pagination">'
         if page > 1:
             html += f'<a href="detaljer?page={page - 1}{fqs_amp}">Forrige</a>'
-        for p in rangesc(1, total_pages + 1):
+        for p in range(1, total_pages + 1):
             if p == page:
                 html += f'<span class="current">{p}</span>'
             elif abs(p - page) <= 3 or p == 1 or p == total_pages:
@@ -1367,33 +1368,33 @@ def view_detaljer():
             html += f'<a href="detaljer?page={page + 1}{fqs_amp}">Neste</a>'
         html += '</div>'
 
-    return render_pagesc("detaljer", html)
+    return render_page("detaljer", html)
 
 
 @app.route("/annonse/<int:finnkode>")
-def view_annonsesc(finnkode):
+def view_annonse(finnkode):
     """Detaljside for en enkelt annonse med prishistorikk-graf."""
     bp = "../"
     conn = get_db()
     if not conn:
-        return render_pagesc("detaljer", '<p class="no-data">Ingen databasetilkobling.</p>', base_path=bp)
+        return render_page("detaljer", '<p class="no-data">Ingen databasetilkobling.</p>', base_path=bp)
     try:
         cur = conn.cursor(dictionary=True)
-        cur.executesc("SELECT * FROM bobil WHERE Finnkode = %s", (finnkode,))
-        ad = cur.fetchonesc()
+        cur.execute("SELECT * FROM bobil WHERE Finnkode = %s", (finnkode,))
+        ad = cur.fetchone()
         if not ad:
-            return render_pagesc("detaljer", '<p class="no-data">Annonse ikke funnet.</p>', base_path=bp)
+            return render_page("detaljer", '<p class="no-data">Annonse ikke funnet.</p>', base_path=bp)
 
         # Hent prishistorikk
-        cur.executesc(
+        cur.execute(
             "SELECT Tidspunkt, Pris FROM prisendringer WHERE Finnkode = %s ORDER BY Tidspunkt ASC",
             (finnkode,)
         )
         prishistorikk = cur.fetchall()
 
-        pris = parse_pricesc(ad["Pris"])
+        pris = parse_price(ad["Pris"])
         km = parse_km(ad.get("Kilometerstand"))
-        alder_txt, alder_cls, _ = format_agesc(ad.get("Oppdatert", ""))
+        alder_txt, alder_cls, _ = format_age(ad.get("Oppdatert", ""))
         finn_url = f"https://www.finn.no/mobility/item/{finnkode}"
 
         # Bygg Chart.js data
@@ -1401,11 +1402,11 @@ def view_annonsesc(finnkode):
         chart_data = []
         for p in prishistorikk:
             ts = p["Tidspunkt"]
-            if isinstancesc(ts, datetime):
-                chart_labels.append(ts.strftimesc("%d.%m.%Y"))
+            if isinstance(ts, datetime):
+                chart_labels.append(ts.strftime("%d.%m.%Y"))
             else:
                 chart_labels.append(str(ts))
-            pris_val = parse_pricesc(p["Pris"])
+            pris_val = parse_price(p["Pris"])
             chart_data.append(pris_val if pris_val else 0)
 
         image_url = ad.get("ImageURL", "") or ""
@@ -1423,7 +1424,7 @@ def view_annonsesc(finnkode):
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin-bottom: 20px; font-size: 0.9em;">
             <div><span style="color: var(--text-muted);">Finnkode:</span> <a href="{esc(finn_url)}" target="_blank">{esc(finnkode)}</a></div>
             <div><span style="color: var(--text-muted);">Modell:</span> {esc(ad.get('Modell')) or '—'}</div>
-            <div><span style="color: var(--text-muted);">Pris:</span> {esc(format_pricesc(pris))}</div>
+            <div><span style="color: var(--text-muted);">Pris:</span> {esc(format_price(pris))}</div>
             <div><span style="color: var(--text-muted);">Km:</span> {esc(ad.get('Kilometerstand')) or '—'}</div>
             <div><span style="color: var(--text-muted);">Type:</span> {esc(ad.get('Typebobil')) or '—'}</div>
             <div><span style="color: var(--text-muted);">Girkasse:</span> {esc(ad.get('Girkasse')) or '—'}</div>
@@ -1502,25 +1503,25 @@ def view_annonsesc(finnkode):
             """
             for p in reversed(prishistorikk):
                 ts = p["Tidspunkt"]
-                if isinstancesc(ts, datetime):
-                    ts_str = ts.strftimesc("%d.%m.%Y %H:%M")
+                if isinstance(ts, datetime):
+                    ts_str = ts.strftime("%d.%m.%Y %H:%M")
                 else:
                     ts_str = str(ts)
-                pval = parse_pricesc(p["Pris"])
-                pris_str = format_pricesc(pval) if pval else p["Pris"]
+                pval = parse_price(p["Pris"])
+                pris_str = format_price(pval) if pval else p["Pris"]
                 html += f"<tr><td>{esc(ts_str)}</td><td>{esc(pris_str)}</td></tr>"
             html += "</tbody></table>"
 
-        return render_pagesc("detaljer", html, base_path=bp)
+        return render_page("detaljer", html, base_path=bp)
     except Exception as e:
         logger.error("Feil i view_annonse: %s", e)
-        return render_pagesc("detaljer", '<p class="no-data">Feil ved henting av annonse.</p>', base_path=bp)
+        return render_page("detaljer", '<p class="no-data">Feil ved henting av annonse.</p>', base_path=bp)
     finally:
-        conn.closesc()
+        conn.close()
 
 
 @app.route("/scrape", methods=["POST"])
-def trigger_scrapesc():
+def trigger_scrape():
     if not scraper_status["running"]:
         t = threading.Thread(target=run_scraper_background, daemon=True)
         t.start()
@@ -1552,4 +1553,4 @@ if __name__ == "__main__":
     schedule_scraper(interval_hours=scrape_interval)
 
     # Start webserveren
-    servesc(app, host="0.0.0.0", port=8100)
+    serve(app, host="0.0.0.0", port=8100)
