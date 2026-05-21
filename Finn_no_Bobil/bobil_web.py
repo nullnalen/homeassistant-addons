@@ -998,8 +998,8 @@ TEMPLATE = """
                     let aVal = aCell?.textContent.trim() || '';
                     let bVal = bCell?.textContent.trim() || '';
                     if (type === 'number') {
-                        const aNum = parseFloat(aCell?.dataset.sortValue ?? aVal.replace(/[^\d.-]/g, '')) || 0;
-                        const bNum = parseFloat(bCell?.dataset.sortValue ?? bVal.replace(/[^\d.-]/g, '')) || 0;
+                        const aNum = parseFloat(aCell?.dataset.sortValue ?? aVal.replace(/[^0-9.-]/g, '')) || 0;
+                        const bNum = parseFloat(bCell?.dataset.sortValue ?? bVal.replace(/[^0-9.-]/g, '')) || 0;
                         return (aNum - bNum) * dir;
                     }
                     return aVal.localeCompare(bVal, 'no') * dir;
