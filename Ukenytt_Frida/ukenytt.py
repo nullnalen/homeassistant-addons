@@ -53,7 +53,7 @@ except (json.JSONDecodeError, TypeError, ValueError) as _cfg_err:
 
 # Versjon satt av Dockerfile via ADDON_VERSION env-var, fallback til hardkodet
 # (synkroniseres med config.yaml ved hvert release via Dockerfile LABEL)
-ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.24")
+ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.25")
 
 # Konstanter
 MAX_INFO_LENGTH = 500
@@ -669,7 +669,7 @@ def _update_derived_sensors(child_name: str, ukeplan: dict, headers: dict) -> No
     safe = _safe_sensor_name(child_name)
 
     sensors = {
-        f"sensor.{safe}_ukenytt_idag": {
+        f"sensor.{safe}_ukenytt_idag_addon": {
             "state": _format_day_plan(ukeplan, today),
             "attributes": {
                 "dag": today,
@@ -677,7 +677,7 @@ def _update_derived_sensors(child_name: str, ukeplan: dict, headers: dict) -> No
                 "icon": "mdi:calendar-today",
             },
         },
-        f"sensor.{safe}_ukenytt_imorgen": {
+        f"sensor.{safe}_ukenytt_imorgen_addon": {
             "state": _format_day_plan(ukeplan, tomorrow),
             "attributes": {
                 "dag": tomorrow,
@@ -688,15 +688,15 @@ def _update_derived_sensors(child_name: str, ukeplan: dict, headers: dict) -> No
     }
 
     # OpenEpaperLink-varianter avledes fra tekst-sensorene
-    for base_key, eink_suffix in [
-        (f"sensor.{safe}_ukenytt_idag", f"sensor.{safe}_ukenytt_idag_openepaperlink"),
-        (f"sensor.{safe}_ukenytt_imorgen", f"sensor.{safe}_ukenytt_imorgen_openepaperlink"),
+    for base_key, eink_key in [
+        (f"sensor.{safe}_ukenytt_idag_addon", f"sensor.{safe}_ukenytt_idag_openepaperlink_addon"),
+        (f"sensor.{safe}_ukenytt_imorgen_addon", f"sensor.{safe}_ukenytt_imorgen_openepaperlink_addon"),
     ]:
         wrapped = _wordwrap_openepaperlink(sensors[base_key]["state"])
-        sensors[eink_suffix] = {
+        sensors[eink_key] = {
             "state": wrapped,
             "attributes": {
-                "friendly_name": f"{child_name} Ukenytt {base_key.split('_')[-1]} (OpenEpaperLink)",
+                "friendly_name": f"{child_name} Ukenytt {base_key.split('_')[-2]} (OpenEpaperLink)",
                 "icon": "mdi:image-text",
             },
         }

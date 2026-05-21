@@ -5,6 +5,15 @@ Alle vesentlige endringer i dette prosjektet vil bli dokumentert i denne filen.
 Formatet er basert på [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 og prosjektet følger [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.25] - 2026-05-21
+
+### Endret
+- Avledede sensor-navn får nå `_addon`-suffiks for å skille dem fra eksisterende Jinja2-hjelpere:
+  - `sensor.{barn}_ukenytt_idag_addon`
+  - `sensor.{barn}_ukenytt_imorgen_addon`
+  - `sensor.{barn}_ukenytt_idag_openepaperlink_addon`
+  - `sensor.{barn}_ukenytt_imorgen_openepaperlink_addon`
+
 ## [1.0.24] - 2026-05-21
 
 ### Lagt til
