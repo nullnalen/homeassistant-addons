@@ -4,12 +4,6 @@ FROM ${BUILD_FROM}
 LABEL maintainer="Kristian Kaldager <kaldager.kristian@gmail.com>"
 LABEL io.hass.version="0.73"
 
-RUN apk add --no-cache python3 py3-pip
-
-# Opprett et virtuelt miljø og installer avhengigheter
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
 # Installer Python-avhengigheter
 COPY requirements.txt /
 RUN pip install --no-cache-dir -r /requirements.txt
