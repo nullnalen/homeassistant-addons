@@ -2,11 +2,13 @@ ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
 LABEL maintainer="Kristian Kaldager <kaldager.kristian@gmail.com>"
-LABEL io.hass.version="0.74"
+LABEL io.hass.version="0.75"
+
+RUN apk add --no-cache python3 py3-pip
 
 # Installer Python-avhengigheter
 COPY requirements.txt /
-RUN pip install --no-cache-dir -r /requirements.txt
+RUN pip install --no-cache-dir --break-system-packages -r /requirements.txt
 
 # Kopier rootfs (S6-overlay konfigurasjon)
 COPY rootfs /
