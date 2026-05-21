@@ -5,6 +5,31 @@ Alle vesentlige endringer i dette prosjektet vil bli dokumentert i denne filen.
 Formatet er basert på [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 og prosjektet følger [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.23] - 2026-05-21
+
+### Fikset
+- **Atomic PDF-opplasting**: ny PDF lagres til temp-fil og aktiveres kun ved vellykket parsing — feil PDF sletter ikke lenger forrige ukes plan
+- Negativ radindeks i `parse_pdf` ved ukedager på første tabellrad (Python `iloc[-1]` gir siste rad — stille feil)
+- `extract_extra_text` stopper ikke lenger alltid ved «fredag» — bruker nå siste ukedagslinje i teksten, fungerer selv om fredag mangler i planen
+
+### Forbedret
+- `get_child_data` leser nå lokal state først (ingen nettverkskall) — raskere sidevisning i Ingress
+- `last_updated` (ISO 8601 UTC) lagt til i sensor-attributter — kan brukes i automations for å varsle ved gammel plan
+- Kortere retry-delay (0,5s) ved oppstart vs. live upload (2s) — raskere addon-start
+
+## [1.0.22] - 2026-05-21
+
+### Fikset
+- **Ukeplan vises ikke etter restart** — `get_child_data()` bruker nå lokal sensor-state som fallback når HA-API ikke svarer eller mangler data
+- Ukenummer-fallback bruker ikke lenger alle siffer i filnavnet (f.eks. `2025-01-15.pdf` ga feil uke); nå kreves "uke"-prefiks i filnavnet eller tekst i PDF
+- Config-advarsel: tydelig loggmelding hvis `UKENYTT_CHILDREN` ikke kan parses (tidligere stille fallback)
+
+### Forbedret
+- PDF-parsing gir nå diagnostisk feilmelding ved uventet tabellstruktur: logger antall kolonner og innholdet i kolonne 0
+- Retry-logikk ved HA API-feil: prøver 3 ganger med 2 sekunders pause ved 5xx/nettverksfeil (4xx avbrytes umiddelbart)
+- `/status`-endepunktet viser nå opplastningstidspunkt (ISO 8601), originalt filnavn og om sensor-state-fil finnes
+- Versjonsnummer leses fra `ADDON_VERSION` env-var satt i Dockerfile, slik at kun Dockerfile og config.yaml trenger oppdatering
+
 ## [1.0.18] - 2026-01-29
 
 ### Forbedret

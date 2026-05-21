@@ -20,7 +20,8 @@ RUN apk add --no-cache \
 # Sett Java-miljøvariabler for tabula-py
 ENV JAVA_HOME="/usr/lib/jvm/java-17-openjdk" \
     LD_LIBRARY_PATH="/usr/lib/jvm/java-17-openjdk/lib/server" \
-    JAVA_OPTS="-Xmx256m"
+    JAVA_OPTS="-Xmx256m" \
+    ADDON_VERSION="1.0.23"
 
 # Opprett symlink for libjvm.so
 RUN ln -sf /usr/lib/jvm/java-17-openjdk/lib/server/libjvm.so /usr/lib/libjvm.so || true
@@ -46,4 +47,4 @@ LABEL \
     io.hass.name="Ukenytt" \
     io.hass.description="Mottar ukenytt-PDF via HTTP og konverterer til Home Assistant sensorer" \
     io.hass.type="addon" \
-    io.hass.version="1.0.21"
+    io.hass.version="1.0.23"

@@ -10,6 +10,8 @@ import logging
 import os
 import re
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -33,15 +35,24 @@ HA_URL = os.getenv("UKENYTT_HA_URL", "http://supervisor/core")
 HA_TOKEN = os.getenv("UKENYTT_HA_TOKEN") or os.getenv("SUPERVISOR_TOKEN", "")
 
 # Parse barn fra JSON miljøvariabel
-_children_json = os.getenv("UKENYTT_CHILDREN", '[{"name": "Barn1"}]')
+_children_json = os.getenv("UKENYTT_CHILDREN", "")
 try:
-    _children_list = json.loads(_children_json) if _children_json else []
+    if not _children_json:
+        raise ValueError("UKENYTT_CHILDREN er tom")
+    _children_list = json.loads(_children_json)
+    if not isinstance(_children_list, list) or not _children_list:
+        raise ValueError("UKENYTT_CHILDREN er ikke en liste eller er tom")
     CHILDREN = [child.get("name", "Barn") for child in _children_list]
-except (json.JSONDecodeError, TypeError):
+except (json.JSONDecodeError, TypeError, ValueError) as _cfg_err:
+    logging.warning(
+        "Kunne ikke parse UKENYTT_CHILDREN ('%s'): %s — bruker fallback ['Barn1']",
+        _children_json, _cfg_err
+    )
     CHILDREN = ["Barn1"]
 
-# Versjon - MÅ holdes synkronisert med config.yaml og Dockerfile
-ADDON_VERSION = "1.0.21"
+# Versjon satt av Dockerfile via ADDON_VERSION env-var, fallback til hardkodet
+# (synkroniseres med config.yaml ved hvert release via Dockerfile LABEL)
+ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.23")
 
 # Konstanter
 MAX_INFO_LENGTH = 500
@@ -253,29 +264,18 @@ INGRESS_TEMPLATE = """
 
 
 def get_child_data(child_name: str) -> dict:
-    """Henter lagret data for et barn fra sensor eller fil."""
-    sensor_name = f"sensor.{_safe_sensor_name(child_name)}_ukenytt_tabell"
-    url = f"{HA_URL}/api/states/{sensor_name}"
-
-    headers = {
-        "Authorization": f"Bearer {HA_TOKEN}",
-        "Content-Type": "application/json",
-    }
-
+    """Henter data for et barn — lokal state først, HA-sensor som sekundær kilde."""
     data = {"name": child_name, "week": None, "ukeplan": None, "info": None}
 
-    try:
-        response = requests.get(url, headers=headers, timeout=5)
-        if response.status_code == 200:
-            sensor_data = response.json()
-            data["week"] = sensor_data.get("state")
-            attrs = sensor_data.get("attributes", {})
-            data["ukeplan"] = attrs.get("ukeplan")
-            data["info"] = attrs.get("info")
-    except requests.RequestException:
-        pass
+    # Les lokal state først (rask, ingen nettverkskall)
+    local_state = load_sensor_state(child_name)
+    if local_state:
+        data["week"] = local_state.get("state")
+        attrs = local_state.get("attributes", {})
+        data["ukeplan"] = attrs.get("ukeplan")
+        data["info"] = attrs.get("info")
 
-    # Hent full info fra fil hvis tilgjengelig
+    # Hent full info fra fil (har alltid prioritet over truncert sensor-info)
     info_path = DATA_DIR / f"{_safe_file_name(child_name)}_info.txt"
     if info_path.exists():
         data["info"] = info_path.read_text(encoding="utf-8")
@@ -372,25 +372,57 @@ def parse_pdf(file_path: Path) -> tuple[dict, list]:
     if df.empty:
         raise ValueError("Tabellen i PDF-en er tom")
 
+    logger.info("Tabell funnet med %d rader og %d kolonner", len(df), len(df.columns))
+
+    # Valider at tabellen har nok kolonner (forventer minst 3: dag, tom, aktiviteter)
+    if len(df.columns) < 3:
+        col_preview = df.to_string(max_rows=5, max_cols=10)
+        logger.error(
+            "Uventet tabellstruktur: kun %d kolonne(r). Forventet minst 3.\nTabellinnhold (5 første rader):\n%s",
+            len(df.columns), col_preview
+        )
+        raise ValueError(
+            f"Uventet tabellstruktur: {len(df.columns)} kolonne(r), forventet minst 3. "
+            "PDF-malen kan ha endret seg."
+        )
+
     ordered_weekdays = WEEKDAYS
     indices = {day: df[df.iloc[:, 0] == day].index.min() for day in ordered_weekdays}
+    found_days = [day for day in ordered_weekdays if pd.notna(indices[day])]
+
+    if not found_days:
+        col0_values = df.iloc[:, 0].unique().tolist()[:10]
+        logger.error(
+            "Ingen ukedager funnet i kolonne 0. Innhold i kolonne 0 (inntil 10 unike): %s",
+            col0_values
+        )
+        raise ValueError(
+            f"Ingen ukedager (Mandag–Fredag) funnet i PDF-tabellen. "
+            f"Kolonne 0 inneholder: {col0_values}. PDF-malen kan ha endret seg."
+        )
+
+    logger.info("Fant ukedager i PDF: %s", found_days)
     last_index = len(df) - 1
 
     output = {}
     for i, day in enumerate(ordered_weekdays):
         if pd.notna(indices[day]):
-            start = indices[day] - 1
+            start = max(0, indices[day] - 1)
             next_day_idx = (
                 indices[ordered_weekdays[i + 1]]
                 if i + 1 < len(ordered_weekdays)
                 else None
             )
             end = (next_day_idx - 2) if pd.notna(next_day_idx) else last_index
+            end = max(start, end)
 
             todo_list = df.iloc[start : end + 1, 2].tolist()
             todo_list = [item for item in todo_list if item and str(item).strip()]
             if todo_list:
                 output[day] = todo_list
+
+    if not output:
+        logger.warning("Parsing fullført, men ingen aktiviteter ble funnet. Ukedager: %s", found_days)
 
     return output, tables
 
@@ -424,13 +456,6 @@ def extract_week_number(file_path: Path, pdf_tables: list = None, pdf_text: str 
         logger.info("Fant ukenummer i filnavn: %s", match.group(1))
         return match.group(1)
 
-    # Fallback: bare tall i filnavnet
-    digits = "".join(filter(str.isdigit, filename))
-    if digits:
-        week = digits.lstrip('0') or '0'
-        logger.info("Fant tall i filnavn: %s", week)
-        return week
-
     # Søk i PDF-teksten (overskrifter etc) etter "Uke XX"
     if pdf_text:
         match = re.search(r'[Uu]ke\s*(\d{1,2})', pdf_text)
@@ -440,7 +465,7 @@ def extract_week_number(file_path: Path, pdf_tables: list = None, pdf_text: str 
 
     # Fallback: søk i tabellene
     if pdf_tables:
-        for i, table in enumerate(pdf_tables):
+        for table in pdf_tables:
             if hasattr(table, 'to_string'):
                 table_text = table.to_string()
                 match = re.search(r'[Uu]ke\s*(\d{1,2})', table_text)
@@ -448,38 +473,41 @@ def extract_week_number(file_path: Path, pdf_tables: list = None, pdf_text: str 
                     logger.info("Fant ukenummer i tabell: %s", match.group(1))
                     return match.group(1)
 
-    logger.warning("Kunne ikke finne ukenummer")
+    logger.warning("Kunne ikke finne ukenummer i filnavn '%s' eller PDF-innhold", file_path.name)
     return "0"
 
 
 def extract_extra_text(pdf_text: str) -> str:
-    """Ekstraherer tekst som kommer etter tabellen (informasjon, beskjeder etc)."""
+    """Ekstraherer tekst som ikke er del av ukeplan-tabellen (beskjeder, info etc).
 
+    Strategi: finn siste forekomst av en ukedag i teksten og ta alt etter det.
+    Fallback: filtrer bort alle linjer som kun inneholder ukedager.
+    """
     if not pdf_text:
         return ""
 
-    # Fjern ukeplan-delen (linjer med ukedager)
     lines = pdf_text.split('\n')
-    extra_lines = []
-    past_table = False
 
-    weekdays = WEEKDAYS_LOWER
-
-    for line in lines:
+    # Finn indeksen til den siste linjen som inneholder en ukedag
+    last_weekday_line = -1
+    for i, line in enumerate(lines):
         line_lower = line.lower().strip()
+        if any(day in line_lower for day in WEEKDAYS_LOWER):
+            last_weekday_line = i
 
-        # Sjekk om vi er forbi tabellen (etter fredag)
-        if 'fredag' in line_lower:
-            past_table = True
-            continue
+    if last_weekday_line >= 0:
+        # Ta alt etter siste ukedag-linje
+        candidate_lines = lines[last_weekday_line + 1:]
+    else:
+        # Ingen ukedager funnet — filtrer bort kortlinjer som kun er ukedagnavn
+        candidate_lines = lines
 
-        if past_table and line.strip():
-            # Hopp over linjer som bare er ukedager
-            if not any(day in line_lower for day in weekdays):
-                extra_lines.append(line.strip())
+    extra_lines = [
+        line.strip() for line in candidate_lines
+        if line.strip() and not any(line.lower().strip() == day for day in WEEKDAYS_LOWER)
+    ]
 
-    extra_text = '\n'.join(extra_lines).strip()
-    return extra_text
+    return '\n'.join(extra_lines).strip()
 
 
 def save_info_file(child_name: str, info_text: str) -> Path:
@@ -521,6 +549,33 @@ def truncate_text(text: str, max_length: int = 500) -> str:
     return text[:max_length - 3].rsplit(' ', 1)[0] + "..."
 
 
+def _post_ha_sensor(url: str, headers: dict, payload: dict, retries: int = 3, delay: float = 2.0) -> bool:
+    """Sender POST til HA API med retry ved midlertidige feil."""
+    for attempt in range(1, retries + 1):
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=10)
+            if response.status_code in (200, 201):
+                return True
+            # 4xx-feil er permanente (feil token, ugyldig payload etc) - ikke retry
+            if 400 <= response.status_code < 500:
+                logger.error("HA API returnerte %s (permanent feil): %s", response.status_code, response.text)
+                return False
+            logger.warning(
+                "HA API feil %s (forsøk %d/%d): %s",
+                response.status_code, attempt, retries, response.text
+            )
+        except requests.Timeout:
+            logger.warning("HA API timeout (forsøk %d/%d)", attempt, retries)
+        except requests.RequestException as e:
+            logger.warning("HA API nettverksfeil (forsøk %d/%d): %s", attempt, retries, e)
+
+        if attempt < retries:
+            time.sleep(delay)
+
+    logger.error("HA API utilgjengelig etter %d forsøk: %s", retries, url)
+    return False
+
+
 def update_home_assistant_sensor(
     child_name: str, data: dict, week_number: str, extra_text: str = ""
 ) -> bool:
@@ -551,6 +606,7 @@ def update_home_assistant_sensor(
             "ukeplan": data,
             "info": info_truncated if info_truncated else None,
             "info_full_available": has_full_info,
+            "last_updated": datetime.now(tz=timezone.utc).isoformat(),
             "friendly_name": f"{child_name} Ukenytt",
             "icon": "mdi:calendar-week",
         },
@@ -559,26 +615,21 @@ def update_home_assistant_sensor(
     # Fjern None-verdier fra attributter
     payload["attributes"] = {k: v for k, v in payload["attributes"].items() if v is not None}
 
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
-        if response.status_code in (200, 201):
-            logger.info("Sensor '%s' oppdatert med uke %s", sensor_name, week_number)
-            save_sensor_state(child_name, payload)
-            return True
-        logger.error(
-            "Feil ved oppdatering av sensor: %s - %s",
-            response.status_code,
-            response.text,
-        )
-        return False
-    except requests.RequestException as e:
-        logger.error("Nettverksfeil ved oppdatering av sensor: %s", e)
-        return False
+    if _post_ha_sensor(url, headers, payload):
+        logger.info("Sensor '%s' oppdatert med uke %s", sensor_name, week_number)
+        save_sensor_state(child_name, payload)
+        return True
+    return False
 
 
-def process_pdf_for_child(child_name: str, original_filename: str = None) -> tuple[bool, str]:
-    """Prosesserer PDF for et barn og oppdaterer sensor."""
-    pdf_path = get_pdf_path(child_name)
+def process_pdf_for_child(
+    child_name: str, original_filename: str = None, pdf_override: Path = None
+) -> tuple[bool, str]:
+    """Prosesserer PDF for et barn og oppdaterer sensor.
+
+    pdf_override: bruk denne filen i stedet for den permanente PDF-stien (ved atomic upload).
+    """
+    pdf_path = pdf_override or get_pdf_path(child_name)
 
     if not pdf_path.exists():
         return False, f"Ingen PDF funnet for {child_name}"
@@ -680,21 +731,36 @@ def upload_pdf():
     if not file_data.startswith(b"%PDF"):
         return jsonify({"error": "Ugyldig filformat - må være PDF"}), 400
 
-    # Lagre filen (overskriver eksisterende)
     pdf_path = get_pdf_path(child_name)
     old_existed = pdf_path.exists()
+    tmp_path = pdf_path.with_suffix(".tmp")
 
+    # Skriv til temp-fil først — beskytt eksisterende PDF ved parsing-feil
     try:
-        pdf_path.write_bytes(file_data)
-        if original_filename:
-            save_original_filename(child_name, original_filename)
-        logger.info("PDF lagret for %s: %s", child_name, pdf_path)
+        tmp_path.write_bytes(file_data)
+        logger.info("PDF midlertidig lagret for %s: %s", child_name, tmp_path)
     except IOError as e:
-        logger.error("Kunne ikke lagre fil: %s", e)
+        logger.error("Kunne ikke lagre temp-fil: %s", e)
         return jsonify({"error": "Kunne ikke lagre fil"}), 500
 
-    # Prosesser PDF og oppdater sensor (med originalt filnavn for ukenummer)
-    success, message = process_pdf_for_child(child_name, original_filename)
+    # Prosesser temp-filen (med originalt filnavn for ukenummer)
+    success, message = process_pdf_for_child(child_name, original_filename, pdf_override=tmp_path)
+
+    if success:
+        # Parsing OK — erstatt eksisterende PDF atomisk
+        try:
+            tmp_path.replace(pdf_path)
+            if original_filename:
+                save_original_filename(child_name, original_filename)
+            logger.info("PDF aktivert for %s: %s", child_name, pdf_path)
+        except IOError as e:
+            logger.error("Kunne ikke aktivere PDF: %s", e)
+            tmp_path.unlink(missing_ok=True)
+            return jsonify({"error": "Kunne ikke aktivere fil etter parsing"}), 500
+    else:
+        # Parsing feilet — behold forrige PDF, slett temp
+        tmp_path.unlink(missing_ok=True)
+        logger.warning("PDF forkastet for %s (parsing feilet): %s", child_name, message)
 
     return (
         jsonify(
@@ -705,7 +771,7 @@ def upload_pdf():
                 "replaced_existing": old_existed,
             }
         ),
-        200 if success else 500,
+        200 if success else 422,
     )
 
 
@@ -755,10 +821,22 @@ def status():
     for child in CHILDREN:
         pdf_path = get_pdf_path(child)
         info_path = DATA_DIR / f"{_safe_file_name(child)}_info.txt"
+        state_path = _get_sensor_state_path(child)
+
+        pdf_uploaded_at = None
+        if pdf_path.exists():
+            mtime = pdf_path.stat().st_mtime
+            pdf_uploaded_at = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+
+        original_filename = get_original_filename(child)
+
         status_info[child] = {
             "has_pdf": pdf_path.exists(),
             "pdf_size": pdf_path.stat().st_size if pdf_path.exists() else None,
+            "pdf_uploaded_at": pdf_uploaded_at,
+            "original_filename": original_filename,
             "has_info_file": info_path.exists(),
+            "has_sensor_state": state_path.exists(),
         }
 
     return jsonify({"children": status_info, "data_directory": str(DATA_DIR)})
@@ -801,16 +879,11 @@ def restore_sensor_from_state(child_name: str) -> bool:
         "Content-Type": "application/json",
     }
 
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
-        if response.status_code in (200, 201):
-            logger.info("Sensor '%s' gjenopprettet fra lagret state", sensor_name)
-            return True
-        logger.warning("Kunne ikke gjenopprette sensor '%s': %s", sensor_name, response.status_code)
-        return False
-    except requests.RequestException as e:
-        logger.warning("Nettverksfeil ved gjenoppretting av sensor '%s': %s", sensor_name, e)
-        return False
+    if _post_ha_sensor(url, headers, payload, delay=0.5):
+        logger.info("Sensor '%s' gjenopprettet fra lagret state", sensor_name)
+        return True
+    logger.warning("Kunne ikke gjenopprette sensor '%s' fra lagret state", sensor_name)
+    return False
 
 
 def startup_process():
