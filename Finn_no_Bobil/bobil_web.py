@@ -1029,12 +1029,12 @@ def render_pagesc(active_tab, content_html, base_path=""):
     )
 
 
-@app.routesc("/")
+@app.route("/")
 def index():
     return redirect("prisendringer")
 
 
-@app.routesc("/prisendringer")
+@app.route("/prisendringer")
 def view_prisendringer():
     rows = get_prisendringer()
     if not rows:
@@ -1073,7 +1073,7 @@ def view_prisendringer():
     return render_pagesc("prisendringer", html)
 
 
-@app.routesc("/kjopsscore")
+@app.route("/kjopsscore")
 def view_kjopsscoresc():
     rows = get_kjopsscoresc()
     if not rows:
@@ -1121,7 +1121,7 @@ def view_kjopsscoresc():
     return render_pagesc("kjopsscore", html)
 
 
-@app.routesc("/prisutvikling")
+@app.route("/prisutvikling")
 def view_prisutvikling():
     rows = get_prisutvikling()
     if not rows:
@@ -1156,7 +1156,7 @@ def view_prisutvikling():
     return render_pagesc("prisutvikling", html)
 
 
-@app.routesc("/sok")
+@app.route("/sok")
 def view_sok():
     keywords = request.args.get("q", "")
     rows = get_sokresultater(keywords) if keywords else []
@@ -1216,7 +1216,7 @@ def view_sok():
     return render_pagesc("sok", html)
 
 
-@app.routesc("/detaljer")
+@app.route("/detaljer")
 def view_detaljer():
     page = request.args.get("page", 1, type=int)
     per_page = 50
@@ -1370,7 +1370,7 @@ def view_detaljer():
     return render_pagesc("detaljer", html)
 
 
-@app.routesc("/annonse/<int:finnkode>")
+@app.route("/annonse/<int:finnkode>")
 def view_annonsesc(finnkode):
     """Detaljside for en enkelt annonse med prishistorikk-graf."""
     bp = "../"
@@ -1519,7 +1519,7 @@ def view_annonsesc(finnkode):
         conn.closesc()
 
 
-@app.routesc("/scrape", methods=["POST"])
+@app.route("/scrape", methods=["POST"])
 def trigger_scrapesc():
     if not scraper_status["running"]:
         t = threading.Thread(target=run_scraper_background, daemon=True)
@@ -1527,7 +1527,7 @@ def trigger_scrapesc():
     return redirect(request.referrer or "prisendringer")
 
 
-@app.routesc("/api/status")
+@app.route("/api/status")
 def api_status():
     return jsonify({
         "last_run": scraper_status["last_run"].isoformat() if scraper_status["last_run"] else None,
