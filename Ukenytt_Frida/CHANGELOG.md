@@ -5,6 +5,18 @@ Alle vesentlige endringer i dette prosjektet vil bli dokumentert i denne filen.
 Formatet er basert på [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 og prosjektet følger [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.24] - 2026-05-21
+
+### Lagt til
+- **Avledede sensorer fra addon** (erstatter Jinja2-hjelpere i HA):
+  - `sensor.{barn}_ukenytt_idag` — dagens plan som tekst
+  - `sensor.{barn}_ukenytt_imorgen` — morgendagens plan som tekst
+  - `sensor.{barn}_ukenytt_idag_openepaperlink` — today med `#`-linjeskift for e-ink
+  - `sensor.{barn}_ukenytt_imorgen_openepaperlink` — tomorrow med `#`-linjeskift for e-ink
+- Alle fire oppdateres automatisk ved midnatt (bakgrunnstråd) og ved ny PDF
+- `POST /refresh` — oppdaterer idag/imorgen-sensorer uten å reparsere PDF
+- Versjon vises nå i `/api`-responsen
+
 ## [1.0.23] - 2026-05-21
 
 ### Fikset

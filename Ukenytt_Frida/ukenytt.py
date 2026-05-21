@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,7 +53,7 @@ except (json.JSONDecodeError, TypeError, ValueError) as _cfg_err:
 
 # Versjon satt av Dockerfile via ADDON_VERSION env-var, fallback til hardkodet
 # (synkroniseres med config.yaml ved hvert release via Dockerfile LABEL)
-ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.23")
+ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.24")
 
 # Konstanter
 MAX_INFO_LENGTH = 500
@@ -254,6 +255,7 @@ INGRESS_TEMPLATE = """
         <div class="api-info">
             <h3>API-endepunkter</h3>
             <p><code>POST /upload?child=navn</code> - Last opp PDF</p>
+            <p><code>POST /refresh</code> - Oppdater idag/imorgen-sensorer</p>
             <p><code>GET /info/navn</code> - Hent full info-tekst (JSON)</p>
             <p><code>GET /api</code> - JSON API-status</p>
         </div>
@@ -314,13 +316,15 @@ def api_index():
     """API-endepunkt - returnerer alltid JSON."""
     return jsonify({
         "addon": "Ukenytt",
+        "version": ADDON_VERSION,
         "status": "running",
         "children": CHILDREN,
         "endpoints": {
             "upload": "POST /upload?child=<name>",
+            "process": "POST /process",
+            "refresh": "POST /refresh",
             "health": "GET /health",
             "status": "GET /status",
-            "process": "POST /process",
             "info": "GET /info/<child_name>"
         }
     })
@@ -549,6 +553,39 @@ def truncate_text(text: str, max_length: int = 500) -> str:
     return text[:max_length - 3].rsplit(' ', 1)[0] + "..."
 
 
+DAYS_NO = ["Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag", "Søndag"]
+WEEKEND = {"Lørdag", "Søndag"}
+OPENEPAPERLINK_WIDTH = 20
+
+
+def _format_day_plan(ukeplan: dict, day: str) -> str:
+    """Returnerer dagens/morgendagens plan som lesbar tekst."""
+    if day in WEEKEND:
+        return "Ingen skole i helgen"
+    plan = ukeplan.get(day, [])
+    if plan:
+        return "\n".join(plan)[:240]
+    return f"Ingen planer for {day}"
+
+
+def _wordwrap_openepaperlink(text: str, max_width: int = OPENEPAPERLINK_WIDTH) -> str:
+    """Bryter tekst til linjer på maks max_width tegn, skilt med '#'."""
+    lines = []
+    for paragraph in text.split("\n"):
+        current = ""
+        for word in paragraph.split():
+            candidate = f"{current} {word}".strip() if current else word
+            if len(candidate) <= max_width:
+                current = candidate
+            else:
+                if current:
+                    lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+    return "#".join(lines)
+
+
 def _post_ha_sensor(url: str, headers: dict, payload: dict, retries: int = 3, delay: float = 2.0) -> bool:
     """Sender POST til HA API med retry ved midlertidige feil."""
     for attempt in range(1, retries + 1):
@@ -618,8 +655,58 @@ def update_home_assistant_sensor(
     if _post_ha_sensor(url, headers, payload):
         logger.info("Sensor '%s' oppdatert med uke %s", sensor_name, week_number)
         save_sensor_state(child_name, payload)
+        _update_derived_sensors(child_name, data, headers)
         return True
     return False
+
+
+def _update_derived_sensors(child_name: str, ukeplan: dict, headers: dict) -> None:
+    """Publiserer idag/imorgen-sensorer og OpenEpaperLink-varianter."""
+    today_idx = datetime.now().weekday()
+    today = DAYS_NO[today_idx]
+    tomorrow = DAYS_NO[(today_idx + 1) % 7]
+
+    safe = _safe_sensor_name(child_name)
+
+    sensors = {
+        f"sensor.{safe}_ukenytt_idag": {
+            "state": _format_day_plan(ukeplan, today),
+            "attributes": {
+                "dag": today,
+                "friendly_name": f"{child_name} Ukenytt i dag",
+                "icon": "mdi:calendar-today",
+            },
+        },
+        f"sensor.{safe}_ukenytt_imorgen": {
+            "state": _format_day_plan(ukeplan, tomorrow),
+            "attributes": {
+                "dag": tomorrow,
+                "friendly_name": f"{child_name} Ukenytt i morgen",
+                "icon": "mdi:calendar-arrow-right",
+            },
+        },
+    }
+
+    # OpenEpaperLink-varianter avledes fra tekst-sensorene
+    for base_key, eink_suffix in [
+        (f"sensor.{safe}_ukenytt_idag", f"sensor.{safe}_ukenytt_idag_openepaperlink"),
+        (f"sensor.{safe}_ukenytt_imorgen", f"sensor.{safe}_ukenytt_imorgen_openepaperlink"),
+    ]:
+        wrapped = _wordwrap_openepaperlink(sensors[base_key]["state"])
+        sensors[eink_suffix] = {
+            "state": wrapped,
+            "attributes": {
+                "friendly_name": f"{child_name} Ukenytt {base_key.split('_')[-1]} (OpenEpaperLink)",
+                "icon": "mdi:image-text",
+            },
+        }
+
+    for sensor_name, payload in sensors.items():
+        url = f"{HA_URL}/api/states/{sensor_name}"
+        if _post_ha_sensor(url, headers, payload, retries=2, delay=0.5):
+            logger.info("Avledet sensor '%s' oppdatert", sensor_name)
+        else:
+            logger.warning("Kunne ikke oppdatere avledet sensor '%s'", sensor_name)
 
 
 def process_pdf_for_child(
@@ -866,6 +953,32 @@ def get_info(child_name: str):
     })
 
 
+def _refresh_derived_sensors() -> None:
+    """Oppdaterer idag/imorgen-sensorer fra lagret state for alle barn."""
+    headers = {
+        "Authorization": f"Bearer {HA_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    for child in CHILDREN:
+        state = load_sensor_state(child)
+        if state:
+            ukeplan = state.get("attributes", {}).get("ukeplan", {})
+            _update_derived_sensors(child, ukeplan, headers)
+
+
+def _midnight_refresh_loop() -> None:
+    """Bakgrunnstråd som oppdaterer idag/imorgen-sensorer ved midnatt."""
+    while True:
+        now = datetime.now()
+        # Sekunder til neste midnatt + 5s buffer
+        seconds_until_midnight = (
+            (23 - now.hour) * 3600 + (59 - now.minute) * 60 + (60 - now.second) + 5
+        )
+        time.sleep(seconds_until_midnight)
+        logger.info("Midnatt-oppdatering: oppdaterer idag/imorgen-sensorer")
+        _refresh_derived_sensors()
+
+
 def restore_sensor_from_state(child_name: str) -> bool:
     """Gjenoppretter sensor fra lagret JSON-state (raskere enn PDF-reprosessering)."""
     payload = load_sensor_state(child_name)
@@ -881,9 +994,22 @@ def restore_sensor_from_state(child_name: str) -> bool:
 
     if _post_ha_sensor(url, headers, payload, delay=0.5):
         logger.info("Sensor '%s' gjenopprettet fra lagret state", sensor_name)
+        ukeplan = payload.get("attributes", {}).get("ukeplan", {})
+        _update_derived_sensors(child_name, ukeplan, headers)
         return True
     logger.warning("Kunne ikke gjenopprette sensor '%s' fra lagret state", sensor_name)
     return False
+
+
+@app.route("/refresh", methods=["POST"])
+def refresh_derived():
+    """Oppdaterer idag/imorgen-sensorer fra lagret state (uten å reparsere PDF)."""
+    if API_KEY:
+        provided_key = request.args.get("api_key") or request.headers.get("X-API-Key")
+        if provided_key != API_KEY:
+            return jsonify({"error": "Ugyldig API-nøkkel"}), 401
+    _refresh_derived_sensors()
+    return jsonify({"success": True, "message": "Idag/imorgen-sensorer oppdatert"})
 
 
 def startup_process():
@@ -911,6 +1037,11 @@ def startup_process():
 
 if __name__ == "__main__":
     startup_process()
+
+    # Start bakgrunnstråd for daglig oppdatering av idag/imorgen-sensorer
+    t = threading.Thread(target=_midnight_refresh_loop, daemon=True, name="midnight-refresh")
+    t.start()
+    logger.info("Midnatt-oppdatering aktivert")
 
     port = int(os.getenv("PORT", "8099"))
     logger.info("Starter webserver på port %d", port)
