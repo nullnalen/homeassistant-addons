@@ -617,7 +617,12 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
                 try:
                     cursor.execute(query, data)
                 except Exception as e:
-                    logger.error(f"Feil ved lagring av annonse {finnkode}: {e}")
+                    # Finn hvilken verdi som er en dict for debugging
+                    bad = [(i, type(v).__name__, repr(v)[:60]) for i, v in enumerate(data) if isinstance(v, (dict, list))]
+                    if bad:
+                        logger.error(f"Feil ved lagring av annonse {finnkode}: dict/list-verdier på posisjon(er): {bad}")
+                    else:
+                        logger.error(f"Feil ved lagring av annonse {finnkode}: {e}")
 
         if not dry_run:
             conn.commit()
