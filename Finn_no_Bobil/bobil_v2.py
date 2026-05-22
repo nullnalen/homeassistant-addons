@@ -492,6 +492,9 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
                             pris_endret = True
                     else:
                         if str(gammel) != str(ny):
+                            # Ikke rapporter SVV-felt som "endret" til None — DB beholder eksisterende verdi
+                            if ny is None and felt_navn[idx].startswith("Svv"):
+                                continue
                             endringer.append(f"{felt_navn[idx]}: '{gammel}' -> '{ny}'")
                 if endringer:
                     endrede_annonser += 1
