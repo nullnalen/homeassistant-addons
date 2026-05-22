@@ -246,6 +246,11 @@ def extract_info_from_json(json_data: dict) -> list[dict]:
             if isinstance(location, dict):
                 location = location.get("name", "")
 
+            # Hent kjennemerke og understellsnummer direkte fra Finn API-JSON
+            regno_raw = ad.get("regno", "") or ""
+            regno = regno_raw.strip().upper().replace(" ", "")
+            chassis = (ad.get("chassis_number", "") or "").strip().upper()
+
             extracted_data.append({
                 "Finnkode": finnkode,
                 "Annonsenavn": ad.get("heading"),
@@ -256,7 +261,9 @@ def extract_info_from_json(json_data: dict) -> list[dict]:
                 "URL": url,
                 "ImageURL": image_url,
                 "Lokasjon": location,
-                "Detaljer": {}
+                "Detaljer": {},
+                "Kjennemerke": regno,
+                "Understellsnummer": chassis,
             })
         return extracted_data
     except Exception as e:
@@ -405,13 +412,24 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
 
             # Hent eksisterende verdier for alle felter
             cursor.execute(
-                "SELECT Annonsenavn, Modell, Kilometerstand, Girkasse, Beskrivelse, Nyttelast, Typebobil, Oppdatert, URL, Pris, ImageURL, Lokasjon FROM bobil WHERE Finnkode = %s",
+                "SELECT Annonsenavn, Modell, Kilometerstand, Girkasse, Beskrivelse, Nyttelast, Typebobil, Oppdatert, URL, Pris, ImageURL, Lokasjon, Kjennemerke, SvvMerke, SvvHandelsbetegnelse, SvvTypebetegnelse, SvvAarsmodell, SvvForstegangNorge, SvvRegistreringsstatus, SvvEuKontrollfrist, SvvEuSistGodkjent, SvvFarge, SvvKarosseritype, SvvAntallDorer, SvvDrivstoff, SvvMotorvolum, SvvMotoreffekt, SvvAntallSylindre, SvvGirkassetype, SvvAntallGir, SvvMaksHastighet, SvvElektrisk, SvvLengde, SvvBredde, SvvHoyde, SvvEgenvekt, SvvNyttelast, SvvTotalvekt, SvvTillattTotalvekt, SvvTilhengervektMedBrems, SvvTilhengervektUtenBrems, SvvVertikalKoplingslast, SvvEuroKlasse, SvvSitteplasser, SvvKjoretoytype FROM bobil WHERE Finnkode = %s",
                 (finnkode,)
             )
             row = cursor.fetchone()
+            svv = ad.get("VegvesenData") or {}
             felt_navn = [
                 "Annonsenavn", "Modell", "Kilometerstand", "Girkasse", "Beskrivelse",
-                "Nyttelast", "Typebobil", "Oppdatert", "URL", "Pris", "ImageURL", "Lokasjon"
+                "Nyttelast", "Typebobil", "Oppdatert", "URL", "Pris", "ImageURL", "Lokasjon",
+                "Kjennemerke", "SvvMerke", "SvvHandelsbetegnelse", "SvvTypebetegnelse",
+                "SvvAarsmodell", "SvvForstegangNorge", "SvvRegistreringsstatus",
+                "SvvEuKontrollfrist", "SvvEuSistGodkjent",
+                "SvvFarge", "SvvKarosseritype", "SvvAntallDorer",
+                "SvvDrivstoff", "SvvMotorvolum", "SvvMotoreffekt", "SvvAntallSylindre",
+                "SvvGirkassetype", "SvvAntallGir", "SvvMaksHastighet", "SvvElektrisk",
+                "SvvLengde", "SvvBredde", "SvvHoyde",
+                "SvvEgenvekt", "SvvNyttelast", "SvvTotalvekt", "SvvTillattTotalvekt",
+                "SvvTilhengervektMedBrems", "SvvTilhengervektUtenBrems", "SvvVertikalKoplingslast",
+                "SvvEuroKlasse", "SvvSitteplasser", "SvvKjoretoytype",
             ]
             nye_verdier = [
                 ad["Annonsenavn"],
@@ -426,6 +444,39 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
                 ny_pris_int,
                 ad.get("ImageURL", ""),
                 ad.get("Lokasjon", ""),
+                ad.get("Kjennemerke", "") or "",
+                svv.get("svv_merke"),
+                svv.get("svv_handelsbetegnelse"),
+                svv.get("svv_typebetegnelse"),
+                svv.get("svv_aarsmodell"),
+                svv.get("svv_forstegang_norge"),
+                svv.get("svv_registreringsstatus"),
+                svv.get("svv_eu_kontrollfrist"),
+                svv.get("svv_eu_sist_godkjent"),
+                svv.get("svv_farge"),
+                svv.get("svv_karosseritype"),
+                svv.get("svv_antall_dorer"),
+                svv.get("svv_drivstoff"),
+                svv.get("svv_motorvolum"),
+                svv.get("svv_motoreffekt"),
+                svv.get("svv_antall_sylindre"),
+                svv.get("svv_girkassetype"),
+                svv.get("svv_antall_gir"),
+                svv.get("svv_maks_hastighet"),
+                svv.get("svv_elektrisk"),
+                svv.get("svv_lengde"),
+                svv.get("svv_bredde"),
+                svv.get("svv_hoyde"),
+                svv.get("svv_egenvekt"),
+                svv.get("svv_nyttelast"),
+                svv.get("svv_totalvekt"),
+                svv.get("svv_tillatt_totalvekt"),
+                svv.get("svv_tilhengervekt_med_brems"),
+                svv.get("svv_tilhengervekt_uten_brems"),
+                svv.get("svv_vertikal_koplingslast"),
+                svv.get("svv_euro_klasse"),
+                svv.get("svv_sitteplasser"),
+                svv.get("svv_kjoretoytype"),
             ]
             if row:
                 endringer = []
@@ -476,9 +527,29 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
                     nye_prislogger.append((finnkode, ny_pris_int))
 
             if not dry_run:
-                query = """
-                    INSERT INTO bobil (Finnkode, Annonsenavn, Modell, Kilometerstand, Girkasse, Beskrivelse, Nyttelast, Typebobil, Oppdatert, URL, Pris, ImageURL, Lokasjon)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                # Bygg SVV ON DUPLICATE KEY UPDATE-del dynamisk for alle SVV-felter
+                svv_cols = [
+                    "SvvMerke", "SvvHandelsbetegnelse", "SvvTypebetegnelse",
+                    "SvvAarsmodell", "SvvForstegangNorge", "SvvRegistreringsstatus",
+                    "SvvEuKontrollfrist", "SvvEuSistGodkjent",
+                    "SvvFarge", "SvvKarosseritype", "SvvAntallDorer",
+                    "SvvDrivstoff", "SvvMotorvolum", "SvvMotoreffekt", "SvvAntallSylindre",
+                    "SvvGirkassetype", "SvvAntallGir", "SvvMaksHastighet", "SvvElektrisk",
+                    "SvvLengde", "SvvBredde", "SvvHoyde",
+                    "SvvEgenvekt", "SvvNyttelast", "SvvTotalvekt", "SvvTillattTotalvekt",
+                    "SvvTilhengervektMedBrems", "SvvTilhengervektUtenBrems", "SvvVertikalKoplingslast",
+                    "SvvEuroKlasse", "SvvSitteplasser", "SvvKjoretoytype",
+                ]
+                svv_upsert = ",\n                        ".join(
+                    f"{c} = IF(VALUES({c}) IS NOT NULL, VALUES({c}), {c})" for c in svv_cols
+                )
+                placeholders = ", ".join(["%s"] * (13 + len(svv_cols)))
+                query = f"""
+                    INSERT INTO bobil (
+                        Finnkode, Annonsenavn, Modell, Kilometerstand, Girkasse, Beskrivelse,
+                        Nyttelast, Typebobil, Oppdatert, URL, Pris, ImageURL, Lokasjon,
+                        Kjennemerke, {", ".join(svv_cols)}
+                    ) VALUES ({placeholders})
                     ON DUPLICATE KEY UPDATE
                         Annonsenavn = VALUES(Annonsenavn),
                         Modell = VALUES(Modell),
@@ -491,7 +562,9 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
                         URL = VALUES(URL),
                         Pris = VALUES(Pris),
                         ImageURL = VALUES(ImageURL),
-                        Lokasjon = VALUES(Lokasjon)
+                        Lokasjon = VALUES(Lokasjon),
+                        Kjennemerke = VALUES(Kjennemerke),
+                        {svv_upsert}
                 """
                 data = (
                     finnkode,
@@ -507,6 +580,39 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
                     ny_pris_int,
                     ad.get("ImageURL", ""),
                     ad.get("Lokasjon", ""),
+                    ad.get("Kjennemerke", "") or "",
+                    svv.get("svv_merke"),
+                    svv.get("svv_handelsbetegnelse"),
+                    svv.get("svv_typebetegnelse"),
+                    svv.get("svv_aarsmodell"),
+                    svv.get("svv_forstegang_norge"),
+                    svv.get("svv_registreringsstatus"),
+                    svv.get("svv_eu_kontrollfrist") or None,
+                    svv.get("svv_eu_sist_godkjent") or None,
+                    svv.get("svv_farge"),
+                    svv.get("svv_karosseritype"),
+                    svv.get("svv_antall_dorer"),
+                    svv.get("svv_drivstoff"),
+                    svv.get("svv_motorvolum"),
+                    svv.get("svv_motoreffekt"),
+                    svv.get("svv_antall_sylindre"),
+                    svv.get("svv_girkassetype"),
+                    svv.get("svv_antall_gir"),
+                    svv.get("svv_maks_hastighet"),
+                    svv.get("svv_elektrisk"),
+                    svv.get("svv_lengde"),
+                    svv.get("svv_bredde"),
+                    svv.get("svv_hoyde"),
+                    svv.get("svv_egenvekt"),
+                    svv.get("svv_nyttelast"),
+                    svv.get("svv_totalvekt"),
+                    svv.get("svv_tillatt_totalvekt"),
+                    svv.get("svv_tilhengervekt_med_brems"),
+                    svv.get("svv_tilhengervekt_uten_brems"),
+                    svv.get("svv_vertikal_koplingslast"),
+                    svv.get("svv_euro_klasse"),
+                    svv.get("svv_sitteplasser"),
+                    svv.get("svv_kjoretoytype"),
                 )
                 try:
                     cursor.execute(query, data)
@@ -676,6 +782,8 @@ async def main() -> None:
 
         detailed_ads = await fetch_and_combine_data(session, ads_data)
 
+        detailed_ads = await enrich_ads_with_vegvesen(session, detailed_ads)
+
         update_database(detailed_ads, dry_run=DRY_RUN)
 
         # Marker annonser som ikke lenger finnes i søkeresultatene
@@ -691,3 +799,171 @@ def run_scraper():
 
 if __name__ == "__main__":
     run_scraper()
+
+
+# -- Vegvesen-integrasjon --------------------------------------------------
+
+SVV_API_URL = "https://akfell-datautlevering.atlas.vegvesen.no/enkeltoppslag/kjoretoydata"
+
+def get_svv_api_key():
+    return options.get("vegvesen_api_key") or os.getenv("VEGVESEN_API_KEY")
+
+async def fetch_vegvesen_data(session, kjennemerke=None, chassis=None):
+    api_key = get_svv_api_key()
+    if not api_key:
+        logger.debug("Ingen Vegvesen API-nokkel konfigurert.")
+        return None
+    if kjennemerke:
+        param = "kjennemerke=" + kjennemerke.strip().upper().replace(" ", "")
+        ident = kjennemerke
+    elif chassis:
+        param = "understellsnummer=" + chassis.strip().upper()
+        ident = chassis
+    else:
+        return None
+    url = SVV_API_URL + "?" + param
+    logger.info("Vegvesen-oppslag for " + ident + "...")
+    try:
+        async with session.get(
+            url,
+            headers={"SVV-Authorization": "Apikey " + api_key, "Accept": "application/json"},
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                logger.info("Vegvesen-data hentet for " + ident)
+                return parse_vegvesen_data(data)
+            else:
+                text = await resp.text()
+                logger.warning("Vegvesen API HTTP " + str(resp.status) + " for " + ident + ": " + text[:200])
+                return None
+    except Exception as e:
+        logger.warning("Feil ved Vegvesen-oppslag for " + ident + ": " + str(e))
+        return None
+
+def parse_vegvesen_data(data):
+    result = {}
+    try:
+        liste = data.get("kjoretoydataListe", [])
+        k = liste[0] if liste else data
+
+        td = k.get("godkjenning", {}).get("tekniskGodkjenning", {}).get("tekniskeData", {})
+
+        # Generelt
+        merke_list = td.get("generelt", {}).get("merke", [{}])
+        result["svv_merke"] = merke_list[0].get("merke") if merke_list else None
+        handel = td.get("generelt", {}).get("handelsbetegnelse") or []
+        result["svv_handelsbetegnelse"] = handel[0] if handel else None
+        result["svv_typebetegnelse"] = td.get("generelt", {}).get("typebetegnelse")
+        result["svv_kjoretoytype"] = td.get("generelt", {}).get("tekniskKode", {}).get("kodeBeskrivelse")
+
+        # Årsmodell + første registrering Norge
+        forsteg_dato = k.get("forstegangsregistrering", {}).get("registrertForstegangNorgeDato", "")
+        if forsteg_dato and len(forsteg_dato) >= 4:
+            result["svv_aarsmodell"] = int(forsteg_dato[:4])
+            result["svv_forstegang_norge"] = forsteg_dato
+        else:
+            result["svv_aarsmodell"] = None
+            result["svv_forstegang_norge"] = None
+
+        # Registreringsstatus
+        reg = k.get("registrering", {})
+        result["svv_registreringsstatus"] = reg.get("registreringsstatus", {}).get("kodeBeskrivelse")
+
+        # EU-kontroll
+        pkk = k.get("periodiskKjoretoyKontroll", {})
+        result["svv_eu_kontrollfrist"] = str(pkk.get("kontrollfrist", "") or "")
+        result["svv_eu_sist_godkjent"] = str(pkk.get("sistGodkjent", "") or "")
+
+        # Karosseri og farge
+        karosseri = td.get("karosseriOgLasteplan", {})
+        farge = karosseri.get("rFarge", [{}])
+        result["svv_farge"] = farge[0].get("kodeBeskrivelse") if farge else None
+        result["svv_karosseritype"] = (karosseri.get("karosseritype") or {}).get("kodeBeskrivelse")
+        result["svv_antall_dorer"] = karosseri.get("antallDorer", [None])[0] if karosseri.get("antallDorer") else None
+
+        # Motor og drivverk
+        motor_driv = td.get("motorOgDrivverk", {})
+        motor = motor_driv.get("motor", [{}])
+        m0 = motor[0] if motor else {}
+        drivstoff = m0.get("drivstoff", [{}])
+        result["svv_drivstoff"] = drivstoff[0].get("drivstoffKode", {}).get("kodeBeskrivelse") if drivstoff else None
+        result["svv_motorvolum"] = m0.get("slagvolum")
+        result["svv_motoreffekt"] = drivstoff[0].get("maksNettoEffekt") if drivstoff else None
+        result["svv_antall_sylindre"] = m0.get("antallSylindre")
+        result["svv_girkassetype"] = (motor_driv.get("girkassetype") or {}).get("kodeBeskrivelse")
+        result["svv_antall_gir"] = motor_driv.get("antallGir")
+        result["svv_maks_hastighet"] = motor_driv.get("maksimumHastighet", [None])[0] if motor_driv.get("maksimumHastighet") else None
+        result["svv_elektrisk"] = motor_driv.get("utelukkendeElektriskDrift") or motor_driv.get("hybridElektriskKjoretoy")
+
+        # Dimensjoner
+        dim = td.get("dimensjoner", {})
+        result["svv_lengde"] = dim.get("lengde")
+        result["svv_bredde"] = dim.get("bredde")
+        result["svv_hoyde"] = dim.get("hoyde")
+
+        # Vekter
+        vekter = td.get("vekter", {})
+        result["svv_egenvekt"] = vekter.get("egenvekt")
+        result["svv_nyttelast"] = vekter.get("nyttelast")
+        result["svv_totalvekt"] = vekter.get("tekniskTillattTotalvekt")
+        result["svv_tillatt_totalvekt"] = vekter.get("tillattTotalvekt")
+        result["svv_tilhengervekt_med_brems"] = vekter.get("tillattTilhengervektMedBrems")
+        result["svv_tilhengervekt_uten_brems"] = vekter.get("tillattTilhengervektUtenBrems")
+        result["svv_vertikal_koplingslast"] = vekter.get("tillattVertikalKoplingslast")
+
+        # Miljø
+        miljo = td.get("miljodata", {})
+        result["svv_euro_klasse"] = miljo.get("euroKlasse")
+
+        # Sitteplasser
+        result["svv_sitteplasser"] = td.get("persontall", {}).get("sitteplasserTotalt")
+    except Exception:
+        pass
+    return result
+
+def extract_regnr_from_ad(ad):
+    """Returner (kjennemerke, understellsnummer) for Vegvesen-oppslag.
+    Prøver JSON-felter fra Finn API først, deretter HTML-scraped Detaljer."""
+    import re as _re
+
+    # 1. Kjennemerke direkte fra Finn API-JSON
+    kjennemerke = ad.get("Kjennemerke", "")
+    if kjennemerke and _re.match(r"^[A-Z]{2}[0-9]{4,5}$", kjennemerke):
+        return kjennemerke, None
+
+    # 2. Understellsnummer direkte fra Finn API-JSON
+    chassis = ad.get("Understellsnummer", "")
+    if chassis and len(chassis) >= 5:
+        return None, chassis
+
+    # 3. Fallback: HTML-scraped Detaljer
+    detaljer = ad.get("Detaljer", {})
+    for key in ["Registreringsnummer", "Reg.nr.", "Reg.nr", "Kjennemerke", "Skiltnummer"]:
+        val = detaljer.get(key, "")
+        if val:
+            clean = val.strip().upper().replace(" ", "")
+            if _re.match(r"^[A-Z]{2}[0-9]{4,5}$", clean):
+                return clean, None
+
+    return None, None
+
+async def enrich_ads_with_vegvesen(session, ads):
+    if not get_svv_api_key():
+        logger.info("Vegvesen API-nokkel ikke satt, hopper over SVV-oppslag.")
+        return ads
+    semaphore = asyncio.Semaphore(3)
+    async def enrich(ad):
+        kjennemerke, chassis = extract_regnr_from_ad(ad)
+        if not kjennemerke and not chassis:
+            ad["VegvesenData"] = {}
+            return ad
+        async with semaphore:
+            await asyncio.sleep(0.3)
+            svv = await fetch_vegvesen_data(session, kjennemerke=kjennemerke, chassis=chassis)
+            ad["VegvesenData"] = svv or {}
+            if svv:
+                ident = kjennemerke or chassis
+                logger.info("  Finnkode " + str(ad["Finnkode"]) + ": SVV OK (" + ident + ") - " + str(svv.get("svv_merke")) + " " + str(svv.get("svv_handelsbetegnelse")))
+        return ad
+    return list(await asyncio.gather(*(enrich(ad) for ad in ads)))

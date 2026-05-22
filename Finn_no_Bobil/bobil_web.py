@@ -189,7 +189,44 @@ def ensure_db_columns():
     try:
         cur = conn.cursor()
         # Nye kolonner
-        for col, coltype in [("ImageURL", "TEXT"), ("Lokasjon", "VARCHAR(255)"), ("Solgt", "TINYINT(1) DEFAULT 0")]:
+        for col, coltype in [
+            ("ImageURL", "TEXT"),
+            ("Lokasjon", "VARCHAR(255)"),
+            ("Solgt", "TINYINT(1) DEFAULT 0"),
+            ("Kjennemerke", "VARCHAR(20)"),
+            ("SvvMerke", "VARCHAR(100)"),
+            ("SvvHandelsbetegnelse", "VARCHAR(100)"),
+            ("SvvAarsmodell", "INT"),
+            ("SvvFarge", "VARCHAR(50)"),
+            ("SvvDrivstoff", "VARCHAR(50)"),
+            ("SvvMotorvolum", "INT"),
+            ("SvvMotoreffekt", "FLOAT"),
+            ("SvvTypebetegnelse", "VARCHAR(100)"),
+            ("SvvForstegangNorge", "VARCHAR(20)"),
+            ("SvvRegistreringsstatus", "VARCHAR(50)"),
+            ("SvvEuKontrollfrist", "VARCHAR(20)"),
+            ("SvvEuSistGodkjent", "VARCHAR(20)"),
+            ("SvvKarosseritype", "VARCHAR(50)"),
+            ("SvvAntallDorer", "INT"),
+            ("SvvAntallSylindre", "INT"),
+            ("SvvGirkassetype", "VARCHAR(50)"),
+            ("SvvAntallGir", "INT"),
+            ("SvvMaksHastighet", "INT"),
+            ("SvvElektrisk", "TINYINT(1)"),
+            ("SvvLengde", "INT"),
+            ("SvvBredde", "INT"),
+            ("SvvHoyde", "INT"),
+            ("SvvEgenvekt", "INT"),
+            ("SvvNyttelast", "INT"),
+            ("SvvTotalvekt", "INT"),
+            ("SvvTillattTotalvekt", "INT"),
+            ("SvvTilhengervektMedBrems", "INT"),
+            ("SvvTilhengervektUtenBrems", "INT"),
+            ("SvvVertikalKoplingslast", "INT"),
+            ("SvvEuroKlasse", "VARCHAR(10)"),
+            ("SvvSitteplasser", "INT"),
+            ("SvvKjoretoytype", "VARCHAR(100)"),
+        ]:
             try:
                 cur.execute(f"ALTER TABLE bobil ADD COLUMN {col} {coltype}")
                 logger.info("La til kolonne %s i bobil-tabellen.", col)
@@ -534,7 +571,7 @@ def get_detaljer(page=1, per_page=50, filters=None):
             GROUP BY b.Finnkode, b.Annonsenavn, b.Beskrivelse, b.Modell,
                      b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
                      b.Oppdatert, b.Pris, b.URL, b.ImageURL, b.Lokasjon, b.Solgt
-            ORDER BY b.Modell DESC, CAST(REGEXP_REPLACE(b.Pris, '[^0-9]', '') AS UNSIGNED) ASC
+            ORDER BY b.Oppdatert DESC
             LIMIT %s OFFSET %s
         """, params + [per_page, offset])
         rows = cur.fetchall()
@@ -1411,7 +1448,65 @@ def view_annonse(finnkode):
 
         image_url = ad.get("ImageURL", "") or ""
         lokasjon = ad.get("Lokasjon", "") or ""
+        kjennemerke = ad.get("Kjennemerke", "") or ""
         img_html = f'<img src="{esc(image_url)}" class="detail-img" alt="">' if image_url else ""
+
+        # Vegvesen-data
+        def v(key): return ad.get(key)
+        def vs(key): return esc(ad.get(key)) or "—"
+        har_svv = any(ad.get(k) for k in ["SvvMerke", "SvvHandelsbetegnelse", "SvvFarge", "SvvDrivstoff"])
+
+        def kg(val): return f"{val} kg" if val else "—"
+        def cm(val): return f"{val} cm" if val else "—"
+        def kw(val): return f"{round(val)} kW / {round(val * 1.36)} hk" if val else "—"
+        def liter(val): return f"{val / 1000:.1f} L" if val else "—"
+
+        svv_block = ""
+        if har_svv:
+            svv_block = f"""
+        <h3 style="color: var(--primary-color); margin: 20px 0 10px;">Kjøretøydata fra Statens vegvesen</h3>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin-bottom: 20px; font-size: 0.9em; background: rgba(0,0,0,0.15); padding: 16px; border-radius: 8px;">
+            <div><span style="color: var(--text-muted);">Kjennemerke:</span> <strong>{esc(kjennemerke) or '—'}</strong></div>
+            <div><span style="color: var(--text-muted);">Kjøretøytype:</span> {vs('SvvKjoretoytype')}</div>
+            <div><span style="color: var(--text-muted);">Merke (SVV):</span> {vs('SvvMerke')}</div>
+            <div><span style="color: var(--text-muted);">Handelsbetegnelse:</span> {vs('SvvHandelsbetegnelse')}</div>
+            <div><span style="color: var(--text-muted);">Typebetegnelse:</span> {vs('SvvTypebetegnelse')}</div>
+            <div><span style="color: var(--text-muted);">Årsmodell (SVV):</span> {vs('SvvAarsmodell')}</div>
+            <div><span style="color: var(--text-muted);">1. gang reg. Norge:</span> {vs('SvvForstegangNorge')}</div>
+            <div><span style="color: var(--text-muted);">Registreringsstatus:</span> {vs('SvvRegistreringsstatus')}</div>
+            <div><span style="color: var(--text-muted);">EU-kontroll frist:</span> {vs('SvvEuKontrollfrist')}</div>
+            <div><span style="color: var(--text-muted);">EU-kontroll sist:</span> {vs('SvvEuSistGodkjent')}</div>
+            <div><span style="color: var(--text-muted);">Farge:</span> {vs('SvvFarge')}</div>
+            <div><span style="color: var(--text-muted);">Karosseritype:</span> {vs('SvvKarosseritype')}</div>
+            <div><span style="color: var(--text-muted);">Antall dører:</span> {vs('SvvAntallDorer')}</div>
+            <div><span style="color: var(--text-muted);">Drivstoff (SVV):</span> {vs('SvvDrivstoff')}</div>
+            <div><span style="color: var(--text-muted);">Motorvolum:</span> {liter(v('SvvMotorvolum'))}</div>
+            <div><span style="color: var(--text-muted);">Motoreffekt:</span> {kw(v('SvvMotoreffekt'))}</div>
+            <div><span style="color: var(--text-muted);">Antall sylindre:</span> {vs('SvvAntallSylindre')}</div>
+            <div><span style="color: var(--text-muted);">Girkasse (SVV):</span> {vs('SvvGirkassetype')}</div>
+            <div><span style="color: var(--text-muted);">Antall gir:</span> {vs('SvvAntallGir')}</div>
+            <div><span style="color: var(--text-muted);">Maks hastighet:</span> {"—" if not v('SvvMaksHastighet') else f"{v('SvvMaksHastighet')} km/t"}</div>
+            <div><span style="color: var(--text-muted);">Elektrisk/hybrid:</span> {"Ja" if v('SvvElektrisk') else "—"}</div>
+            <div><span style="color: var(--text-muted);">Euro-klasse:</span> {vs('SvvEuroKlasse')}</div>
+            <div><span style="color: var(--text-muted);">Lengde (SVV):</span> {cm(v('SvvLengde'))}</div>
+            <div><span style="color: var(--text-muted);">Bredde (SVV):</span> {cm(v('SvvBredde'))}</div>
+            <div><span style="color: var(--text-muted);">Høyde (SVV):</span> {cm(v('SvvHoyde'))}</div>
+            <div><span style="color: var(--text-muted);">Egenvekt:</span> {kg(v('SvvEgenvekt'))}</div>
+            <div><span style="color: var(--text-muted);">Nyttelast (SVV):</span> {kg(v('SvvNyttelast'))}</div>
+            <div><span style="color: var(--text-muted);">Teknisk tillatt totalvekt:</span> {kg(v('SvvTotalvekt'))}</div>
+            <div><span style="color: var(--text-muted);">Tillatt totalvekt:</span> {kg(v('SvvTillattTotalvekt'))}</div>
+            <div><span style="color: var(--text-muted);">Tilhengervekt m/brems:</span> {kg(v('SvvTilhengervektMedBrems'))}</div>
+            <div><span style="color: var(--text-muted);">Tilhengervekt u/brems:</span> {kg(v('SvvTilhengervektUtenBrems'))}</div>
+            <div><span style="color: var(--text-muted);">Vertikal koplingslast:</span> {kg(v('SvvVertikalKoplingslast'))}</div>
+            <div><span style="color: var(--text-muted);">Sitteplasser (SVV):</span> {vs('SvvSitteplasser')}</div>
+        </div>
+        """
+        elif kjennemerke:
+            svv_block = f"""
+        <div style="font-size: 0.85em; color: var(--text-muted); margin: 10px 0 20px; padding: 10px 16px; background: rgba(0,0,0,0.1); border-radius: 6px;">
+            Kjennemerke: <strong>{esc(kjennemerke)}</strong> — ingen Vegvesen-data hentet ennå.
+        </div>
+        """
 
         html = f"""
         <div style="margin-bottom: 15px;">
@@ -1432,6 +1527,7 @@ def view_annonse(finnkode):
             <div><span style="color: var(--text-muted);">Lokasjon:</span> {esc(lokasjon) or '—'}</div>
             <div><span style="color: var(--text-muted);">Sist sett:</span> <span class="{esc(alder_cls)}">{esc(alder_txt)}</span></div>
         </div>
+        {svv_block}
         <div style="color: var(--text-muted); font-size: 0.85em; margin-bottom: 20px;">
             {esc(ad.get('Beskrivelse', ''))}
         </div>
