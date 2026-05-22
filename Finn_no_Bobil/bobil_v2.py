@@ -855,7 +855,7 @@ def parse_vegvesen_data(data):
         handel = td.get("generelt", {}).get("handelsbetegnelse") or []
         result["svv_handelsbetegnelse"] = handel[0] if handel else None
         result["svv_typebetegnelse"] = td.get("generelt", {}).get("typebetegnelse")
-        result["svv_kjoretoytype"] = td.get("generelt", {}).get("tekniskKode", {}).get("kodeBeskrivelse")
+        result["svv_kjoretoytype"] = td.get("generelt", {}).get("tekniskKode", {}).get("kodeNavn")
 
         # Årsmodell + første registrering Norge
         forsteg_dato = k.get("forstegangsregistrering", {}).get("registrertForstegangNorgeDato", "")
@@ -879,7 +879,7 @@ def parse_vegvesen_data(data):
         karosseri = td.get("karosseriOgLasteplan", {})
         farge = karosseri.get("rFarge", [{}])
         result["svv_farge"] = farge[0].get("kodeBeskrivelse") if farge else None
-        result["svv_karosseritype"] = (karosseri.get("karosseritype") or {}).get("kodeBeskrivelse")
+        result["svv_karosseritype"] = (karosseri.get("karosseritype") or {}).get("kodeNavn")
         result["svv_antall_dorer"] = karosseri.get("antallDorer", [None])[0] if karosseri.get("antallDorer") else None
 
         # Motor og drivverk
