@@ -117,6 +117,32 @@ def format_price(price_int):
     return f"{price_int:,.0f} kr".replace(",", " ")
 
 
+def format_sistsett(dt):
+    """Formater SistSett (datetime-objekt eller None) til lesbar tekst, fargeklasse og sorteringsverdi (antall dager, lavere = nyere)."""
+    if not dt:
+        return "Ukjent", "age-unknown", 99999
+    if isinstance(dt, str):
+        try:
+            dt = datetime.strptime(dt, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return "Ukjent", "age-unknown", 99999
+    delta = datetime.now() - dt
+    dager = delta.days
+    if dager == 0:
+        timer = delta.seconds // 3600
+        if timer == 0:
+            return "Nå", "age-fresh", 0
+        return f"{timer}t siden", "age-fresh", 0
+    if dager == 1:
+        return "I går", "age-fresh", 1
+    if dager < 7:
+        return f"{dager} dager", "age-fresh", dager
+    if dager < 30:
+        return f"{dager} dager", "age-weeks", dager
+    mnd = dager // 30
+    return f"{mnd} mnd", "age-old", dager
+
+
 def format_age(date_str):
     """Formater alder fra norsk datostreng til lesbar tekst, fargeklasse og sorteringsverdi."""
     dato = parse_norwegian_date(date_str)
@@ -323,7 +349,7 @@ def get_prisendringer():
             r["LavestePrisF"] = format_price(laveste)
             r["HoyestePrisF"] = format_price(hoyeste)
             r["FinnURL"] = f"https://www.finn.no/mobility/item/{r['Finnkode']}"
-            r["Alder"], r["AlderClass"], r["AlderSort"] = format_age(r.get("Oppdatert", ""))
+            r["Alder"], r["AlderClass"], r["AlderSort"] = format_sistsett(r.get("SistSett"))
         return rows
     except Exception as e:
         logger.error("Feil i get_prisendringer: %s", e)
