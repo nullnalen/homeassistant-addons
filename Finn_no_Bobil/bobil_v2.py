@@ -543,7 +543,7 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
                 svv_upsert = ",\n                        ".join(
                     f"{c} = IF(VALUES({c}) IS NOT NULL, VALUES({c}), {c})" for c in svv_cols
                 )
-                placeholders = ", ".join(["%s"] * (13 + len(svv_cols)))
+                placeholders = ", ".join(["%s"] * (14 + len(svv_cols)))
                 query = f"""
                     INSERT INTO bobil (
                         Finnkode, Annonsenavn, Modell, Kilometerstand, Girkasse, Beskrivelse,
@@ -870,10 +870,10 @@ def parse_vegvesen_data(data):
         reg = k.get("registrering", {})
         result["svv_registreringsstatus"] = reg.get("registreringsstatus", {}).get("kodeBeskrivelse")
 
-        # EU-kontroll
+        # EU-kontroll (dato kommer som streng YYYY-MM-DD fra API)
         pkk = k.get("periodiskKjoretoyKontroll", {})
-        result["svv_eu_kontrollfrist"] = str(pkk.get("kontrollfrist", "") or "")
-        result["svv_eu_sist_godkjent"] = str(pkk.get("sistGodkjent", "") or "")
+        result["svv_eu_kontrollfrist"] = str(pkk["kontrollfrist"]) if pkk.get("kontrollfrist") else None
+        result["svv_eu_sist_godkjent"] = str(pkk["sistGodkjent"]) if pkk.get("sistGodkjent") else None
 
         # Karosseri og farge
         karosseri = td.get("karosseriOgLasteplan", {})
@@ -894,7 +894,8 @@ def parse_vegvesen_data(data):
         result["svv_girkassetype"] = (motor_driv.get("girkassetype") or {}).get("kodeBeskrivelse")
         result["svv_antall_gir"] = motor_driv.get("antallGir")
         result["svv_maks_hastighet"] = motor_driv.get("maksimumHastighet", [None])[0] if motor_driv.get("maksimumHastighet") else None
-        result["svv_elektrisk"] = motor_driv.get("utelukkendeElektriskDrift") or motor_driv.get("hybridElektriskKjoretoy")
+        elektrisk = motor_driv.get("utelukkendeElektriskDrift") or motor_driv.get("hybridElektriskKjoretoy")
+        result["svv_elektrisk"] = bool(elektrisk) if elektrisk is not None else None
 
         # Dimensjoner
         dim = td.get("dimensjoner", {})
