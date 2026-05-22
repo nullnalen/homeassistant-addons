@@ -617,12 +617,7 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
                 try:
                     cursor.execute(query, data)
                 except Exception as e:
-                    # Finn hvilken verdi som er en dict for debugging
-                    bad = [(i, type(v).__name__, repr(v)[:60]) for i, v in enumerate(data) if isinstance(v, (dict, list))]
-                    if bad:
-                        logger.error(f"Feil ved lagring av annonse {finnkode}: dict/list-verdier på posisjon(er): {bad}")
-                    else:
-                        logger.error(f"Feil ved lagring av annonse {finnkode}: {e}")
+                    logger.error(f"Feil ved lagring av annonse {finnkode}: {e}")
 
         if not dry_run:
             conn.commit()
@@ -920,7 +915,7 @@ def parse_vegvesen_data(data):
 
         # Miljø
         miljo = td.get("miljodata", {})
-        result["svv_euro_klasse"] = miljo.get("euroKlasse")
+        result["svv_euro_klasse"] = (miljo.get("euroKlasse") or {}).get("kodeVerdi")
 
         # Sitteplasser
         result["svv_sitteplasser"] = td.get("persontall", {}).get("sitteplasserTotalt")
