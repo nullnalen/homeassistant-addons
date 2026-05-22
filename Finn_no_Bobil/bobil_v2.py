@@ -949,12 +949,31 @@ def extract_regnr_from_ad(ad):
 
     return None, None
 
+def get_finnkoder_med_svv_data():
+    """Returner sett av finnkoder som allerede har SVV-data i databasen."""
+    conn = connect_to_database()
+    if not conn:
+        return set()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT Finnkode FROM bobil WHERE SvvMerke IS NOT NULL")
+        return {row[0] for row in cursor.fetchall()}
+    except Exception as e:
+        logger.warning(f"Kunne ikke hente finnkoder med SVV-data: {e}")
+        return set()
+    finally:
+        conn.close()
+
 async def enrich_ads_with_vegvesen(session, ads):
     if not get_svv_api_key():
         logger.info("Vegvesen API-nokkel ikke satt, hopper over SVV-oppslag.")
         return ads
+    har_svv = get_finnkoder_med_svv_data()
     semaphore = asyncio.Semaphore(3)
     async def enrich(ad):
+        if ad["Finnkode"] in har_svv:
+            ad["VegvesenData"] = {}
+            return ad
         kjennemerke, chassis = extract_regnr_from_ad(ad)
         if not kjennemerke and not chassis:
             ad["VegvesenData"] = {}
