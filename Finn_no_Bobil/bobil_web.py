@@ -327,14 +327,14 @@ def get_prisendringer():
         cur = conn.cursor(dictionary=True)
         cur.execute("""
             SELECT b.Finnkode, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert,
-                   b.SistSett,
+                   b.SistSett, b.SvvNyttelast, b.SvvTilhengervektMedBrems,
                    COUNT(p.Pris) AS AntallEndringer,
                    MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
                    MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris,
                    b.URL
             FROM bobil b
             JOIN prisendringer p ON b.Finnkode = p.Finnkode
-            GROUP BY b.Finnkode, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert, b.SistSett, b.URL
+            GROUP BY b.Finnkode, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert, b.SistSett, b.SvvNyttelast, b.SvvTilhengervektMedBrems, b.URL
             ORDER BY b.SistSett DESC
         """)
         rows = cur.fetchall()
@@ -1121,6 +1121,8 @@ def view_prisendringer():
                 <th class="sortable" data-sort="number">Pris</th>
                 <th class="sortable" data-sort="number">Laveste</th>
                 <th class="sortable" data-sort="number">Høyeste</th>
+                <th class="sortable" data-sort="number">Nyttelast</th>
+                <th class="sortable" data-sort="number">Tilh. m/brems</th>
                 <th class="sortable" data-sort="number">Endringer</th>
                 <th class="sortable sort-desc" data-sort="number">Sist sett</th>
             </tr>
@@ -1136,6 +1138,8 @@ def view_prisendringer():
                 <td>{esc(r['NaaverendePris'])}</td>
                 <td class="price-down">{esc(r['LavestePrisF'])}</td>
                 <td class="price-up">{esc(r['HoyestePrisF'])}</td>
+                <td>{f"{r['SvvNyttelast']} kg" if r.get('SvvNyttelast') else '—'}</td>
+                <td>{f"{r['SvvTilhengervektMedBrems']} kg" if r.get('SvvTilhengervektMedBrems') else '—'}</td>
                 <td><strong>{esc(r['AntallEndringer'])}</strong></td>
                 <td class="{esc(r['AlderClass'])}" data-sort-value="{esc(r['AlderSort'])}">{esc(r['Alder'])}</td>
             </tr>
@@ -1556,7 +1560,9 @@ def view_annonse(finnkode):
             <div><span style="color: var(--text-muted);">Km:</span> {esc(ad.get('Kilometerstand')) or '—'}</div>
             <div><span style="color: var(--text-muted);">Type:</span> {esc(ad.get('Typebobil')) or '—'}</div>
             <div><span style="color: var(--text-muted);">Girkasse:</span> {esc(ad.get('Girkasse')) or '—'}</div>
-            <div><span style="color: var(--text-muted);">Nyttelast:</span> {esc(ad.get('Nyttelast')) or '—'}</div>
+            <div><span style="color: var(--text-muted);">Nyttelast (Finn):</span> {esc(ad.get('Nyttelast')) or '—'}</div>
+            <div><span style="color: var(--text-muted);">Nyttelast (SVV):</span> {kg(v('SvvNyttelast'))}</div>
+            <div><span style="color: var(--text-muted);">Tilhengervekt m/brems:</span> {kg(v('SvvTilhengervektMedBrems'))}</div>
             <div><span style="color: var(--text-muted);">Lokasjon:</span> {esc(lokasjon) or '—'}</div>
             <div><span style="color: var(--text-muted);">Sist sett:</span> <span class="{esc(alder_cls)}">{esc(alder_txt)}</span></div>
         </div>
