@@ -836,9 +836,11 @@ async def fetch_vegvesen_data(session, kjennemerke=None, chassis=None):
                 data = await resp.json()
                 logger.info("Vegvesen-data hentet for " + ident)
                 return parse_vegvesen_data(data)
+            elif resp.status == 204:
+                logger.debug("Vegvesen API 204 for " + ident + " — ingen data, markerer i DB")
+                return {"svv_registreringsstatus": "INGEN_DATA"}
             else:
-                text = await resp.text()
-                logger.debug("Vegvesen API HTTP " + str(resp.status) + " for " + ident + " (ingen data)")
+                logger.debug("Vegvesen API HTTP " + str(resp.status) + " for " + ident)
                 return None
     except Exception as e:
         logger.warning("Feil ved Vegvesen-oppslag for " + ident + ": " + str(e))
@@ -959,7 +961,7 @@ def get_finnkoder_med_svv_data():
         return set()
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT Finnkode FROM bobil WHERE SvvMerke IS NOT NULL")
+        cursor.execute("SELECT Finnkode FROM bobil WHERE SvvMerke IS NOT NULL OR SvvRegistreringsstatus = 'INGEN_DATA'")
         return {row[0] for row in cursor.fetchall()}
     except Exception as e:
         logger.warning(f"Kunne ikke hente finnkoder med SVV-data: {e}")
