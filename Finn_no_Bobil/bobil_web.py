@@ -197,7 +197,7 @@ def ensure_db_columns():
             ("SvvMerke", "VARCHAR(100)"),
             ("SvvHandelsbetegnelse", "VARCHAR(100)"),
             ("SvvAarsmodell", "INT"),
-            ("SvvFarge", "VARCHAR(50)"),
+            ("SvvFarge", "TEXT"),
             ("SvvDrivstoff", "VARCHAR(50)"),
             ("SvvMotorvolum", "INT"),
             ("SvvMotoreffekt", "FLOAT"),
@@ -236,7 +236,7 @@ def ensure_db_columns():
                 else:
                     logger.error("Feil ved ALTER TABLE for %s: %s", col, e)
         # Utvid kolonner som kan ha vært for korte
-        for col, coltype in [("SvvKarosseritype", "TEXT"), ("SvvKjoretoytype", "TEXT")]:
+        for col, coltype in [("SvvKarosseritype", "TEXT"), ("SvvKjoretoytype", "TEXT"), ("SvvFarge", "TEXT")]:
             try:
                 cur.execute(f"ALTER TABLE bobil MODIFY COLUMN {col} {coltype}")
             except Exception:
