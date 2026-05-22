@@ -335,7 +335,7 @@ def get_prisendringer():
             FROM bobil b
             JOIN prisendringer p ON b.Finnkode = p.Finnkode
             GROUP BY b.Finnkode, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert, b.SistSett, b.SvvNyttelast, b.SvvTilhengervektMedBrems, b.URL
-            ORDER BY b.SistSett DESC
+            ORDER BY b.SistSett DESC, STR_TO_DATE(b.Oppdatert, '%d. %m. %Y %H:%i') DESC
         """)
         rows = cur.fetchall()
         for r in rows:
@@ -349,7 +349,7 @@ def get_prisendringer():
             r["LavestePrisF"] = format_price(laveste)
             r["HoyestePrisF"] = format_price(hoyeste)
             r["FinnURL"] = f"https://www.finn.no/mobility/item/{r['Finnkode']}"
-            r["Alder"], r["AlderClass"], r["AlderSort"] = format_sistsett(r.get("SistSett"))
+            r["Alder"], r["AlderClass"], r["AlderSort"] = format_age(r.get("Oppdatert", ""))
         return rows
     except Exception as e:
         logger.error("Feil i get_prisendringer: %s", e)
