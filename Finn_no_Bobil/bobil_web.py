@@ -301,14 +301,15 @@ def get_prisendringer():
         cur = conn.cursor(dictionary=True)
         cur.execute("""
             SELECT b.Finnkode, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert,
+                   b.SistSett,
                    COUNT(p.Pris) AS AntallEndringer,
                    MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
                    MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris,
                    b.URL
             FROM bobil b
             JOIN prisendringer p ON b.Finnkode = p.Finnkode
-            GROUP BY b.Finnkode, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert, b.URL
-            ORDER BY AntallEndringer DESC
+            GROUP BY b.Finnkode, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert, b.SistSett, b.URL
+            ORDER BY b.SistSett DESC
         """)
         rows = cur.fetchall()
         for r in rows:
@@ -1095,7 +1096,7 @@ def view_prisendringer():
                 <th class="sortable" data-sort="number">Laveste</th>
                 <th class="sortable" data-sort="number">Høyeste</th>
                 <th class="sortable" data-sort="number">Endringer</th>
-                <th class="sortable" data-sort="number">Sist sett</th>
+                <th class="sortable sort-desc" data-sort="number">Sist sett</th>
             </tr>
         </thead>
         <tbody>
