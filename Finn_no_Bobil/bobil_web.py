@@ -206,7 +206,7 @@ def ensure_db_columns():
             ("SvvRegistreringsstatus", "VARCHAR(50)"),
             ("SvvEuKontrollfrist", "VARCHAR(20)"),
             ("SvvEuSistGodkjent", "VARCHAR(20)"),
-            ("SvvKarosseritype", "VARCHAR(50)"),
+            ("SvvKarosseritype", "TEXT"),
             ("SvvAntallDorer", "INT"),
             ("SvvAntallSylindre", "INT"),
             ("SvvGirkassetype", "VARCHAR(50)"),
@@ -225,7 +225,7 @@ def ensure_db_columns():
             ("SvvVertikalKoplingslast", "INT"),
             ("SvvEuroKlasse", "VARCHAR(10)"),
             ("SvvSitteplasser", "INT"),
-            ("SvvKjoretoytype", "VARCHAR(100)"),
+            ("SvvKjoretoytype", "TEXT"),
         ]:
             try:
                 cur.execute(f"ALTER TABLE bobil ADD COLUMN {col} {coltype}")
@@ -235,6 +235,12 @@ def ensure_db_columns():
                     pass
                 else:
                     logger.error("Feil ved ALTER TABLE for %s: %s", col, e)
+        # Utvid kolonner som kan ha vært for korte
+        for col, coltype in [("SvvKarosseritype", "TEXT"), ("SvvKjoretoytype", "TEXT")]:
+            try:
+                cur.execute(f"ALTER TABLE bobil MODIFY COLUMN {col} {coltype}")
+            except Exception:
+                pass
         # Migrer eksisterende solgt/fjernet-rader til Solgt=1
         try:
             cur.execute("UPDATE bobil SET Solgt = 1 WHERE Pris LIKE '%Solgt%' OR Pris LIKE '%Fjernet%'")
