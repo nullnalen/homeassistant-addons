@@ -838,7 +838,7 @@ async def fetch_vegvesen_data(session, kjennemerke=None, chassis=None):
                 return parse_vegvesen_data(data)
             else:
                 text = await resp.text()
-                logger.warning("Vegvesen API HTTP " + str(resp.status) + " for " + ident + ": " + text[:200])
+                logger.debug("Vegvesen API HTTP " + str(resp.status) + " for " + ident + " (ingen data)")
                 return None
     except Exception as e:
         logger.warning("Feil ved Vegvesen-oppslag for " + ident + ": " + str(e))
