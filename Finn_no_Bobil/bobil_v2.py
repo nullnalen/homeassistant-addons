@@ -923,17 +923,15 @@ def parse_autodb_ad(list_ad: dict, detail: dict | None) -> dict:
         detail_td = first.get("typedata") or {}
 
     brand = (list_ad.get("brand") or detail_td.get("brand") or "").strip()
-    variant = (list_ad.get("variant") or detail_td.get("variant") or "").strip()
     yearmodel = yearmodel or detail_td.get("yearmodel")
 
-    if brand and variant:
-        title = f"{brand} {variant}"
+    # variant-feltet i autodb er fritekst (utstyrsliste/planløsning), ikke modellnavn — ikke bruk det
+    if brand and yearmodel:
+        title = f"{brand} {yearmodel}"
     elif brand:
         title = brand
-    elif variant:
-        title = variant
     else:
-        title = list_ad.get("title") or detail_td.get("title") or f"AutoDB {aditemid}"
+        title = f"AutoDB {aditemid}"
     main_img = list_ad.get("mainImageId")
     img_url = f"https://www.autodb.no/assets/img/items/{main_img}.jpg" if main_img else ""
 
