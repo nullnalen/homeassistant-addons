@@ -1661,13 +1661,21 @@ def extract_regnr_from_ad(ad):
     return None, None
 
 def get_finnkoder_med_svv_data():
-    """Returner sett av finnkoder som allerede har SVV-data i databasen."""
+    """Returner sett av finnkoder som ikke trenger SVV-oppslag:
+    - har allerede SVV-data eller fått INGEN_DATA-svar
+    - autodb-annonser (Finnkode < 0) som allerede eksisterer i DB uten kjennemerke
+    """
     conn = connect_to_database()
     if not conn:
         return set()
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT Finnkode FROM bobil WHERE SvvMerke IS NOT NULL OR SvvRegistreringsstatus = 'INGEN_DATA'")
+        cursor.execute("""
+            SELECT Finnkode FROM bobil
+            WHERE SvvMerke IS NOT NULL
+               OR SvvRegistreringsstatus = 'INGEN_DATA'
+               OR (Finnkode < 0 AND (Kjennemerke IS NULL OR Kjennemerke = ''))
+        """)
         return {row[0] for row in cursor.fetchall()}
     except Exception as e:
         logger.warning(f"Kunne ikke hente finnkoder med SVV-data: {e}")
