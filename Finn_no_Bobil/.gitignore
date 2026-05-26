@@ -21,3 +21,8 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Loggfiler
+*.log
+test_api.env
+*.bak

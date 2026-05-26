@@ -252,6 +252,12 @@ def ensure_db_columns():
             ("SvvEuroKlasse", "VARCHAR(10)"),
             ("SvvSitteplasser", "INT"),
             ("SvvKjoretoytype", "TEXT"),
+            ("Sengelayout", "VARCHAR(50)"),
+            ("VendbareForerstoler", "TINYINT(1)"),
+            ("Heftelser", "TINYINT UNSIGNED"),
+            ("HeftelseSjekket", "DATETIME"),
+            ("AutodbId", "INT"),
+            ("Kilde", "VARCHAR(20) DEFAULT 'finn'"),
         ]:
             try:
                 cur.execute(f"ALTER TABLE bobil ADD COLUMN {col} {coltype}")
@@ -293,8 +299,89 @@ def ensure_db_columns():
                 else:
                     logger.error("Feil ved opprettelse av indeks %s: %s", idx_name, e)
         conn.commit()
+
+        # bruker_data: favoritter og notater per annonse
+        try:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS bruker_data (
+                    Finnkode INT PRIMARY KEY,
+                    Favoritt TINYINT(1) DEFAULT 0,
+                    Notat TEXT,
+                    Oppdatert DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                )
+            """)
+            conn.commit()
+        except Exception as e:
+            logger.error("Feil ved oppretting av bruker_data: %s", e)
+
     except Exception as e:
         logger.error("Feil i ensure_db_columns: %s", e)
+    finally:
+        conn.close()
+
+
+def get_bruker_data(finnkode: int) -> dict:
+    """Hent favoritt-status og notat for en annonse."""
+    conn = get_db()
+    if not conn:
+        return {"favoritt": False, "notat": ""}
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute("SELECT Favoritt, Notat FROM bruker_data WHERE Finnkode = %s", (finnkode,))
+        row = cur.fetchone()
+        if row:
+            return {"favoritt": bool(row["Favoritt"]), "notat": row["Notat"] or ""}
+        return {"favoritt": False, "notat": ""}
+    except Exception:
+        return {"favoritt": False, "notat": ""}
+    finally:
+        conn.close()
+
+
+def get_alle_favoritter() -> list[dict]:
+    """Hent alle favorittmerkede biler med brukernotat og bobildata."""
+    conn = get_db()
+    if not conn:
+        return []
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute("""
+            SELECT b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris, b.Kilometerstand,
+                   b.Lokasjon, b.ImageURL, b.SvvNyttelast, b.SvvLengde,
+                   b.SvvTilhengervektMedBrems, b.SvvEuKontrollfrist,
+                   b.Sengelayout, b.Heftelser, b.Solgt,
+                   u.Favoritt, u.Notat, u.Oppdatert AS BrukerOppdatert,
+                   MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris,
+                   MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris
+            FROM bruker_data u
+            JOIN bobil b ON u.Finnkode = b.Finnkode
+            LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
+            WHERE u.Favoritt = 1
+            GROUP BY b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris, b.Kilometerstand,
+                     b.Lokasjon, b.ImageURL, b.SvvNyttelast, b.SvvLengde,
+                     b.SvvTilhengervektMedBrems, b.SvvEuKontrollfrist,
+                     b.Sengelayout, b.Heftelser, b.Solgt,
+                     u.Favoritt, u.Notat, u.Oppdatert
+            ORDER BY u.Oppdatert DESC
+        """)
+        rows = cur.fetchall()
+        for r in rows:
+            pris = parse_price(r["Pris"])
+            hoyeste = r.get("HoyestePris")
+            laveste = r.get("LavestePris")
+            r["NaaverendePris"] = format_price(pris)
+            r["HoyestePrisF"] = format_price(hoyeste)
+            r["LavestePrisF"] = format_price(laveste)
+            r["AdURL"] = _ad_url(r)
+            prisfall = ""
+            if hoyeste and pris and hoyeste > pris:
+                pct = round((hoyeste - pris) / hoyeste * 100, 1)
+                prisfall = f"-{pct}%"
+            r["Prisfall"] = prisfall
+        return rows
+    except Exception as e:
+        logger.error("Feil i get_alle_favoritter: %s", e)
+        return []
     finally:
         conn.close()
 
@@ -326,7 +413,7 @@ def get_prisendringer():
     try:
         cur = conn.cursor(dictionary=True)
         cur.execute("""
-            SELECT b.Finnkode, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert,
+            SELECT b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert,
                    b.SistSett, b.SvvNyttelast, b.SvvTilhengervektMedBrems,
                    COUNT(p.Pris) AS AntallEndringer,
                    MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
@@ -334,7 +421,7 @@ def get_prisendringer():
                    b.URL
             FROM bobil b
             JOIN prisendringer p ON b.Finnkode = p.Finnkode
-            GROUP BY b.Finnkode, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert, b.SistSett, b.SvvNyttelast, b.SvvTilhengervektMedBrems, b.URL
+            GROUP BY b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert, b.SistSett, b.SvvNyttelast, b.SvvTilhengervektMedBrems, b.URL
             ORDER BY b.SistSett DESC, STR_TO_DATE(b.Oppdatert, '%d. %m. %Y %H:%i') DESC
         """)
         rows = cur.fetchall()
@@ -348,7 +435,7 @@ def get_prisendringer():
             r["NaaverendePris"] = format_price(pris)
             r["LavestePrisF"] = format_price(laveste)
             r["HoyestePrisF"] = format_price(hoyeste)
-            r["FinnURL"] = f"https://www.finn.no/mobility/item/{r['Finnkode']}"
+            r["AdURL"] = _ad_url(r)
             r["Alder"], r["AlderClass"], r["AlderSort"] = format_age(r.get("Oppdatert", ""))
         return rows
     except Exception as e:
@@ -358,34 +445,137 @@ def get_prisendringer():
         conn.close()
 
 
+FORUM_RISIKO = {
+    'Sunlight': 0, 'Rimor': 0, 'Carado': 0, 'Challenger': 5,
+    'Dethleffs': 10, 'Knaus': 10, 'Bürstner': 15,
+    'Hymer': 20, 'Adria': 20,
+}
+
+
+def beregn_kjopsscore(r: dict, now: datetime) -> int:
+    """
+    Full scoring-algoritme basert på EU-frist, km/år, nyttelast, årsmodell og merkerisiko.
+    """
+    s = 0
+
+    # EU-kontrollfrist
+    eu_frist = r.get("SvvEuKontrollfrist") or ""
+    eu_sist = r.get("SvvEuSistGodkjent") or ""
+    mnd_til_eu = None
+    mnd_siden_eu = None
+    try:
+        if eu_frist:
+            frist_dato = datetime.strptime(eu_frist[:10], "%Y-%m-%d")
+            mnd_til_eu = max(0, (frist_dato - now).days // 30)
+        if eu_sist:
+            sist_dato = datetime.strptime(eu_sist[:10], "%Y-%m-%d")
+            mnd_siden_eu = max(0, (now - sist_dato).days // 30)
+    except (ValueError, TypeError):
+        pass
+
+    if mnd_til_eu is not None:
+        if mnd_til_eu > 24:
+            s += 25
+        elif mnd_til_eu > 12:
+            s += 15
+        elif mnd_til_eu > 6:
+            s += 5
+        else:
+            s -= 10
+
+    if mnd_siden_eu is not None:
+        if mnd_siden_eu < 6:
+            s += 20
+        elif mnd_siden_eu < 12:
+            s += 10
+        elif mnd_siden_eu < 24:
+            s += 5
+        else:
+            s -= 5
+
+    # Nyttelast (SVV)
+    nyttelast = r.get("SvvNyttelast") or 0
+    if nyttelast >= 700:
+        s += 20
+    elif nyttelast >= 550:
+        s += 15
+    elif nyttelast >= 450:
+        s += 10
+    else:
+        s += 3
+
+    # Km per år
+    km = parse_km(r.get("Kilometerstand"))
+    try:
+        aar = int(r.get("SvvAarsmodell") or r.get("Modell") or 0)
+    except (ValueError, TypeError):
+        aar = 0
+    if km and aar and aar > 2000:
+        alder_aar = max(1, now.year - aar)
+        km_aar = km / alder_aar
+        if km_aar < 7000:
+            s += 20
+        elif km_aar < 10000:
+            s += 10
+        elif km_aar < 13000:
+            s += 5
+        else:
+            s -= 5
+
+    # Årsmodell
+    if aar >= 2019:
+        s += 10
+    elif aar >= 2017:
+        s += 7
+    elif aar >= 2015:
+        s += 4
+
+    # Merke-risiko (trekk)
+    merke = r.get("SvvMerke") or r.get("Annonsenavn", "").split()[0]
+    s -= FORUM_RISIKO.get(merke, 5)
+
+    # Prisfall-bonus: belønner annonser med dokumentert prisfall
+    pris = parse_price(r.get("Pris"))
+    hoyeste = r.get("HoyestePris")
+    if pris and hoyeste and hoyeste > pris:
+        prisfall_pct = (hoyeste - pris) / hoyeste * 100
+        s += min(20, int(prisfall_pct * 2))
+
+    return min(100, max(0, s))
+
+
 def get_kjopsscore():
-    """View 2: Kjøpsscore — rangert liste."""
+    """View 2: Kjøpsscore — rangert liste med full scoring-algoritme."""
     conn = get_db()
     if not conn:
         return []
     try:
         cur = conn.cursor(dictionary=True)
         cur.execute("""
-            SELECT b.Finnkode, b.Annonsenavn, b.Modell, b.Pris, b.Kilometerstand,
-                   b.Oppdatert, b.Beskrivelse,
+            SELECT b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris, b.Kilometerstand,
+                   b.Oppdatert, b.Beskrivelse, b.Sengelayout,
+                   b.SvvNyttelast, b.SvvEuKontrollfrist, b.SvvEuSistGodkjent,
+                   b.SvvAarsmodell, b.SvvMerke,
                    COUNT(p.Pris) AS AntallEndringer,
                    MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
                    MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris
             FROM bobil b
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
             WHERE (b.Solgt = 0 OR b.Solgt IS NULL)
-            GROUP BY b.Finnkode, b.Annonsenavn, b.Modell, b.Pris,
-                     b.Kilometerstand, b.Oppdatert, b.Beskrivelse
+            GROUP BY b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris,
+                     b.Kilometerstand, b.Oppdatert, b.Beskrivelse, b.Sengelayout,
+                     b.SvvNyttelast, b.SvvEuKontrollfrist, b.SvvEuSistGodkjent,
+                     b.SvvAarsmodell, b.SvvMerke
         """)
         rows = cur.fetchall()
 
         results = []
         now = datetime.now()
-        keywords = ["køye", "familie", "vendbare seter", "kapteinstoler"]
+        keywords = ["køye", "senkeseng", "familie", "vendbare seter", "kapteinstoler", "alkove"]
 
         for r in rows:
             pris = parse_price(r["Pris"])
-            hoyeste = r["HoyestePris"]  # Allerede int fra CAST, eller None
+            hoyeste = r["HoyestePris"]
             laveste = r["LavestePris"]
             dato = parse_norwegian_date(r["Oppdatert"])
 
@@ -393,28 +583,24 @@ def get_kjopsscore():
                 continue
 
             dager = (now - dato).days if dato else 0
-            if dato and dager > 60:
+            if dato and dager > 90:
                 continue
 
-            # Fallback til nåværende pris hvis ingen prishistorikk
             if not hoyeste:
                 hoyeste = pris
             if not laveste:
                 laveste = pris
 
-            # Kjøpsscore: prisfall% * (dager+1) + 5 * antall endringer + dager
-            prisfall_pct = 0
-            if hoyeste > 0 and hoyeste > pris:
-                prisfall_pct = ((hoyeste - pris) / hoyeste) * 100
+            r["HoyestePris"] = hoyeste
+            score = beregn_kjopsscore(r, now)
 
-            score = round(prisfall_pct * (dager + 1) + r["AntallEndringer"] * 5 + dager)
-
-            # Søketreff
             tekst = f"{r['Annonsenavn']} {r.get('Beskrivelse', '')}".lower()
             treff = [kw for kw in keywords if kw.lower() in tekst]
 
             results.append({
                 "Finnkode": r["Finnkode"],
+                "AutodbId": r.get("AutodbId"),
+                "Kilde": r.get("Kilde") or "finn",
                 "Annonsenavn": r["Annonsenavn"],
                 "Modell": r["Modell"],
                 "NaaverendePris": format_price(pris),
@@ -423,8 +609,10 @@ def get_kjopsscore():
                 "AntallEndringer": r["AntallEndringer"],
                 "DagerPaaMarkedet": dager,
                 "KjopsScore": score,
+                "Nyttelast": r.get("SvvNyttelast"),
+                "Sengelayout": r.get("Sengelayout") or "",
                 "Soketreff": ", ".join(treff) if treff else "",
-                "FinnURL": f"https://www.finn.no/mobility/item/{r['Finnkode']}",
+                "AdURL": _ad_url(r),
                 "ErNy": dager <= 1,
             })
 
@@ -489,7 +677,7 @@ def get_sokresultater(keywords_str):
 
         cur = conn.cursor(dictionary=True)
         cur.execute(f"""
-            SELECT b.Finnkode, b.Annonsenavn, b.Beskrivelse, b.Modell,
+            SELECT b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Beskrivelse, b.Modell,
                    b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
                    b.Oppdatert, b.Pris,
                    COUNT(p.Pris) AS AntallEndringer,
@@ -498,7 +686,7 @@ def get_sokresultater(keywords_str):
             FROM bobil b
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
             WHERE {conditions}
-            GROUP BY b.Finnkode, b.Annonsenavn, b.Beskrivelse, b.Modell,
+            GROUP BY b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Beskrivelse, b.Modell,
                      b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
                      b.Oppdatert, b.Pris
             ORDER BY b.Oppdatert DESC
@@ -518,7 +706,7 @@ def get_sokresultater(keywords_str):
             r["NaaverendePris"] = format_price(pris)
             r["LavestePrisF"] = format_price(laveste)
             r["HoyestePrisF"] = format_price(hoyeste)
-            r["FinnURL"] = f"https://www.finn.no/mobility/item/{r['Finnkode']}"
+            r["AdURL"] = _ad_url(r)
             r["Alder"], r["AlderClass"], r["AlderSort"] = format_age(r.get("Oppdatert", ""))
             # Finn hvilke termer som ga treff
             tekst = f"{r['Annonsenavn']} {r.get('Beskrivelse', '')}".lower()
@@ -569,12 +757,20 @@ def get_detaljer(page=1, per_page=50, filters=None):
             if filters.get("modell_til"):
                 where_parts.append("b.Modell <= %s")
                 params.append(filters["modell_til"])
-            if filters.get("pris_fra"):
+            def safe_int(val):
+                try:
+                    return int(val)
+                except (TypeError, ValueError):
+                    return None
+
+            pris_fra = safe_int(filters.get("pris_fra"))
+            if pris_fra is not None:
                 where_parts.append("CAST(REGEXP_REPLACE(b.Pris, '[^0-9]', '') AS UNSIGNED) >= %s")
-                params.append(int(filters["pris_fra"]))
-            if filters.get("pris_til"):
+                params.append(pris_fra)
+            pris_til = safe_int(filters.get("pris_til"))
+            if pris_til is not None:
                 where_parts.append("CAST(REGEXP_REPLACE(b.Pris, '[^0-9]', '') AS UNSIGNED) <= %s")
-                params.append(int(filters["pris_til"]))
+                params.append(pris_til)
             if filters.get("type"):
                 where_parts.append("b.Typebobil = %s")
                 params.append(filters["type"])
@@ -583,6 +779,25 @@ def get_detaljer(page=1, per_page=50, filters=None):
                 params.append(filters["girkasse"])
             if filters.get("skjul_solgt"):
                 where_parts.append("(b.Solgt = 0 OR b.Solgt IS NULL)")
+            min_nyttelast = safe_int(filters.get("min_nyttelast"))
+            if min_nyttelast is not None:
+                where_parts.append("b.SvvNyttelast >= %s")
+                params.append(min_nyttelast)
+            min_lengde = safe_int(filters.get("min_lengde"))
+            if min_lengde is not None:
+                where_parts.append("b.SvvLengde >= %s")
+                params.append(min_lengde)
+            max_lengde = safe_int(filters.get("max_lengde"))
+            if max_lengde is not None:
+                where_parts.append("b.SvvLengde <= %s")
+                params.append(max_lengde)
+            min_tilhengervekt = safe_int(filters.get("min_tilhengervekt"))
+            if min_tilhengervekt is not None:
+                where_parts.append("b.SvvTilhengervektMedBrems >= %s")
+                params.append(min_tilhengervekt)
+            if filters.get("sengelayout"):
+                where_parts.append("b.Sengelayout = %s")
+                params.append(filters["sengelayout"])
 
         where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
 
@@ -592,18 +807,20 @@ def get_detaljer(page=1, per_page=50, filters=None):
 
         offset = (page - 1) * per_page
         cur.execute(f"""
-            SELECT b.Finnkode, b.Annonsenavn, b.Beskrivelse, b.Modell,
+            SELECT b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Beskrivelse, b.Modell,
                    b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
                    b.Oppdatert, b.Pris, b.URL, b.ImageURL, b.Lokasjon, b.Solgt,
+                   b.Sengelayout, b.Heftelser, b.HeftelseSjekket,
                    COUNT(p.Pris) AS AntallEndringer,
                    MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
                    MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris
             FROM bobil b
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
             {where_clause}
-            GROUP BY b.Finnkode, b.Annonsenavn, b.Beskrivelse, b.Modell,
+            GROUP BY b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Beskrivelse, b.Modell,
                      b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
-                     b.Oppdatert, b.Pris, b.URL, b.ImageURL, b.Lokasjon, b.Solgt
+                     b.Oppdatert, b.Pris, b.URL, b.ImageURL, b.Lokasjon, b.Solgt,
+                     b.Sengelayout, b.Heftelser, b.HeftelseSjekket
             ORDER BY b.Oppdatert DESC
             LIMIT %s OFFSET %s
         """, params + [per_page, offset])
@@ -623,7 +840,7 @@ def get_detaljer(page=1, per_page=50, filters=None):
             r["NaaverendePris"] = format_price(pris)
             r["LavestePrisF"] = format_price(laveste)
             r["HoyestePrisF"] = format_price(hoyeste)
-            r["FinnURL"] = f"https://www.finn.no/mobility/item/{r['Finnkode']}"
+            r["AdURL"] = _ad_url(r)
 
             # Sjekk om annonsen er ny (siste 24 timer)
             dato = parse_norwegian_date(r.get("Oppdatert", ""))
@@ -1019,6 +1236,19 @@ TEMPLATE = """
             margin-left: 4px;
             vertical-align: middle;
         }
+        .kilde-badge {
+            display: inline-block;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 0.65em;
+            font-weight: 700;
+            margin-left: 4px;
+            vertical-align: middle;
+            letter-spacing: 0.3px;
+        }
+        .kilde-finn { background: #d32f2f; color: #fff; }
+        .kilde-autodb { background: #1565c0; color: #fff; }
+        .kilde-both { background: #6a1b9a; color: #fff; }
     </style>
 </head>
 <body>
@@ -1030,6 +1260,7 @@ TEMPLATE = """
             <a href="{{ bp }}prisutvikling" class="tab {{ 'active' if active_tab == 'prisutvikling' }}">Prisutvikling</a>
             <a href="{{ bp }}sok" class="tab {{ 'active' if active_tab == 'sok' }}">Nøkkelord-søk</a>
             <a href="{{ bp }}detaljer" class="tab {{ 'active' if active_tab == 'detaljer' }}">Detaljert</a>
+            <a href="{{ bp }}mine-biler" class="tab {{ 'active' if active_tab == 'mine-biler' }}" style="{{ 'background:#ff9800; color:#000;' if active_tab != 'mine-biler' else '' }}">⭐ Mine biler</a>
         </nav>
 
         <div class="content">
@@ -1084,6 +1315,42 @@ TEMPLATE = """
 """
 
 
+def _heftelse_html(antall, sjekket_dato):
+    """Formater heftelsesresultat for visning i UI."""
+    if antall is None:
+        return '<span style="color: var(--text-muted);">Ikke sjekket</span>'
+    if antall == 0:
+        return '<span style="color: #4caf50;">Ingen heftelser ✓</span>'
+    return f'<span style="color: #f44336; font-weight: bold;">⚠ {antall} heftelse{"r" if antall != 1 else ""}</span>'
+
+
+def _kilde_badge(kilde):
+    """Render kilde-badge: [F] for finn, [A] for autodb, [F+A] for begge."""
+    if not kilde or kilde == "finn":
+        return '<span class="kilde-badge kilde-finn">F</span>'
+    if kilde == "autodb":
+        return '<span class="kilde-badge kilde-autodb">A</span>'
+    if kilde in ("finn+autodb", "autodb+finn"):
+        return '<span class="kilde-badge kilde-both">F+A</span>'
+    return ""
+
+
+def _ad_url(row):
+    """Lag riktig ekstern lenke for en annonse (Finn eller autodb)."""
+    kilde = row.get("Kilde") or "finn"
+    finnkode = row.get("Finnkode")
+    autodb_id = row.get("AutodbId")
+    if kilde == "autodb" and autodb_id:
+        return f"https://www.autodb.no/b/{autodb_id}"
+    if kilde == "finn+autodb" and finnkode and finnkode > 0:
+        return f"https://www.finn.no/mobility/item/{finnkode}"
+    if finnkode and finnkode > 0:
+        return f"https://www.finn.no/mobility/item/{finnkode}"
+    if autodb_id:
+        return f"https://www.autodb.no/b/{autodb_id}"
+    return "#"
+
+
 def render_page(active_tab, content_html, base_path=""):
     """Render en side med felles layout."""
     last_scrape = None
@@ -1133,7 +1400,7 @@ def view_prisendringer():
         html += f"""
             <tr>
                 <td><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Finnkode'])}</a></td>
-                <td class="truncate">{esc(r['Annonsenavn'])}</td>
+                <td class="truncate">{esc(r['Annonsenavn'])}{_kilde_badge(r.get('Kilde'))}</td>
                 <td>{esc(r['Modell'])}</td>
                 <td>{esc(r['NaaverendePris'])}</td>
                 <td class="price-down">{esc(r['LavestePrisF'])}</td>
@@ -1158,16 +1425,17 @@ def view_kjopsscore():
     <table>
         <thead>
             <tr>
-                <th class="sortable" data-sort="number">Score</th>
+                <th class="sortable sort-desc" data-sort="number">Score</th>
                 <th class="sortable" data-sort="number">Finnkode</th>
                 <th class="sortable">Annonse</th>
                 <th class="sortable" data-sort="number">Modell</th>
                 <th class="sortable" data-sort="number">Pris</th>
                 <th class="sortable" data-sort="number">Laveste</th>
                 <th class="sortable" data-sort="number">Høyeste</th>
-                <th class="sortable" data-sort="number">Endringer</th>
+                <th class="sortable" data-sort="number">Nyttelast</th>
+                <th class="sortable">Seng</th>
                 <th class="sortable" data-sort="number">Dager</th>
-                <th>Søketreff</th>
+                <th>Treff</th>
             </tr>
         </thead>
         <tbody>
@@ -1178,16 +1446,18 @@ def view_kjopsscore():
             for t in r["Soketreff"].split(", "):
                 treff_html += f'<span class="keyword-tag">{esc(t)}</span>'
         ny_badge = '<span class="new-badge">NY</span>' if r.get("ErNy") else ""
+        nyttelast = f"{r['Nyttelast']} kg" if r.get("Nyttelast") else "—"
         html += f"""
             <tr>
                 <td class="score">{esc(r['KjopsScore'])}</td>
                 <td><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Finnkode'])}</a></td>
-                <td class="truncate">{esc(r['Annonsenavn'])}{ny_badge}</td>
+                <td class="truncate">{esc(r['Annonsenavn'])}{ny_badge}{_kilde_badge(r.get('Kilde'))}</td>
                 <td>{esc(r['Modell'])}</td>
                 <td>{esc(r['NaaverendePris'])}</td>
                 <td class="price-down">{esc(r['LavestePris'])}</td>
                 <td class="price-up">{esc(r['HoyestePris'])}</td>
-                <td>{esc(r['AntallEndringer'])}</td>
+                <td>{nyttelast}</td>
+                <td>{esc(r['Sengelayout']) or '—'}</td>
                 <td>{esc(r['DagerPaaMarkedet'])}</td>
                 <td>{treff_html}</td>
             </tr>
@@ -1274,7 +1544,7 @@ def view_sok():
             html += f"""
                 <tr>
                     <td><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Finnkode'])}</a></td>
-                    <td class="truncate">{esc(r['Annonsenavn'])}</td>
+                    <td class="truncate">{esc(r['Annonsenavn'])}{_kilde_badge(r.get('Kilde'))}</td>
                     <td>{esc(r['Modell'])}</td>
                     <td>{esc(r['NaaverendePris'])}</td>
                     <td>{esc(r.get('Kilometerstand'))}</td>
@@ -1303,6 +1573,11 @@ def view_detaljer():
         "type": request.args.get("type", ""),
         "girkasse": request.args.get("girkasse", ""),
         "skjul_solgt": request.args.get("skjul_solgt", ""),
+        "min_nyttelast": request.args.get("min_nyttelast", ""),
+        "min_lengde": request.args.get("min_lengde", ""),
+        "max_lengde": request.args.get("max_lengde", ""),
+        "min_tilhengervekt": request.args.get("min_tilhengervekt", ""),
+        "sengelayout": request.args.get("sengelayout", ""),
     }
     rows, total = get_detaljer(page, per_page, filters)
 
@@ -1330,16 +1605,21 @@ def view_detaljer():
         for g in filter_opts["girkasser"]
     )
     skjul_checked = "checked" if filters.get("skjul_solgt") else ""
+    senge_valg = filters.get("sengelayout", "")
+    senge_options = "".join(
+        f'<option value="{s}" {"selected" if senge_valg == s else ""}>{s}</option>'
+        for s in ["senkeseng", "køyer", "alkove", "enkelsenger", "queenbed", "dobbeltseng"]
+    )
 
     html = f"""
     <form class="filter-panel" method="GET" action="detaljer">
         <div class="filter-group">
             <label>Modellår fra</label>
-            <input type="number" name="modell_fra" value="{filters.get('modell_fra', '')}" placeholder="f.eks. 2010" min="1990" max="2030">
+            <input type="number" name="modell_fra" value="{filters.get('modell_fra', '')}" placeholder="f.eks. 2017" min="1990" max="2030">
         </div>
         <div class="filter-group">
             <label>Modellår til</label>
-            <input type="number" name="modell_til" value="{filters.get('modell_til', '')}" placeholder="f.eks. 2020" min="1990" max="2030">
+            <input type="number" name="modell_til" value="{filters.get('modell_til', '')}" placeholder="f.eks. 2023" min="1990" max="2030">
         </div>
         <div class="filter-group">
             <label>Pris fra</label>
@@ -1347,7 +1627,30 @@ def view_detaljer():
         </div>
         <div class="filter-group">
             <label>Pris til</label>
-            <input type="number" name="pris_til" value="{filters.get('pris_til', '')}" placeholder="f.eks. 700000" step="50000">
+            <input type="number" name="pris_til" value="{filters.get('pris_til', '')}" placeholder="f.eks. 660000" step="50000">
+        </div>
+        <div class="filter-group">
+            <label>Min nyttelast (kg)</label>
+            <input type="number" name="min_nyttelast" value="{filters.get('min_nyttelast', '')}" placeholder="f.eks. 550" step="50">
+        </div>
+        <div class="filter-group">
+            <label>Lengde fra (cm)</label>
+            <input type="number" name="min_lengde" value="{filters.get('min_lengde', '')}" placeholder="f.eks. 600" step="10">
+        </div>
+        <div class="filter-group">
+            <label>Lengde til (cm)</label>
+            <input type="number" name="max_lengde" value="{filters.get('max_lengde', '')}" placeholder="f.eks. 800" step="10">
+        </div>
+        <div class="filter-group">
+            <label>Min tilhengervekt (kg)</label>
+            <input type="number" name="min_tilhengervekt" value="{filters.get('min_tilhengervekt', '')}" placeholder="f.eks. 2000" step="100">
+        </div>
+        <div class="filter-group">
+            <label>Sengelayout</label>
+            <select name="sengelayout">
+                <option value="">Alle</option>
+                {senge_options}
+            </select>
         </div>
         <div class="filter-group">
             <label>Type bobil</label>
@@ -1373,6 +1676,11 @@ def view_detaljer():
             <label>&nbsp;</label>
             <button type="submit" class="btn">Filtrer</button>
         </div>
+        <div class="filter-group">
+            <label>&nbsp;</label>
+            <a href="detaljer?modell_fra=2017&pris_til=660000&min_nyttelast=550&min_lengde=600&max_lengde=800&min_tilhengervekt=2000&skjul_solgt=1"
+               class="btn" style="background: #1976d2; display:inline-block; text-align:center;">Familie-filter</a>
+        </div>
     </form>
     """
 
@@ -1392,6 +1700,8 @@ def view_detaljer():
                 <th class="sortable" data-sort="number">Laveste</th>
                 <th class="sortable" data-sort="number">Høyeste</th>
                 <th class="sortable" data-sort="number">Pris/km</th>
+                <th class="sortable">Seng</th>
+                <th class="sortable">Heftelser</th>
                 <th class="sortable">Lokasjon</th>
                 <th class="sortable" data-sort="number">Sist sett</th>
             </tr>
@@ -1410,13 +1720,15 @@ def view_detaljer():
         html += f"""
             <tr{row_class}>
                 <td>{thumb_html}</td>
-                <td class="truncate"><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Annonsenavn'] or r['Finnkode'])}</a>{sold_badge}{ny_badge}</td>
+                <td class="truncate"><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Annonsenavn'] or r['Finnkode'])}</a>{sold_badge}{ny_badge}{_kilde_badge(r.get('Kilde'))}</td>
                 <td>{esc(r['Modell'])}</td>
                 <td>{esc(r.get('Kilometerstand'))}</td>
                 <td>{esc(r['NaaverendePris'])}</td>
                 <td class="price-down">{esc(r['LavestePrisF'])}</td>
                 <td class="price-up">{esc(r['HoyestePrisF'])}</td>
                 <td>{priskm_html}</td>
+                <td>{esc(r.get('Sengelayout')) or '—'}</td>
+                <td>{_heftelse_html(r.get('Heftelser'), r.get('HeftelseSjekket'))}</td>
                 <td>{esc(lokasjon)}</td>
                 <td class="{esc(r['AlderClass'])}" data-sort-value="{esc(r['AlderSort'])}">{esc(r['Alder'])}</td>
             </tr>
@@ -1469,7 +1781,7 @@ def view_annonse(finnkode):
         pris = parse_price(ad["Pris"])
         km = parse_km(ad.get("Kilometerstand"))
         alder_txt, alder_cls, _ = format_age(ad.get("Oppdatert", ""))
-        finn_url = f"https://www.finn.no/mobility/item/{finnkode}"
+        finn_url = _ad_url(ad)
 
         # Bygg Chart.js data
         chart_labels = []
@@ -1487,6 +1799,10 @@ def view_annonse(finnkode):
         lokasjon = ad.get("Lokasjon", "") or ""
         kjennemerke = ad.get("Kjennemerke", "") or ""
         img_html = f'<img src="{esc(image_url)}" class="detail-img" alt="">' if image_url else ""
+
+        bruker = get_bruker_data(finnkode)
+        er_favoritt = bruker["favoritt"]
+        notat_verdi = esc(bruker["notat"])
 
         # Vegvesen-data
         def v(key): return ad.get(key)
@@ -1545,16 +1861,71 @@ def view_annonse(finnkode):
         </div>
         """
 
+        kilde = ad.get("Kilde") or "finn"
+        autodb_id = ad.get("AutodbId")
+        ekstra_lenke = ""
+        if kilde == "finn+autodb" and autodb_id:
+            ekstra_lenke = f' &nbsp;<a href="https://www.autodb.no/b/{esc(autodb_id)}" target="_blank" style="font-size:0.7em;">[autodb]</a>'
+        elif kilde == "autodb" and autodb_id:
+            ekstra_lenke = ""  # finn_url er allerede autodb-lenken
+
+        stjerne = "⭐" if er_favoritt else "☆"
+        stjerne_title = "Fjern fra favoritter" if er_favoritt else "Legg til i favoritter"
         html = f"""
-        <div style="margin-bottom: 15px;">
+        <div style="margin-bottom: 15px; display:flex; justify-content:space-between; align-items:center;">
             <a href="javascript:history.back()" style="font-size: 0.85em;">&larr; Tilbake</a>
+            <a href="../mine-biler" style="font-size: 0.85em;">⭐ Mine biler</a>
         </div>
-        <h2 style="margin-bottom: 10px; color: var(--text-color);">
+        <h2 style="margin-bottom: 10px; color: var(--text-color); display:flex; align-items:center; gap:12px;">
             <a href="{esc(finn_url)}" target="_blank">{esc(ad.get('Annonsenavn', finnkode))}</a>
+            {_kilde_badge(kilde)}{ekstra_lenke}
+            <button id="fav-btn" onclick="toggleFavoritt({esc(finnkode)})"
+                    title="{esc(stjerne_title)}"
+                    style="background:none; border:none; font-size:1.5em; cursor:pointer; line-height:1;"
+            >{stjerne}</button>
         </h2>
         {img_html}
+        <div style="margin-bottom: 16px;">
+            <div style="font-size: 0.8em; color: var(--text-muted); margin-bottom: 4px;">Notat</div>
+            <textarea id="notat-felt" rows="3"
+                      style="width: 100%; max-width: 600px; background: var(--bg-color);
+                             color: var(--text-color); border: 1px solid var(--border-color);
+                             border-radius: 6px; padding: 8px; font-size: 0.9em; resize: vertical;"
+                      placeholder="Skriv ditt notat om denne bilen her..."
+            >{notat_verdi}</textarea>
+            <br>
+            <button class="btn" style="margin-top:6px; font-size:0.82em;"
+                    onclick="lagreNotat({esc(finnkode)})">Lagre notat</button>
+            <span id="notat-status" style="font-size:0.8em; color:var(--text-muted); margin-left:8px;"></span>
+        </div>
+        <script>
+        const _apiBase = '{esc(bp)}';
+        function toggleFavoritt(fk) {{
+            fetch(_apiBase + 'api/favoritt/' + fk, {{method: 'POST'}})
+                .then(r => r.json())
+                .then(d => {{
+                    if (d.ok) {{
+                        const btn = document.getElementById('fav-btn');
+                        btn.textContent = d.favoritt ? '⭐' : '☆';
+                        btn.title = d.favoritt ? 'Fjern fra favoritter' : 'Legg til i favoritter';
+                    }}
+                }});
+        }}
+        function lagreNotat(fk) {{
+            const txt = document.getElementById('notat-felt').value;
+            fetch(_apiBase + 'api/notat/' + fk, {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{notat: txt}})
+            }}).then(r => r.json()).then(d => {{
+                const s = document.getElementById('notat-status');
+                s.textContent = d.ok ? 'Lagret ✓' : 'Feil ved lagring';
+                setTimeout(() => s.textContent = '', 3000);
+            }});
+        }}
+        </script>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin-bottom: 20px; font-size: 0.9em;">
-            <div><span style="color: var(--text-muted);">Finnkode:</span> <a href="{esc(finn_url)}" target="_blank">{esc(finnkode)}</a></div>
+            <div><span style="color: var(--text-muted);">{"AutodbId" if kilde == "autodb" else "Finnkode"}:</span> <a href="{esc(finn_url)}" target="_blank">{esc(ad.get("AutodbId") if kilde == "autodb" else finnkode)}</a></div>
             <div><span style="color: var(--text-muted);">Modell:</span> {esc(ad.get('Modell')) or '—'}</div>
             <div><span style="color: var(--text-muted);">Pris:</span> {esc(format_price(pris))}</div>
             <div><span style="color: var(--text-muted);">Km:</span> {esc(ad.get('Kilometerstand')) or '—'}</div>
@@ -1565,6 +1936,9 @@ def view_annonse(finnkode):
             <div><span style="color: var(--text-muted);">Tilhengervekt m/brems:</span> {kg(v('SvvTilhengervektMedBrems'))}</div>
             <div><span style="color: var(--text-muted);">Lokasjon:</span> {esc(lokasjon) or '—'}</div>
             <div><span style="color: var(--text-muted);">Sist sett:</span> <span class="{esc(alder_cls)}">{esc(alder_txt)}</span></div>
+            <div><span style="color: var(--text-muted);">Sengelayout:</span> {esc(ad.get('Sengelayout')) or '—'}</div>
+            <div><span style="color: var(--text-muted);">Vendbare forseter:</span> {"Ja" if ad.get('VendbareForerstoler') == 1 else ("Nei" if ad.get('VendbareForerstoler') == 0 else "—")}</div>
+            <div><span style="color: var(--text-muted);">Heftelser (Brreg):</span> {_heftelse_html(ad.get('Heftelser'), ad.get('HeftelseSjekket'))}</div>
         </div>
         {svv_block}
         <div style="color: var(--text-muted); font-size: 0.85em; margin-bottom: 20px;">
@@ -1661,6 +2035,151 @@ def trigger_scrape():
         t = threading.Thread(target=run_scraper_background, daemon=True)
         t.start()
     return redirect(request.referrer or "prisendringer")
+
+
+@app.route("/api/favoritt/<int:finnkode>", methods=["POST"])
+def api_toggle_favoritt(finnkode):
+    """Toggle favoritt-status for en annonse."""
+    conn = get_db()
+    if not conn:
+        return jsonify({"ok": False}), 500
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute("SELECT Favoritt FROM bruker_data WHERE Finnkode = %s", (finnkode,))
+        row = cur.fetchone()
+        ny_verdi = 0 if (row and row["Favoritt"]) else 1
+        if row:
+            cur.execute("UPDATE bruker_data SET Favoritt = %s WHERE Finnkode = %s", (ny_verdi, finnkode))
+        else:
+            cur.execute("INSERT INTO bruker_data (Finnkode, Favoritt) VALUES (%s, %s)", (finnkode, ny_verdi))
+        conn.commit()
+        return jsonify({"ok": True, "favoritt": bool(ny_verdi)})
+    except Exception as e:
+        logger.error("Feil i api_toggle_favoritt: %s", e)
+        return jsonify({"ok": False}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/api/notat/<int:finnkode>", methods=["POST"])
+def api_lagre_notat(finnkode):
+    """Lagre notat for en annonse."""
+    notat = request.json.get("notat", "") if request.is_json else request.form.get("notat", "")
+    conn = get_db()
+    if not conn:
+        return jsonify({"ok": False}), 500
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute("SELECT Finnkode FROM bruker_data WHERE Finnkode = %s", (finnkode,))
+        if cur.fetchone():
+            cur.execute("UPDATE bruker_data SET Notat = %s WHERE Finnkode = %s", (notat, finnkode))
+        else:
+            cur.execute("INSERT INTO bruker_data (Finnkode, Notat) VALUES (%s, %s)", (finnkode, notat))
+        conn.commit()
+        return jsonify({"ok": True})
+    except Exception as e:
+        logger.error("Feil i api_lagre_notat: %s", e)
+        return jsonify({"ok": False}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/mine-biler")
+def view_mine_biler():
+    rows = get_alle_favoritter()
+
+    if not rows:
+        return render_page("mine-biler", '<p class="no-data">Ingen favoritter ennå — klikk stjernen på en annonse for å legge til.</p>')
+
+    html = '<table><thead><tr>'
+    html += '<th></th>'
+    html += '<th class="sortable">Annonse</th>'
+    html += '<th class="sortable" data-sort="number">Modell</th>'
+    html += '<th class="sortable" data-sort="number">Pris</th>'
+    html += '<th class="sortable" data-sort="number">Prisfall</th>'
+    html += '<th class="sortable" data-sort="number">Nyttelast</th>'
+    html += '<th class="sortable">Seng</th>'
+    html += '<th class="sortable">EU-frist</th>'
+    html += '<th class="sortable">Heftelser</th>'
+    html += '<th>Notat</th>'
+    html += '<th></th>'
+    html += '</tr></thead><tbody>'
+
+    for r in rows:
+        img_url = r.get("ImageURL", "") or ""
+        thumb = f'<img src="{esc(img_url)}" class="thumb" alt="">' if img_url else ""
+        solgt_badge = '<span class="sold-badge">Solgt</span>' if r.get("Solgt") else ""
+        nyttelast = f"{r['SvvNyttelast']} kg" if r.get("SvvNyttelast") else "—"
+        eu_frist = esc(r.get("SvvEuKontrollfrist") or "—")
+        prisfall = f'<span class="price-down">{esc(r["Prisfall"])}</span>' if r.get("Prisfall") else "—"
+        notat_tekst = esc(r.get("Notat") or "")
+        finnkode = r["Finnkode"]
+
+        html += f"""
+        <tr>
+            <td>{thumb}</td>
+            <td class="truncate">
+                <a href="annonse/{esc(finnkode)}">{esc(r['Annonsenavn'])}</a>{solgt_badge}{_kilde_badge(r.get('Kilde'))}
+            </td>
+            <td>{esc(r['Modell'])}</td>
+            <td>{esc(r['NaaverendePris'])}</td>
+            <td>{prisfall}</td>
+            <td>{nyttelast}</td>
+            <td>{esc(r.get('Sengelayout')) or '—'}</td>
+            <td>{eu_frist}</td>
+            <td>{_heftelse_html(r.get('Heftelser'), None)}</td>
+            <td>
+                <span class="notat-vis" data-fk="{esc(finnkode)}"
+                      style="cursor:pointer; color: var(--text-muted); font-size:0.85em;"
+                      onclick="toggleNotat({esc(finnkode)})">{notat_tekst or '<em>Legg til notat...</em>'}</span>
+                <div id="notat-form-{esc(finnkode)}" style="display:none; margin-top:4px;">
+                    <textarea id="notat-txt-{esc(finnkode)}" rows="2"
+                              style="width:200px; background:var(--bg-color); color:var(--text-color);
+                                     border:1px solid var(--border-color); border-radius:4px; padding:4px; font-size:0.85em;"
+                    >{notat_tekst}</textarea>
+                    <br>
+                    <button class="btn" style="margin-top:4px; font-size:0.75em;"
+                            onclick="lagreNotat({esc(finnkode)})">Lagre</button>
+                </div>
+            </td>
+            <td>
+                <button class="btn" style="background:#f44336; font-size:0.75em;"
+                        onclick="fjernFavoritt({esc(finnkode)}, this)">✕</button>
+            </td>
+        </tr>
+        """
+
+    html += "</tbody></table>"
+
+    html += """
+    <script>
+    function toggleNotat(fk) {
+        const form = document.getElementById('notat-form-' + fk);
+        form.style.display = form.style.display === 'none' ? 'block' : 'none';
+    }
+    function lagreNotat(fk) {
+        const txt = document.getElementById('notat-txt-' + fk).value;
+        fetch('api/notat/' + fk, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({notat: txt})
+        }).then(r => r.json()).then(d => {
+            if (d.ok) {
+                const vis = document.querySelector('.notat-vis[data-fk="' + fk + '"]');
+                if (vis) vis.innerHTML = txt || '<em>Legg til notat...</em>';
+                document.getElementById('notat-form-' + fk).style.display = 'none';
+            }
+        });
+    }
+    function fjernFavoritt(fk, btn) {
+        fetch('api/favoritt/' + fk, {method: 'POST'})
+            .then(r => r.json())
+            .then(d => { if (d.ok && !d.favoritt) btn.closest('tr').remove(); });
+    }
+    </script>
+    """
+
+    return render_page("mine-biler", html)
 
 
 @app.route("/api/status")
