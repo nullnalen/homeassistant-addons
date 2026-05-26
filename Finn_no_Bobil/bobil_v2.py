@@ -915,8 +915,17 @@ def parse_autodb_ad(list_ad: dict, detail: dict | None) -> dict:
     km = list_ad.get("km") or 0
     pris = list_ad.get("price") or 0
     yearmodel = list_ad.get("yearmodel")
-    brand = (list_ad.get("brand") or "").strip()
-    variant = (list_ad.get("variant") or "").strip()
+
+    # Hent brand/variant fra list-API, med fallback til typedata i detaljrespons
+    detail_td = {}
+    if detail:
+        first = detail[0] if isinstance(detail, list) else detail
+        detail_td = first.get("typedata") or {}
+
+    brand = (list_ad.get("brand") or detail_td.get("brand") or "").strip()
+    variant = (list_ad.get("variant") or detail_td.get("variant") or "").strip()
+    yearmodel = yearmodel or detail_td.get("yearmodel")
+
     if brand and variant:
         title = f"{brand} {variant}"
     elif brand:
@@ -924,7 +933,7 @@ def parse_autodb_ad(list_ad: dict, detail: dict | None) -> dict:
     elif variant:
         title = variant
     else:
-        title = list_ad.get("title") or f"AutoDB {aditemid}"
+        title = list_ad.get("title") or detail_td.get("title") or f"AutoDB {aditemid}"
     main_img = list_ad.get("mainImageId")
     img_url = f"https://www.autodb.no/assets/img/items/{main_img}.jpg" if main_img else ""
 
