@@ -915,7 +915,16 @@ def parse_autodb_ad(list_ad: dict, detail: dict | None) -> dict:
     km = list_ad.get("km") or 0
     pris = list_ad.get("price") or 0
     yearmodel = list_ad.get("yearmodel")
-    title = list_ad.get("title") or f"AutoDB {aditemid}"
+    brand = (list_ad.get("brand") or "").strip()
+    variant = (list_ad.get("variant") or "").strip()
+    if brand and variant:
+        title = f"{brand} {variant}"
+    elif brand:
+        title = brand
+    elif variant:
+        title = variant
+    else:
+        title = list_ad.get("title") or f"AutoDB {aditemid}"
     main_img = list_ad.get("mainImageId")
     img_url = f"https://www.autodb.no/assets/img/items/{main_img}.jpg" if main_img else ""
 
@@ -927,7 +936,7 @@ def parse_autodb_ad(list_ad: dict, detail: dict | None) -> dict:
         "Modell": yearmodel,
         "Kilometerstand": km,
         "Oppdatert": list_ad.get("timeModified") or list_ad.get("timePublished") or "",
-        "URL": f"https://www.autodb.no/b/{aditemid}",
+        "URL": f"https://www.autodb.no/view/{aditemid}",
         "ImageURL": img_url,
         "Lokasjon": list_ad.get("ccounty") or "",
         "Kjennemerke": kjennemerke,

@@ -428,7 +428,7 @@ def get_prisendringer():
             FROM bobil b
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
             GROUP BY b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert, b.SistSett, b.SvvNyttelast, b.SvvTilhengervektMedBrems, b.URL
-            ORDER BY b.SistSett DESC, STR_TO_DATE(b.Oppdatert, '%d. %m. %Y %H:%i') DESC
+            ORDER BY COALESCE(b.SistSett, CAST(b.Oppdatert AS DATETIME)) DESC
         """)
         rows = cur.fetchall()
         for r in rows:
@@ -1353,13 +1353,13 @@ def _ad_url(row):
     except (TypeError, ValueError):
         autodb_id = 0
     if kilde == "autodb" and autodb_id:
-        return f"https://www.autodb.no/b/{autodb_id}"
+        return f"https://www.autodb.no/view/{autodb_id}"
     if kilde == "finn+autodb" and finnkode > 0:
         return f"https://www.finn.no/mobility/item/{finnkode}"
     if finnkode > 0:
         return f"https://www.finn.no/mobility/item/{finnkode}"
     if autodb_id:
-        return f"https://www.autodb.no/b/{autodb_id}"
+        return f"https://www.autodb.no/view/{autodb_id}"
     return "#"
 
 
@@ -1380,7 +1380,7 @@ def _kilde_lenker(row):
     if finnkode > 0:
         finn_html = f'<a href="https://www.finn.no/mobility/item/{finnkode}" target="_blank" class="kilde-badge kilde-finn">finn.no ↗</a>'
     if autodb_id:
-        auto_html = f'<a href="https://www.autodb.no/b/{autodb_id}" target="_blank" class="kilde-badge kilde-autodb">autodb ↗</a>'
+        auto_html = f'<a href="https://www.autodb.no/view/{autodb_id}" target="_blank" class="kilde-badge kilde-autodb">autodb ↗</a>'
 
     if kilde == "autodb":
         return auto_html
@@ -1909,7 +1909,7 @@ def view_annonse(finnkode):
         autodb_id = ad.get("AutodbId")
         ekstra_lenke = ""
         if kilde == "finn+autodb" and autodb_id:
-            ekstra_lenke = f' &nbsp;<a href="https://www.autodb.no/b/{esc(autodb_id)}" target="_blank" style="font-size:0.7em;">[autodb]</a>'
+            ekstra_lenke = f' &nbsp;<a href="https://www.autodb.no/view/{esc(autodb_id)}" target="_blank" style="font-size:0.7em;">[autodb]</a>'
         elif kilde == "autodb" and autodb_id:
             ekstra_lenke = ""  # finn_url er allerede autodb-lenken
 
