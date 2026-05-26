@@ -1022,17 +1022,19 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
             kjennemerke = ad.get("Kjennemerke") or ""
             autodb_id = ad.get("AutodbId")
 
-            # Dedup: samme kjennemerke finnes allerede (Finn.no-oppføring)
+            # Dedup: samme kjennemerke finnes allerede som en Finn.no-oppføring (positiv Finnkode)
             if kjennemerke and kjennemerke in existing_kjennemerker:
                 finn_finnkode = existing_kjennemerker[kjennemerke]
-                duplikat += 1
-                logger.debug(f"autodb {autodb_id} — kjennemerke {kjennemerke} finnes som Finnkode {finn_finnkode}, oppdaterer kilde")
-                if not dry_run:
-                    cursor.execute(
-                        "UPDATE bobil SET Kilde = 'finn+autodb', AutodbId = %s WHERE Finnkode = %s AND (Kilde = 'finn' OR Kilde IS NULL)",
-                        (autodb_id, finn_finnkode),
-                    )
-                continue
+                if finn_finnkode > 0:
+                    duplikat += 1
+                    logger.debug(f"autodb {autodb_id} — kjennemerke {kjennemerke} finnes som Finnkode {finn_finnkode}, oppdaterer kilde")
+                    if not dry_run:
+                        cursor.execute(
+                            "UPDATE bobil SET Kilde = 'finn+autodb', AutodbId = %s WHERE Finnkode = %s AND (Kilde = 'finn' OR Kilde IS NULL)",
+                            (autodb_id, finn_finnkode),
+                        )
+                    continue
+                # Negativ Finnkode = autodb-surrogate — fall gjennom til upsert under
 
             # Ny autodb-eksklusiv annonse — bruk negativ AutodbId som Finnkode-surrogate
             surrogate_finnkode = -int(autodb_id) if autodb_id else None
