@@ -412,7 +412,7 @@ def get_total_count():
 # ---------------------------------------------------------------------------
 
 def get_prisendringer():
-    """View 1: Annonser med prisendringer, sortert etter antall."""
+    """View 1: Alle annonser (Finn + autodb), sortert etter sist sett."""
     conn = get_db()
     if not conn:
         return []
@@ -426,7 +426,7 @@ def get_prisendringer():
                    MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris,
                    b.URL
             FROM bobil b
-            JOIN prisendringer p ON b.Finnkode = p.Finnkode
+            LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
             GROUP BY b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert, b.SistSett, b.SvvNyttelast, b.SvvTilhengervektMedBrems, b.URL
             ORDER BY b.SistSett DESC, STR_TO_DATE(b.Oppdatert, '%d. %m. %Y %H:%i') DESC
         """)
@@ -1342,7 +1342,7 @@ def _kilde_badge(kilde):
 
 
 def _ad_url(row):
-    """Lag riktig ekstern lenke for en annonse (Finn eller autodb)."""
+    """Lag primær ekstern lenke for en annonse (Finn eller autodb)."""
     kilde = row.get("Kilde") or "finn"
     try:
         finnkode = int(row.get("Finnkode") or 0)
@@ -1361,6 +1361,32 @@ def _ad_url(row):
     if autodb_id:
         return f"https://www.autodb.no/b/{autodb_id}"
     return "#"
+
+
+def _kilde_lenker(row):
+    """HTML med én eller to eksterne lenker avhengig av kilde."""
+    kilde = row.get("Kilde") or "finn"
+    try:
+        finnkode = int(row.get("Finnkode") or 0)
+    except (TypeError, ValueError):
+        finnkode = 0
+    try:
+        autodb_id = int(row.get("AutodbId") or 0)
+    except (TypeError, ValueError):
+        autodb_id = 0
+
+    finn_html = ""
+    auto_html = ""
+    if finnkode > 0:
+        finn_html = f'<a href="https://www.finn.no/mobility/item/{finnkode}" target="_blank" class="kilde-badge kilde-finn">finn.no ↗</a>'
+    if autodb_id:
+        auto_html = f'<a href="https://www.autodb.no/b/{autodb_id}" target="_blank" class="kilde-badge kilde-autodb">autodb ↗</a>'
+
+    if kilde == "autodb":
+        return auto_html
+    if kilde == "finn+autodb":
+        return finn_html + " " + auto_html
+    return finn_html
 
 
 def render_page(active_tab, content_html, base_path=""):
@@ -1394,7 +1420,6 @@ def view_prisendringer():
     <table>
         <thead>
             <tr>
-                <th class="sortable" data-sort="number">Finnkode</th>
                 <th class="sortable">Annonse</th>
                 <th class="sortable" data-sort="number">Modell</th>
                 <th class="sortable" data-sort="number">Pris</th>
@@ -1403,6 +1428,7 @@ def view_prisendringer():
                 <th class="sortable" data-sort="number">Nyttelast</th>
                 <th class="sortable" data-sort="number">Tilh. m/brems</th>
                 <th class="sortable" data-sort="number">Endringer</th>
+                <th>Lenke</th>
                 <th class="sortable sort-desc" data-sort="number">Sist sett</th>
             </tr>
         </thead>
@@ -1411,8 +1437,7 @@ def view_prisendringer():
     for r in rows:
         html += f"""
             <tr>
-                <td><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Finnkode'])}</a></td>
-                <td class="truncate">{esc(r['Annonsenavn'])}{_kilde_badge(r.get('Kilde'))}</td>
+                <td class="truncate"><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Annonsenavn'])}</a>{_kilde_badge(r.get('Kilde'))}</td>
                 <td>{esc(r['Modell'])}</td>
                 <td>{esc(r['NaaverendePris'])}</td>
                 <td class="price-down">{esc(r['LavestePrisF'])}</td>
@@ -1420,6 +1445,7 @@ def view_prisendringer():
                 <td>{f"{r['SvvNyttelast']} kg" if r.get('SvvNyttelast') else '—'}</td>
                 <td>{f"{r['SvvTilhengervektMedBrems']} kg" if r.get('SvvTilhengervektMedBrems') else '—'}</td>
                 <td><strong>{esc(r['AntallEndringer'])}</strong></td>
+                <td style="white-space:nowrap">{_kilde_lenker(r)}</td>
                 <td class="{esc(r['AlderClass'])}" data-sort-value="{esc(r['AlderSort'])}">{esc(r['Alder'])}</td>
             </tr>
         """
@@ -1438,7 +1464,6 @@ def view_kjopsscore():
         <thead>
             <tr>
                 <th class="sortable sort-desc" data-sort="number">Score</th>
-                <th class="sortable" data-sort="number">Finnkode</th>
                 <th class="sortable">Annonse</th>
                 <th class="sortable" data-sort="number">Modell</th>
                 <th class="sortable" data-sort="number">Pris</th>
@@ -1447,6 +1472,7 @@ def view_kjopsscore():
                 <th class="sortable" data-sort="number">Nyttelast</th>
                 <th class="sortable">Seng</th>
                 <th class="sortable" data-sort="number">Dager</th>
+                <th>Lenke</th>
                 <th>Treff</th>
             </tr>
         </thead>
@@ -1462,8 +1488,7 @@ def view_kjopsscore():
         html += f"""
             <tr>
                 <td class="score">{esc(r['KjopsScore'])}</td>
-                <td><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Finnkode'])}</a></td>
-                <td class="truncate">{esc(r['Annonsenavn'])}{ny_badge}{_kilde_badge(r.get('Kilde'))}</td>
+                <td class="truncate"><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Annonsenavn'])}</a>{ny_badge}{_kilde_badge(r.get('Kilde'))}</td>
                 <td>{esc(r['Modell'])}</td>
                 <td>{esc(r['NaaverendePris'])}</td>
                 <td class="price-down">{esc(r['LavestePris'])}</td>
@@ -1471,6 +1496,7 @@ def view_kjopsscore():
                 <td>{nyttelast}</td>
                 <td>{esc(r['Sengelayout']) or '—'}</td>
                 <td>{esc(r['DagerPaaMarkedet'])}</td>
+                <td style="white-space:nowrap">{_kilde_lenker(r)}</td>
                 <td>{treff_html}</td>
             </tr>
         """
@@ -1533,7 +1559,6 @@ def view_sok():
         <table>
             <thead>
                 <tr>
-                    <th class="sortable" data-sort="number">Finnkode</th>
                     <th class="sortable">Annonse</th>
                     <th class="sortable" data-sort="number">Modell</th>
                     <th class="sortable" data-sort="number">Pris</th>
@@ -1543,6 +1568,7 @@ def view_sok():
                     <th class="sortable" data-sort="number">Laveste</th>
                     <th class="sortable" data-sort="number">Høyeste</th>
                     <th class="sortable" data-sort="number">Sist sett</th>
+                    <th>Lenke</th>
                     <th>Treff</th>
                 </tr>
             </thead>
@@ -1555,8 +1581,7 @@ def view_sok():
                     treff_html += f'<span class="keyword-tag">{esc(t)}</span>'
             html += f"""
                 <tr>
-                    <td><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Finnkode'])}</a></td>
-                    <td class="truncate">{esc(r['Annonsenavn'])}{_kilde_badge(r.get('Kilde'))}</td>
+                    <td class="truncate"><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Annonsenavn'])}</a>{_kilde_badge(r.get('Kilde'))}</td>
                     <td>{esc(r['Modell'])}</td>
                     <td>{esc(r['NaaverendePris'])}</td>
                     <td>{esc(r.get('Kilometerstand'))}</td>
@@ -1565,6 +1590,7 @@ def view_sok():
                     <td class="price-down">{esc(r['LavestePrisF'])}</td>
                     <td class="price-up">{esc(r['HoyestePrisF'])}</td>
                     <td class="{esc(r['AlderClass'])}" data-sort-value="{esc(r['AlderSort'])}">{esc(r['Alder'])}</td>
+                    <td style="white-space:nowrap">{_kilde_lenker(r)}</td>
                     <td>{treff_html}</td>
                 </tr>
             """
@@ -1715,6 +1741,7 @@ def view_detaljer():
                 <th class="sortable">Seng</th>
                 <th class="sortable">Heftelser</th>
                 <th class="sortable">Lokasjon</th>
+                <th>Lenke</th>
                 <th class="sortable" data-sort="number">Sist sett</th>
             </tr>
         </thead>
@@ -1742,6 +1769,7 @@ def view_detaljer():
                 <td>{esc(r.get('Sengelayout')) or '—'}</td>
                 <td>{_heftelse_html(r.get('Heftelser'), r.get('HeftelseSjekket'))}</td>
                 <td>{esc(lokasjon)}</td>
+                <td style="white-space:nowrap">{_kilde_lenker(r)}</td>
                 <td class="{esc(r['AlderClass'])}" data-sort-value="{esc(r['AlderSort'])}">{esc(r['Alder'])}</td>
             </tr>
         """
@@ -2117,6 +2145,7 @@ def view_mine_biler():
     html += '<th class="sortable">Seng</th>'
     html += '<th class="sortable">EU-frist</th>'
     html += '<th class="sortable">Heftelser</th>'
+    html += '<th>Lenke</th>'
     html += '<th>Notat</th>'
     html += '<th></th>'
     html += '</tr></thead><tbody>'
@@ -2144,6 +2173,7 @@ def view_mine_biler():
             <td>{esc(r.get('Sengelayout')) or '—'}</td>
             <td>{eu_frist}</td>
             <td>{_heftelse_html(r.get('Heftelser'), None)}</td>
+            <td style="white-space:nowrap">{_kilde_lenker(r)}</td>
             <td>
                 <span class="notat-vis" data-fk="{esc(finnkode)}"
                       style="cursor:pointer; color: var(--text-muted); font-size:0.85em;"
