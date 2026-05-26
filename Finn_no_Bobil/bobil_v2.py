@@ -896,12 +896,18 @@ def parse_autodb_ad(list_ad: dict, detail: dict | None) -> dict:
     """
     aditemid = list_ad.get("aditemid")
 
-    # Kjennemerke fra detaljrespons
+    # Kjennemerke fra detaljrespons — feltet ligger i typedata.regNo (skjult hvis hideRegNo=True)
     kjennemerke = ""
     if detail:
-        items = detail if isinstance(detail, list) else detail.get("items", [detail])
-        for item in (items if isinstance(items, list) else [items]):
-            regnr = (item.get("licenseplate") or item.get("regno") or item.get("registrationNumber") or "").strip().upper().replace(" ", "")
+        items = detail if isinstance(detail, list) else [detail]
+        for item in items:
+            td = item.get("typedata") or {}
+            hidden = td.get("hideRegNo", False)
+            regnr = "" if hidden else (td.get("regNo") or "")
+            if not regnr:
+                # Fallback: sjekk toppnivå-felter
+                regnr = (item.get("licenseplate") or item.get("regno") or item.get("registrationNumber") or "")
+            regnr = regnr.strip().upper().replace(" ", "")
             if regnr:
                 kjennemerke = regnr
                 break
