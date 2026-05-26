@@ -1338,13 +1338,19 @@ def _kilde_badge(kilde):
 def _ad_url(row):
     """Lag riktig ekstern lenke for en annonse (Finn eller autodb)."""
     kilde = row.get("Kilde") or "finn"
-    finnkode = row.get("Finnkode")
-    autodb_id = row.get("AutodbId")
+    try:
+        finnkode = int(row.get("Finnkode") or 0)
+    except (TypeError, ValueError):
+        finnkode = 0
+    try:
+        autodb_id = int(row.get("AutodbId") or 0)
+    except (TypeError, ValueError):
+        autodb_id = 0
     if kilde == "autodb" and autodb_id:
         return f"https://www.autodb.no/b/{autodb_id}"
-    if kilde == "finn+autodb" and finnkode and finnkode > 0:
+    if kilde == "finn+autodb" and finnkode > 0:
         return f"https://www.finn.no/mobility/item/{finnkode}"
-    if finnkode and finnkode > 0:
+    if finnkode > 0:
         return f"https://www.finn.no/mobility/item/{finnkode}"
     if autodb_id:
         return f"https://www.autodb.no/b/{autodb_id}"
