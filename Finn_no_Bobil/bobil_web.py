@@ -9,6 +9,7 @@ import json
 import re
 import logging
 import threading
+import traceback
 from datetime import datetime
 
 import mysql.connector
@@ -64,17 +65,22 @@ MONTH_MAP = {
 
 
 def parse_norwegian_date(date_str):
-    """Parse datostreng som '25. jan. 2025 14:30' eller '25. May. 2026 14:31' til datetime."""
+    """Parse datostreng til datetime. Støtter norsk format og ISO 8601."""
     if not date_str or date_str == "Ukjent":
         return None
     try:
-        s = date_str.strip().lower()
+        s = date_str.strip()
+        # ISO 8601 fallback: "2026-05-26T03:01:32..." eller "2026-05-26 03:01"
+        if re.match(r"\d{4}-\d{2}-\d{2}", s):
+            s_clean = re.sub(r"[TZ]", " ", s).strip()[:16]
+            return datetime.strptime(s_clean, "%Y-%m-%d %H:%M")
+        sl = s.lower()
         for name, num in MONTH_MAP.items():
-            if name in s:
-                s = re.sub(rf"\b{name}\.?\b", f"{num:02d}", s)
+            if name in sl:
+                sl = re.sub(rf"\b{name}\.?\b", f"{num:02d}", sl)
                 break
-        # Forventet format nå: "25. 05. 2026 14:31"
-        m = re.match(r"(\d{1,2})\.\s*(\d{2})\.?\s+(\d{4})\s+(\d{2}):(\d{2})", s)
+        # Forventet format: "25. 05. 2026 14:31"
+        m = re.match(r"(\d{1,2})\.\s*(\d{2})\.?\s+(\d{4})\s+(\d{2}):(\d{2})", sl)
         if m:
             return datetime(int(m.group(3)), int(m.group(2)), int(m.group(1)),
                             int(m.group(4)), int(m.group(5)))
@@ -380,7 +386,7 @@ def get_alle_favoritter() -> list[dict]:
             r["Prisfall"] = prisfall
         return rows
     except Exception as e:
-        logger.error("Feil i get_alle_favoritter: %s", e)
+        logger.error("Feil i get_alle_favoritter: %s\n%s", e, traceback.format_exc())
         return []
     finally:
         conn.close()
@@ -439,7 +445,7 @@ def get_prisendringer():
             r["Alder"], r["AlderClass"], r["AlderSort"] = format_age(r.get("Oppdatert", ""))
         return rows
     except Exception as e:
-        logger.error("Feil i get_prisendringer: %s", e)
+        logger.error("Feil i get_prisendringer: %s\n%s", e, traceback.format_exc())
         return []
     finally:
         conn.close()
@@ -619,7 +625,7 @@ def get_kjopsscore():
         results.sort(key=lambda x: x["KjopsScore"], reverse=True)
         return results[:100]
     except Exception as e:
-        logger.error("Feil i get_kjopsscore: %s", e)
+        logger.error("Feil i get_kjopsscore: %s\n%s", e, traceback.format_exc())
         return []
     finally:
         conn.close()
@@ -650,7 +656,7 @@ def get_prisutvikling():
             r["GjSnittPrisF"] = format_price(parse_price(r["GjSnittPris"]))
         return rows
     except Exception as e:
-        logger.error("Feil i get_prisutvikling: %s", e)
+        logger.error("Feil i get_prisutvikling: %s\n%s", e, traceback.format_exc())
         return []
     finally:
         conn.close()
@@ -689,7 +695,7 @@ def get_sokresultater(keywords_str):
             GROUP BY b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Beskrivelse, b.Modell,
                      b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
                      b.Oppdatert, b.Pris
-            ORDER BY b.Oppdatert DESC
+            ORDER BY STR_TO_DATE(b.Oppdatert, '%d. %m. %Y %H:%i') DESC
         """, params)
         rows = cur.fetchall()
 
@@ -713,7 +719,7 @@ def get_sokresultater(keywords_str):
             r["Soketreff"] = ", ".join(t for t in terms if t.lower() in tekst)
         return rows
     except Exception as e:
-        logger.error("Feil i get_sokresultater: %s", e)
+        logger.error("Feil i get_sokresultater: %s\n%s", e, traceback.format_exc())
         return []
     finally:
         conn.close()
@@ -821,7 +827,7 @@ def get_detaljer(page=1, per_page=50, filters=None):
                      b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
                      b.Oppdatert, b.Pris, b.URL, b.ImageURL, b.Lokasjon, b.Solgt,
                      b.Sengelayout, b.Heftelser, b.HeftelseSjekket
-            ORDER BY b.Oppdatert DESC
+            ORDER BY STR_TO_DATE(b.Oppdatert, '%d. %m. %Y %H:%i') DESC
             LIMIT %s OFFSET %s
         """, params + [per_page, offset])
         rows = cur.fetchall()
@@ -874,7 +880,7 @@ def get_detaljer(page=1, per_page=50, filters=None):
 
         return rows, total
     except Exception as e:
-        logger.error("Feil i get_detaljer: %s", e)
+        logger.error("Feil i get_detaljer: %s\n%s", e, traceback.format_exc())
         return [], 0
     finally:
         conn.close()
@@ -1763,10 +1769,14 @@ def view_detaljer():
     return render_page("detaljer", html)
 
 
-@app.route("/annonse/<int:finnkode>")
+@app.route("/annonse/<finnkode>")
 def view_annonse(finnkode):
     """Detaljside for en enkelt annonse med prishistorikk-graf."""
     bp = "../"
+    try:
+        finnkode = int(finnkode)
+    except (TypeError, ValueError):
+        return render_page("detaljer", '<p class="no-data">Ugyldig annonsekode.</p>', base_path=bp)
     conn = get_db()
     if not conn:
         return render_page("detaljer", '<p class="no-data">Ingen databasetilkobling.</p>', base_path=bp)
@@ -2029,7 +2039,7 @@ def view_annonse(finnkode):
 
         return render_page("detaljer", html, base_path=bp)
     except Exception as e:
-        logger.error("Feil i view_annonse: %s", e)
+        logger.error("Feil i view_annonse: %s\n%s", e, traceback.format_exc())
         return render_page("detaljer", '<p class="no-data">Feil ved henting av annonse.</p>', base_path=bp)
     finally:
         conn.close()
