@@ -1168,6 +1168,10 @@ async def main() -> None:
         logger.info("Starter autodb.no-scraping...")
         autodb_ads = await fetch_and_enrich_autodb(session, options)
         if autodb_ads:
+            # Sett surrogate Finnkode før enrich så SVV/Brreg-cache fungerer
+            for ad in autodb_ads:
+                if ad.get("AutodbId") and ad.get("Finnkode") is None:
+                    ad["Finnkode"] = -int(ad["AutodbId"])
             autodb_ads = await enrich_ads_with_vegvesen(session, autodb_ads)
             autodb_ads = await enrich_ads_with_heftelser(session, autodb_ads)
             existing_kjennemerker = get_existing_kjennemerker()
