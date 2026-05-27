@@ -939,7 +939,7 @@ TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bobil — Finn.no</title>
+    <title>Bobil — Markedsplassoversikt</title>
     <style>
         :root {
             --accent:       #0A84FF;
@@ -1374,7 +1374,7 @@ TEMPLATE = """
     <div class="container">
         <div class="app-header">
             <h1>Bobil</h1>
-            <span class="subtitle">Finn.no &amp; AutoDB oversikt</span>
+            <span class="subtitle">Finn.no · AutoDB oversikt</span>
         </div>
         <nav class="tabs">
             <a href="{{ bp }}prisendringer" class="tab {{ 'active' if active_tab == 'prisendringer' }}">Prisendringer</a>
@@ -1445,7 +1445,7 @@ def _heftelse_html(antall, sjekket_dato):
 
 
 def _kilde_badge(kilde):
-    """Render kilde-badge: [F] for finn, [A] for autodb, [F+A] for begge."""
+    """Render kilde-badge: [F] for finn.no, [A] for autodb, [F+A] for begge."""
     if not kilde or kilde == "finn":
         return '<span class="kilde-badge kilde-finn">F</span>'
     if kilde == "autodb":
@@ -1456,7 +1456,7 @@ def _kilde_badge(kilde):
 
 
 def _ad_url(row):
-    """Lag primær ekstern lenke for en annonse (Finn eller autodb)."""
+    """Primær ekstern lenke for en annonse — finn.no eller autodb."""
     kilde = row.get("Kilde") or "finn"
     try:
         finnkode = int(row.get("Finnkode") or 0)
@@ -1468,8 +1468,6 @@ def _ad_url(row):
         autodb_id = 0
     if kilde == "autodb" and autodb_id:
         return f"https://www.autodb.no/view/{autodb_id}"
-    if kilde == "finn+autodb" and finnkode > 0:
-        return f"https://www.finn.no/mobility/item/{finnkode}"
     if finnkode > 0:
         return f"https://www.finn.no/mobility/item/{finnkode}"
     if autodb_id:
@@ -1489,18 +1487,18 @@ def _kilde_lenker(row):
     except (TypeError, ValueError):
         autodb_id = 0
 
-    finn_html = ""
-    auto_html = ""
+    finn_lenke = ""
+    autodb_lenke = ""
     if finnkode > 0:
-        finn_html = f'<a href="https://www.finn.no/mobility/item/{finnkode}" target="_blank" class="kilde-badge kilde-finn">finn.no ↗</a>'
+        finn_lenke = f'<a href="https://www.finn.no/mobility/item/{finnkode}" target="_blank" class="kilde-badge kilde-finn">finn.no ↗</a>'
     if autodb_id:
-        auto_html = f'<a href="https://www.autodb.no/view/{autodb_id}" target="_blank" class="kilde-badge kilde-autodb">autodb ↗</a>'
+        autodb_lenke = f'<a href="https://www.autodb.no/view/{autodb_id}" target="_blank" class="kilde-badge kilde-autodb">autodb ↗</a>'
 
     if kilde == "autodb":
-        return auto_html
+        return autodb_lenke
     if kilde == "finn+autodb":
-        return finn_html + " " + auto_html
-    return finn_html
+        return finn_lenke + " " + autodb_lenke
+    return finn_lenke
 
 
 def render_page(active_tab, content_html, base_path=""):
@@ -1939,7 +1937,7 @@ def view_annonse(finnkode):
         pris = parse_price(ad["Pris"])
         km = parse_km(ad.get("Kilometerstand"))
         alder_txt, alder_cls, _ = format_age(ad.get("Oppdatert", ""))
-        finn_url = _ad_url(ad)
+        ad_url = _ad_url(ad)
 
         # Bygg Chart.js data
         chart_labels = []
@@ -2025,7 +2023,7 @@ def view_annonse(finnkode):
         if kilde == "finn+autodb" and autodb_id:
             ekstra_lenke = f' &nbsp;<a href="https://www.autodb.no/view/{esc(autodb_id)}" target="_blank" style="font-size:0.7em;">[autodb]</a>'
         elif kilde == "autodb" and autodb_id:
-            ekstra_lenke = ""  # finn_url er allerede autodb-lenken
+            ekstra_lenke = ""  # ad_url er allerede autodb-lenken
 
         stjerne = "⭐" if er_favoritt else "☆"
         stjerne_title = "Fjern fra favoritter" if er_favoritt else "Legg til i favoritter"
@@ -2035,7 +2033,7 @@ def view_annonse(finnkode):
             <a href="../mine-biler" style="font-size: 0.85em;">⭐ Mine biler</a>
         </div>
         <h2 style="margin-bottom: 10px; color: var(--label); display:flex; align-items:center; gap:12px;">
-            <a href="{esc(finn_url)}" target="_blank">{esc(ad.get('Annonsenavn', finnkode))}</a>
+            <a href="{esc(ad_url)}" target="_blank">{esc(ad.get('Annonsenavn', finnkode))}</a>
             {_kilde_badge(kilde)}{ekstra_lenke}
             <button id="fav-btn" onclick="toggleFavoritt({esc(finnkode)})"
                     title="{esc(stjerne_title)}"
@@ -2083,13 +2081,13 @@ def view_annonse(finnkode):
         }}
         </script>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin-bottom: 20px; font-size: 0.9em;">
-            <div><span style="color: var(--label-sec);">{"AutodbId" if kilde == "autodb" else "Finnkode"}:</span> <a href="{esc(finn_url)}" target="_blank">{esc(ad.get("AutodbId") if kilde == "autodb" else finnkode)}</a></div>
+            <div><span style="color: var(--label-sec);">{"AutodbId" if kilde == "autodb" else "Finnkode"}:</span> <a href="{esc(ad_url)}" target="_blank">{esc(ad.get("AutodbId") if kilde == "autodb" else finnkode)}</a></div>
             <div><span style="color: var(--label-sec);">Modell:</span> {esc(ad.get('Modell')) or '—'}</div>
             <div><span style="color: var(--label-sec);">Pris:</span> {esc(format_price(pris))}</div>
             <div><span style="color: var(--label-sec);">Km:</span> {esc(ad.get('Kilometerstand')) or '—'}</div>
             <div><span style="color: var(--label-sec);">Type:</span> {esc(ad.get('Typebobil')) or '—'}</div>
             <div><span style="color: var(--label-sec);">Girkasse:</span> {esc(ad.get('Girkasse')) or '—'}</div>
-            <div><span style="color: var(--label-sec);">Nyttelast (Finn):</span> {esc(ad.get('Nyttelast')) or '—'}</div>
+            <div><span style="color: var(--label-sec);">Nyttelast (annonse):</span> {esc(ad.get('Nyttelast')) or '—'}</div>
             <div><span style="color: var(--label-sec);">Nyttelast (SVV):</span> {kg(v('SvvNyttelast'))}</div>
             <div><span style="color: var(--label-sec);">Tilhengervekt m/brems:</span> {kg(v('SvvTilhengervektMedBrems'))}</div>
             <div><span style="color: var(--label-sec);">Lokasjon:</span> {esc(lokasjon) or '—'}</div>
