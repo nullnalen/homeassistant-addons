@@ -942,342 +942,460 @@ TEMPLATE = """
     <title>Bobil — Finn.no</title>
     <style>
         :root {
-            --primary-color: #4caf50;
-            --bg-color: #1c1c1c;
-            --card-bg: #2d2d2d;
-            --text-color: #e0e0e0;
-            --text-muted: #9e9e9e;
-            --border-color: #404040;
+            --accent:       #0A84FF;
+            --accent-dim:   rgba(10,132,255,0.15);
+            --accent-mid:   rgba(10,132,255,0.35);
+            --bg:           #000000;
+            --bg-elevated:  #1C1C1E;
+            --bg-grouped:   #2C2C2E;
+            --separator:    rgba(255,255,255,0.08);
+            --separator-op: rgba(255,255,255,0.14);
+            --label:        #FFFFFF;
+            --label-sec:    rgba(235,235,245,0.60);
+            --label-ter:    rgba(235,235,245,0.30);
+            --fill:         rgba(120,120,128,0.36);
+            --green:        #30D158;
+            --orange:       #FF9F0A;
+            --red:          #FF453A;
+            --radius-sm:    8px;
+            --radius-md:    12px;
+            --radius-lg:    16px;
         }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html { -webkit-text-size-adjust: 100%; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--bg-color);
-            color: var(--text-color);
-            padding: 20px;
-            line-height: 1.6;
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+            background: var(--bg);
+            color: var(--label);
+            line-height: 1.5;
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
         }
-        .container { max-width: 1200px; margin: 0 auto; }
-        h1 {
-            color: var(--primary-color);
-            margin-bottom: 15px;
-            font-size: 1.5em;
+
+        /* ── Layout ── */
+        .container { max-width: 1280px; margin: 0 auto; padding: 20px 16px 40px; }
+
+        /* ── Header ── */
+        .app-header {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            margin-bottom: 24px;
         }
+        .app-header h1 {
+            font-size: 1.75rem;
+            font-weight: 700;
+            letter-spacing: -0.4px;
+            color: var(--label);
+        }
+        .app-header .subtitle {
+            font-size: 0.85rem;
+            color: var(--label-sec);
+            font-weight: 400;
+        }
+
+        /* ── Segmented control (tabs) ── */
         .tabs {
             display: flex;
-            gap: 4px;
-            margin-bottom: 20px;
-            flex-wrap: wrap;
+            gap: 0;
+            margin-bottom: 16px;
+            background: var(--bg-grouped);
+            border-radius: var(--radius-md);
+            padding: 3px;
+            overflow-x: auto;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
         }
+        .tabs::-webkit-scrollbar { display: none; }
         .tab {
-            padding: 8px 16px;
-            background: var(--card-bg);
-            color: var(--text-muted);
+            flex: 1;
+            min-width: max-content;
+            padding: 7px 14px;
+            background: transparent;
+            color: var(--label-sec);
             text-decoration: none;
-            border-radius: 8px 8px 0 0;
-            border: 1px solid var(--border-color);
-            border-bottom: none;
-            font-size: 0.9em;
+            border-radius: 9px;
+            font-size: 0.82rem;
+            font-weight: 500;
+            text-align: center;
+            transition: background 0.18s ease, color 0.18s ease;
+            white-space: nowrap;
+            letter-spacing: -0.1px;
         }
-        .tab:hover { color: var(--text-color); }
+        .tab:hover { color: var(--label); }
         .tab.active {
-            background: var(--primary-color);
-            color: #000;
+            background: var(--bg-elevated);
+            color: var(--label);
             font-weight: 600;
-            border-color: var(--primary-color);
+            box-shadow: 0 1px 4px rgba(0,0,0,0.4), 0 0 0 0.5px var(--separator-op);
         }
+        .tab-star {
+            color: var(--orange);
+        }
+        .tab-star.active { color: var(--orange); }
+
+        /* ── Content card ── */
         .content {
-            background: var(--card-bg);
-            border-radius: 0 12px 12px 12px;
-            padding: 20px;
-            border: 1px solid var(--border-color);
+            background: var(--bg-elevated);
+            border-radius: var(--radius-lg);
+            padding: 0;
+            overflow: hidden;
+            border: 0.5px solid var(--separator-op);
+        }
+        .content-inner {
+            padding: 16px 20px;
             overflow-x: auto;
         }
+
+        /* ── Tables ── */
         table {
             width: 100%;
             border-collapse: collapse;
-            font-size: 0.85em;
+            font-size: 0.84rem;
         }
+        thead { position: sticky; top: 0; z-index: 2; }
         th {
-            background: rgba(0,0,0,0.3);
-            color: var(--primary-color);
-            padding: 10px 8px;
+            background: var(--bg-elevated);
+            color: var(--label-sec);
+            padding: 10px 12px;
             text-align: left;
-            position: sticky;
-            top: 0;
+            font-weight: 600;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
             white-space: nowrap;
+            border-bottom: 0.5px solid var(--separator-op);
         }
         td {
-            padding: 8px;
-            border-bottom: 1px solid var(--border-color);
-            vertical-align: top;
+            padding: 10px 12px;
+            border-bottom: 0.5px solid var(--separator);
+            vertical-align: middle;
+            color: var(--label);
         }
-        tr:hover { background: rgba(255,255,255,0.03); }
-        a { color: var(--primary-color); text-decoration: none; }
+        tbody tr:last-child td { border-bottom: none; }
+        tbody tr:hover td { background: var(--fill); }
+        a { color: var(--accent); text-decoration: none; }
         a:hover { text-decoration: underline; }
-        .price-down { color: #4caf50; }
-        .price-up { color: #f44336; }
-        .score { font-weight: bold; color: var(--primary-color); }
+
+        /* ── Sortable headers ── */
+        th.sortable { cursor: pointer; user-select: none; }
+        th.sortable:hover { color: var(--label); }
+        th.sortable::after { content: ' ⇅'; font-size: 0.65em; opacity: 0.3; }
+        th.sort-asc::after  { content: ' ▲'; opacity: 0.7; }
+        th.sort-desc::after { content: ' ▼'; opacity: 0.7; }
+
+        /* ── Badges ── */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 7px;
+            border-radius: 20px;
+            font-size: 0.68rem;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+            vertical-align: middle;
+            margin-left: 4px;
+        }
+        .new-badge  { background: var(--orange);  color: #000; }
+        .sold-badge { background: var(--red);      color: #fff; }
+        .kilde-badge { border-radius: 5px; }
+        .kilde-finn   { background: rgba(255,69,58,0.20);  color: #FF6961; border: 0.5px solid rgba(255,69,58,0.35); }
+        .kilde-autodb { background: rgba(10,132,255,0.18); color: #409CFF; border: 0.5px solid rgba(10,132,255,0.35); }
+        .kilde-both   { background: rgba(191,90,242,0.18); color: #DA8FFF; border: 0.5px solid rgba(191,90,242,0.35); }
+
+        /* Source link badges */
+        a.kilde-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: opacity 0.15s;
+        }
+        a.kilde-badge:hover { opacity: 0.75; text-decoration: none; }
+
+        /* ── Price colors ── */
+        .price-down { color: var(--green); }
+        .price-up   { color: var(--red); }
+        .score      { font-weight: 700; color: var(--accent); }
+
+        /* ── Age colors ── */
+        .age-fresh   { color: var(--green); }
+        .age-weeks   { color: var(--orange); }
+        .age-old     { color: var(--red); }
+        .age-unknown { color: var(--label-ter); }
+
+        /* ── Keyword tags ── */
         .keyword-tag {
             display: inline-block;
-            background: rgba(76,175,80,0.2);
+            background: var(--accent-dim);
+            color: var(--accent);
             padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 0.8em;
-            margin: 1px;
-        }
-        .status-bar {
-            margin-top: 20px;
-            padding: 12px 16px;
-            background: var(--card-bg);
-            border-radius: 8px;
-            border: 1px solid var(--border-color);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 10px;
-            font-size: 0.85em;
-            color: var(--text-muted);
-        }
-        .btn {
-            background: var(--primary-color);
-            color: #000;
-            border: none;
-            padding: 6px 14px;
-            border-radius: 6px;
-            cursor: pointer;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            margin: 1px 2px;
             font-weight: 500;
-            font-size: 0.85em;
         }
-        .btn:hover { opacity: 0.9; }
-        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .search-form {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 15px;
-        }
-        .search-form input {
-            flex: 1;
-            padding: 8px 12px;
-            border-radius: 6px;
-            border: 1px solid var(--border-color);
-            background: var(--bg-color);
-            color: var(--text-color);
-            font-size: 0.9em;
-        }
-        .pagination {
-            display: flex;
-            gap: 8px;
-            margin-top: 15px;
-            justify-content: center;
-        }
-        .pagination a, .pagination span {
-            padding: 6px 12px;
-            border-radius: 4px;
-            border: 1px solid var(--border-color);
-            color: var(--text-muted);
-            text-decoration: none;
-            font-size: 0.85em;
-        }
-        .pagination a:hover { background: rgba(255,255,255,0.05); }
-        .pagination .current {
-            background: var(--primary-color);
-            color: #000;
-            border-color: var(--primary-color);
-            font-weight: 600;
-        }
-        .no-data {
-            color: var(--text-muted);
-            font-style: italic;
-            text-align: center;
-            padding: 40px;
-        }
-        .truncate {
-            max-width: 300px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        th.sortable {
-            cursor: pointer;
-            user-select: none;
-        }
-        th.sortable:hover {
-            color: var(--text-color);
-        }
-        th.sortable::after {
-            content: ' ⇅';
-            font-size: 0.7em;
-            opacity: 0.4;
-        }
-        th.sort-asc::after {
-            content: ' ▲';
-            opacity: 0.8;
-        }
-        th.sort-desc::after {
-            content: ' ▼';
-            opacity: 0.8;
-        }
-        .new-badge {
-            display: inline-block;
-            background: #ff9800;
-            color: #000;
-            padding: 1px 6px;
-            border-radius: 3px;
-            font-size: 0.7em;
-            font-weight: 600;
-            margin-left: 4px;
+
+        /* ── Thumbnails ── */
+        .thumb {
+            width: 72px;
+            height: 54px;
+            object-fit: cover;
+            border-radius: var(--radius-sm);
             vertical-align: middle;
+            background: var(--bg-grouped);
         }
-        /* Filterpanel */
+        .detail-img {
+            max-width: 520px;
+            width: 100%;
+            border-radius: var(--radius-md);
+            margin-bottom: 20px;
+        }
+
+        /* ── Sold rows ── */
+        tr.sold td { opacity: 0.4; }
+
+        /* ── Filter panel ── */
         .filter-panel {
             display: flex;
-            gap: 12px;
-            margin-bottom: 15px;
+            gap: 10px;
+            margin-bottom: 16px;
             flex-wrap: wrap;
             align-items: flex-end;
         }
         .filter-group {
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            gap: 5px;
         }
         .filter-group label {
-            font-size: 0.75em;
-            color: var(--text-muted);
+            font-size: 0.72rem;
+            color: var(--label-sec);
+            font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
         .filter-group select,
-        .filter-group input[type="number"] {
-            padding: 6px 10px;
-            border-radius: 6px;
-            border: 1px solid var(--border-color);
-            background: var(--bg-color);
-            color: var(--text-color);
-            font-size: 0.85em;
+        .filter-group input[type="number"],
+        .search-form input {
+            padding: 8px 12px;
+            border-radius: var(--radius-sm);
+            border: 0.5px solid var(--separator-op);
+            background: var(--bg-grouped);
+            color: var(--label);
+            font-size: 0.85rem;
+            font-family: inherit;
             min-width: 120px;
+            -webkit-appearance: none;
+            appearance: none;
+            transition: border-color 0.15s;
         }
-        /* Mobilvisning */
-        @media (max-width: 768px) {
-            body { padding: 10px; }
-            .tabs { gap: 2px; }
-            .tab { padding: 6px 10px; font-size: 0.8em; }
-            .content { padding: 12px; }
-            table { font-size: 0.75em; }
-            th, td { padding: 6px 4px; }
-            .filter-panel { flex-direction: column; }
+        .filter-group select:focus,
+        .filter-group input:focus,
+        .search-form input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        /* ── Search ── */
+        .search-form {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+        .search-form input { flex: 1; }
+
+        /* ── Buttons ── */
+        .btn {
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            padding: 8px 18px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.85rem;
+            font-family: inherit;
+            letter-spacing: -0.1px;
+            transition: opacity 0.15s;
+            -webkit-appearance: none;
+        }
+        .btn:hover   { opacity: 0.85; }
+        .btn:active  { opacity: 0.7; }
+        .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+        /* ── Pagination ── */
+        .pagination {
+            display: flex;
+            gap: 6px;
+            margin-top: 16px;
+            justify-content: center;
+        }
+        .pagination a, .pagination span {
+            padding: 6px 13px;
+            border-radius: var(--radius-sm);
+            border: 0.5px solid var(--separator-op);
+            color: var(--accent);
+            text-decoration: none;
+            font-size: 0.83rem;
+            font-weight: 500;
+            background: var(--bg-grouped);
+            transition: background 0.15s;
+        }
+        .pagination a:hover { background: var(--accent-dim); text-decoration: none; }
+        .pagination .current {
+            background: var(--accent);
+            color: #fff;
+            border-color: var(--accent);
+            font-weight: 700;
+        }
+
+        /* ── No data ── */
+        .no-data {
+            color: var(--label-ter);
+            font-style: italic;
+            text-align: center;
+            padding: 48px 20px;
+            font-size: 0.9rem;
+        }
+
+        /* ── Truncate ── */
+        .truncate {
+            max-width: 280px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* ── Status bar ── */
+        .status-bar {
+            margin-top: 14px;
+            padding: 12px 18px;
+            background: var(--bg-elevated);
+            border-radius: var(--radius-md);
+            border: 0.5px solid var(--separator-op);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            font-size: 0.8rem;
+            color: var(--label-sec);
+        }
+
+        /* ── Section headers inside content ── */
+        .section-header {
+            padding: 14px 20px 8px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--label-sec);
+            border-bottom: 0.5px solid var(--separator);
+        }
+
+        /* ── Detail page ── */
+        .detail-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0;
+        }
+        .detail-row {
+            display: contents;
+        }
+        .detail-row dt,
+        .detail-row dd {
+            padding: 9px 20px;
+            border-bottom: 0.5px solid var(--separator);
+            font-size: 0.875rem;
+        }
+        .detail-row dt { color: var(--label-sec); font-weight: 500; }
+        .detail-row dd { color: var(--label); }
+
+        /* ── Mobile ── */
+        @media (max-width: 680px) {
+            .container { padding: 12px 10px 32px; }
+            .app-header h1 { font-size: 1.4rem; }
+            .tabs { border-radius: var(--radius-sm); }
+            .tab { padding: 6px 10px; font-size: 0.78rem; }
+            table { font-size: 0.78rem; }
+            th { padding: 8px 8px; font-size: 0.68rem; }
+            td { padding: 8px 8px; }
+            .filter-panel { flex-direction: column; gap: 8px; }
             .filter-group { width: 100%; }
             .filter-group select,
             .filter-group input[type="number"] { width: 100%; }
             .status-bar { flex-direction: column; text-align: center; }
-            /* Card layout for mobilvisning */
+            .thumb { width: 56px; height: 42px; }
+            .truncate { max-width: 160px; }
             .mobile-cards table { display: none; }
             .mobile-cards .card-list { display: block; }
         }
-        @media (min-width: 769px) {
+        @media (min-width: 681px) {
             .mobile-cards .card-list { display: none; }
         }
-        .card-list {
-            display: none;
-        }
+
+        /* ── Mobile cards ── */
+        .card-list { display: none; }
         .card {
-            background: var(--bg-color);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 12px;
-            margin-bottom: 10px;
+            background: var(--bg-grouped);
+            border: 0.5px solid var(--separator-op);
+            border-radius: var(--radius-md);
+            padding: 14px;
+            margin-bottom: 8px;
         }
         .card-header {
             display: flex;
             justify-content: space-between;
-            align-items: center;
+            align-items: flex-start;
             margin-bottom: 8px;
+            gap: 8px;
         }
         .card-header a {
             font-weight: 600;
-            font-size: 0.95em;
+            font-size: 0.92rem;
+            line-height: 1.3;
+            flex: 1;
         }
         .card-details {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 4px 12px;
-            font-size: 0.8em;
+            gap: 4px 16px;
+            font-size: 0.8rem;
         }
-        .card-detail-label {
-            color: var(--text-muted);
-        }
-        tr.sold {
-            opacity: 0.5;
-        }
-        tr.sold td:first-child::before {
-            content: '';
-        }
-        .thumb {
-            width: 80px;
-            height: 60px;
-            object-fit: cover;
-            border-radius: 4px;
-            vertical-align: middle;
-        }
-        .detail-img {
-            max-width: 480px;
-            width: 100%;
-            border-radius: 8px;
-            margin-bottom: 20px;
-        }
-        .age-fresh { color: #4caf50; }
-        .age-weeks { color: #ff9800; }
-        .age-old { color: #f44336; }
-        .age-unknown { color: var(--text-muted); }
-        .sold-badge {
-            display: inline-block;
-            background: #f44336;
-            color: #fff;
-            padding: 1px 6px;
-            border-radius: 3px;
-            font-size: 0.7em;
-            font-weight: 600;
-            margin-left: 4px;
-            vertical-align: middle;
-        }
-        .kilde-badge {
-            display: inline-block;
-            padding: 1px 5px;
-            border-radius: 3px;
-            font-size: 0.65em;
-            font-weight: 700;
-            margin-left: 4px;
-            vertical-align: middle;
-            letter-spacing: 0.3px;
-        }
-        .kilde-finn { background: #d32f2f; color: #fff; }
-        .kilde-autodb { background: #1565c0; color: #fff; }
-        .kilde-both { background: #6a1b9a; color: #fff; }
+        .card-detail-label { color: var(--label-sec); }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Bobil — Finn.no Oversikt</h1>
+        <div class="app-header">
+            <h1>Bobil</h1>
+            <span class="subtitle">Finn.no &amp; AutoDB oversikt</span>
+        </div>
         <nav class="tabs">
             <a href="{{ bp }}prisendringer" class="tab {{ 'active' if active_tab == 'prisendringer' }}">Prisendringer</a>
             <a href="{{ bp }}kjopsscore" class="tab {{ 'active' if active_tab == 'kjopsscore' }}">Kjøpsscore</a>
             <a href="{{ bp }}prisutvikling" class="tab {{ 'active' if active_tab == 'prisutvikling' }}">Prisutvikling</a>
-            <a href="{{ bp }}sok" class="tab {{ 'active' if active_tab == 'sok' }}">Nøkkelord-søk</a>
+            <a href="{{ bp }}sok" class="tab {{ 'active' if active_tab == 'sok' }}">Søk</a>
             <a href="{{ bp }}detaljer" class="tab {{ 'active' if active_tab == 'detaljer' }}">Detaljert</a>
-            <a href="{{ bp }}mine-biler" class="tab {{ 'active' if active_tab == 'mine-biler' }}" style="{{ 'background:#ff9800; color:#000;' if active_tab != 'mine-biler' else '' }}">⭐ Mine biler</a>
+            <a href="{{ bp }}mine-biler" class="tab tab-star {{ 'active' if active_tab == 'mine-biler' }}">★ Mine biler</a>
         </nav>
 
         <div class="content">
-            {{ content|safe }}
+            <div class="content-inner">
+                {{ content|safe }}
+            </div>
         </div>
 
         <div class="status-bar">
             <span>
-                {{ total_listings }} annonser i databasen
-                {% if last_scrape %} | Sist oppdatert: {{ last_scrape }}{% endif %}
-                {% if scraper_running %} | Scraping pågår...{% endif %}
+                {{ total_listings }} annonser
+                {% if last_scrape %}&nbsp;·&nbsp;Oppdatert {{ last_scrape }}{% endif %}
+                {% if scraper_running %}&nbsp;·&nbsp;Scraping pågår…{% endif %}
             </span>
             <form method="POST" action="{{ bp }}scrape" style="display:inline">
                 <button type="submit" class="btn" {{ 'disabled' if scraper_running }}>Oppdater nå</button>
@@ -1285,7 +1403,6 @@ TEMPLATE = """
         </div>
     </div>
     <script>
-        // Sortering av tabeller
         document.querySelectorAll('th.sortable').forEach(th => {
             th.addEventListener('click', () => {
                 const table = th.closest('table');
@@ -1293,13 +1410,10 @@ TEMPLATE = """
                 const idx = Array.from(th.parentNode.children).indexOf(th);
                 const type = th.dataset.sort || 'string';
                 const rows = Array.from(tbody.querySelectorAll('tr'));
-
-                // Toggle sorteringsretning
                 const isAsc = th.classList.contains('sort-asc');
                 table.querySelectorAll('th').forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
                 th.classList.add(isAsc ? 'sort-desc' : 'sort-asc');
                 const dir = isAsc ? -1 : 1;
-
                 rows.sort((a, b) => {
                     const aCell = a.children[idx];
                     const bCell = b.children[idx];
@@ -1324,10 +1438,10 @@ TEMPLATE = """
 def _heftelse_html(antall, sjekket_dato):
     """Formater heftelsesresultat for visning i UI."""
     if antall is None:
-        return '<span style="color: var(--text-muted);">Ikke sjekket</span>'
+        return '<span style="color: var(--label-ter);">Ikke sjekket</span>'
     if antall == 0:
-        return '<span style="color: #4caf50;">Ingen heftelser ✓</span>'
-    return f'<span style="color: #f44336; font-weight: bold;">⚠ {antall} heftelse{"r" if antall != 1 else ""}</span>'
+        return '<span style="color: var(--green);">Ingen heftelser ✓</span>'
+    return f'<span style="color: var(--red); font-weight: bold;">⚠ {antall} heftelse{"r" if antall != 1 else ""}</span>'
 
 
 def _kilde_badge(kilde):
@@ -1525,7 +1639,7 @@ def view_prisutvikling():
     prev_modell = None
     for r in rows:
         modell_display = r["Modell"] if r["Modell"] != prev_modell else ""
-        style = ' style="border-top: 2px solid var(--border-color)"' if modell_display else ""
+        style = ' style="border-top: 2px solid var(--separator-op)"' if modell_display else ""
         html += f"""
             <tr{style}>
                 <td><strong>{esc(modell_display)}</strong></td>
@@ -1861,46 +1975,46 @@ def view_annonse(finnkode):
         svv_block = ""
         if har_svv:
             svv_block = f"""
-        <h3 style="color: var(--primary-color); margin: 20px 0 10px;">Kjøretøydata fra Statens vegvesen</h3>
+        <h3 style="color: var(--accent); margin: 20px 0 10px;">Kjøretøydata fra Statens vegvesen</h3>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin-bottom: 20px; font-size: 0.9em; background: rgba(0,0,0,0.15); padding: 16px; border-radius: 8px;">
-            <div><span style="color: var(--text-muted);">Kjennemerke:</span> <strong>{esc(kjennemerke) or '—'}</strong></div>
-            <div><span style="color: var(--text-muted);">Kjøretøytype:</span> {vs('SvvKjoretoytype')}</div>
-            <div><span style="color: var(--text-muted);">Merke (SVV):</span> {vs('SvvMerke')}</div>
-            <div><span style="color: var(--text-muted);">Handelsbetegnelse:</span> {vs('SvvHandelsbetegnelse')}</div>
-            <div><span style="color: var(--text-muted);">Typebetegnelse:</span> {vs('SvvTypebetegnelse')}</div>
-            <div><span style="color: var(--text-muted);">Årsmodell (SVV):</span> {vs('SvvAarsmodell')}</div>
-            <div><span style="color: var(--text-muted);">1. gang reg. Norge:</span> {vs('SvvForstegangNorge')}</div>
-            <div><span style="color: var(--text-muted);">Registreringsstatus:</span> {vs('SvvRegistreringsstatus')}</div>
-            <div><span style="color: var(--text-muted);">EU-kontroll frist:</span> {vs('SvvEuKontrollfrist')}</div>
-            <div><span style="color: var(--text-muted);">EU-kontroll sist:</span> {vs('SvvEuSistGodkjent')}</div>
-            <div><span style="color: var(--text-muted);">Farge:</span> {vs('SvvFarge')}</div>
-            <div><span style="color: var(--text-muted);">Karosseritype:</span> {vs('SvvKarosseritype')}</div>
-            <div><span style="color: var(--text-muted);">Antall dører:</span> {vs('SvvAntallDorer')}</div>
-            <div><span style="color: var(--text-muted);">Drivstoff (SVV):</span> {vs('SvvDrivstoff')}</div>
-            <div><span style="color: var(--text-muted);">Motorvolum:</span> {liter(v('SvvMotorvolum'))}</div>
-            <div><span style="color: var(--text-muted);">Motoreffekt:</span> {kw(v('SvvMotoreffekt'))}</div>
-            <div><span style="color: var(--text-muted);">Antall sylindre:</span> {vs('SvvAntallSylindre')}</div>
-            <div><span style="color: var(--text-muted);">Girkasse (SVV):</span> {vs('SvvGirkassetype')}</div>
-            <div><span style="color: var(--text-muted);">Antall gir:</span> {vs('SvvAntallGir')}</div>
-            <div><span style="color: var(--text-muted);">Maks hastighet:</span> {"—" if not v('SvvMaksHastighet') else f"{v('SvvMaksHastighet')} km/t"}</div>
-            <div><span style="color: var(--text-muted);">Elektrisk/hybrid:</span> {"Ja" if v('SvvElektrisk') else "—"}</div>
-            <div><span style="color: var(--text-muted);">Euro-klasse:</span> {vs('SvvEuroKlasse')}</div>
-            <div><span style="color: var(--text-muted);">Lengde (SVV):</span> {cm(v('SvvLengde'))}</div>
-            <div><span style="color: var(--text-muted);">Bredde (SVV):</span> {cm(v('SvvBredde'))}</div>
-            <div><span style="color: var(--text-muted);">Høyde (SVV):</span> {cm(v('SvvHoyde'))}</div>
-            <div><span style="color: var(--text-muted);">Egenvekt:</span> {kg(v('SvvEgenvekt'))}</div>
-            <div><span style="color: var(--text-muted);">Nyttelast (SVV):</span> {kg(v('SvvNyttelast'))}</div>
-            <div><span style="color: var(--text-muted);">Teknisk tillatt totalvekt:</span> {kg(v('SvvTotalvekt'))}</div>
-            <div><span style="color: var(--text-muted);">Tillatt totalvekt:</span> {kg(v('SvvTillattTotalvekt'))}</div>
-            <div><span style="color: var(--text-muted);">Tilhengervekt m/brems:</span> {kg(v('SvvTilhengervektMedBrems'))}</div>
-            <div><span style="color: var(--text-muted);">Tilhengervekt u/brems:</span> {kg(v('SvvTilhengervektUtenBrems'))}</div>
-            <div><span style="color: var(--text-muted);">Vertikal koplingslast:</span> {kg(v('SvvVertikalKoplingslast'))}</div>
-            <div><span style="color: var(--text-muted);">Sitteplasser (SVV):</span> {vs('SvvSitteplasser')}</div>
+            <div><span style="color: var(--label-sec);">Kjennemerke:</span> <strong>{esc(kjennemerke) or '—'}</strong></div>
+            <div><span style="color: var(--label-sec);">Kjøretøytype:</span> {vs('SvvKjoretoytype')}</div>
+            <div><span style="color: var(--label-sec);">Merke (SVV):</span> {vs('SvvMerke')}</div>
+            <div><span style="color: var(--label-sec);">Handelsbetegnelse:</span> {vs('SvvHandelsbetegnelse')}</div>
+            <div><span style="color: var(--label-sec);">Typebetegnelse:</span> {vs('SvvTypebetegnelse')}</div>
+            <div><span style="color: var(--label-sec);">Årsmodell (SVV):</span> {vs('SvvAarsmodell')}</div>
+            <div><span style="color: var(--label-sec);">1. gang reg. Norge:</span> {vs('SvvForstegangNorge')}</div>
+            <div><span style="color: var(--label-sec);">Registreringsstatus:</span> {vs('SvvRegistreringsstatus')}</div>
+            <div><span style="color: var(--label-sec);">EU-kontroll frist:</span> {vs('SvvEuKontrollfrist')}</div>
+            <div><span style="color: var(--label-sec);">EU-kontroll sist:</span> {vs('SvvEuSistGodkjent')}</div>
+            <div><span style="color: var(--label-sec);">Farge:</span> {vs('SvvFarge')}</div>
+            <div><span style="color: var(--label-sec);">Karosseritype:</span> {vs('SvvKarosseritype')}</div>
+            <div><span style="color: var(--label-sec);">Antall dører:</span> {vs('SvvAntallDorer')}</div>
+            <div><span style="color: var(--label-sec);">Drivstoff (SVV):</span> {vs('SvvDrivstoff')}</div>
+            <div><span style="color: var(--label-sec);">Motorvolum:</span> {liter(v('SvvMotorvolum'))}</div>
+            <div><span style="color: var(--label-sec);">Motoreffekt:</span> {kw(v('SvvMotoreffekt'))}</div>
+            <div><span style="color: var(--label-sec);">Antall sylindre:</span> {vs('SvvAntallSylindre')}</div>
+            <div><span style="color: var(--label-sec);">Girkasse (SVV):</span> {vs('SvvGirkassetype')}</div>
+            <div><span style="color: var(--label-sec);">Antall gir:</span> {vs('SvvAntallGir')}</div>
+            <div><span style="color: var(--label-sec);">Maks hastighet:</span> {"—" if not v('SvvMaksHastighet') else f"{v('SvvMaksHastighet')} km/t"}</div>
+            <div><span style="color: var(--label-sec);">Elektrisk/hybrid:</span> {"Ja" if v('SvvElektrisk') else "—"}</div>
+            <div><span style="color: var(--label-sec);">Euro-klasse:</span> {vs('SvvEuroKlasse')}</div>
+            <div><span style="color: var(--label-sec);">Lengde (SVV):</span> {cm(v('SvvLengde'))}</div>
+            <div><span style="color: var(--label-sec);">Bredde (SVV):</span> {cm(v('SvvBredde'))}</div>
+            <div><span style="color: var(--label-sec);">Høyde (SVV):</span> {cm(v('SvvHoyde'))}</div>
+            <div><span style="color: var(--label-sec);">Egenvekt:</span> {kg(v('SvvEgenvekt'))}</div>
+            <div><span style="color: var(--label-sec);">Nyttelast (SVV):</span> {kg(v('SvvNyttelast'))}</div>
+            <div><span style="color: var(--label-sec);">Teknisk tillatt totalvekt:</span> {kg(v('SvvTotalvekt'))}</div>
+            <div><span style="color: var(--label-sec);">Tillatt totalvekt:</span> {kg(v('SvvTillattTotalvekt'))}</div>
+            <div><span style="color: var(--label-sec);">Tilhengervekt m/brems:</span> {kg(v('SvvTilhengervektMedBrems'))}</div>
+            <div><span style="color: var(--label-sec);">Tilhengervekt u/brems:</span> {kg(v('SvvTilhengervektUtenBrems'))}</div>
+            <div><span style="color: var(--label-sec);">Vertikal koplingslast:</span> {kg(v('SvvVertikalKoplingslast'))}</div>
+            <div><span style="color: var(--label-sec);">Sitteplasser (SVV):</span> {vs('SvvSitteplasser')}</div>
         </div>
         """
         elif kjennemerke:
             svv_block = f"""
-        <div style="font-size: 0.85em; color: var(--text-muted); margin: 10px 0 20px; padding: 10px 16px; background: rgba(0,0,0,0.1); border-radius: 6px;">
+        <div style="font-size: 0.85em; color: var(--label-sec); margin: 10px 0 20px; padding: 10px 16px; background: rgba(0,0,0,0.1); border-radius: 6px;">
             Kjennemerke: <strong>{esc(kjennemerke)}</strong> — ingen Vegvesen-data hentet ennå.
         </div>
         """
@@ -1920,7 +2034,7 @@ def view_annonse(finnkode):
             <a href="javascript:history.back()" style="font-size: 0.85em;">&larr; Tilbake</a>
             <a href="../mine-biler" style="font-size: 0.85em;">⭐ Mine biler</a>
         </div>
-        <h2 style="margin-bottom: 10px; color: var(--text-color); display:flex; align-items:center; gap:12px;">
+        <h2 style="margin-bottom: 10px; color: var(--label); display:flex; align-items:center; gap:12px;">
             <a href="{esc(finn_url)}" target="_blank">{esc(ad.get('Annonsenavn', finnkode))}</a>
             {_kilde_badge(kilde)}{ekstra_lenke}
             <button id="fav-btn" onclick="toggleFavoritt({esc(finnkode)})"
@@ -1930,17 +2044,17 @@ def view_annonse(finnkode):
         </h2>
         {img_html}
         <div style="margin-bottom: 16px;">
-            <div style="font-size: 0.8em; color: var(--text-muted); margin-bottom: 4px;">Notat</div>
+            <div style="font-size: 0.8em; color: var(--label-sec); margin-bottom: 4px;">Notat</div>
             <textarea id="notat-felt" rows="3"
-                      style="width: 100%; max-width: 600px; background: var(--bg-color);
-                             color: var(--text-color); border: 1px solid var(--border-color);
+                      style="width: 100%; max-width: 600px; background: var(--bg);
+                             color: var(--label); border: 1px solid var(--separator-op);
                              border-radius: 6px; padding: 8px; font-size: 0.9em; resize: vertical;"
                       placeholder="Skriv ditt notat om denne bilen her..."
             >{notat_verdi}</textarea>
             <br>
             <button class="btn" style="margin-top:6px; font-size:0.82em;"
                     onclick="lagreNotat({esc(finnkode)})">Lagre notat</button>
-            <span id="notat-status" style="font-size:0.8em; color:var(--text-muted); margin-left:8px;"></span>
+            <span id="notat-status" style="font-size:0.8em; color:var(--label-sec); margin-left:8px;"></span>
         </div>
         <script>
         const _apiBase = '{esc(bp)}';
@@ -1969,23 +2083,23 @@ def view_annonse(finnkode):
         }}
         </script>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin-bottom: 20px; font-size: 0.9em;">
-            <div><span style="color: var(--text-muted);">{"AutodbId" if kilde == "autodb" else "Finnkode"}:</span> <a href="{esc(finn_url)}" target="_blank">{esc(ad.get("AutodbId") if kilde == "autodb" else finnkode)}</a></div>
-            <div><span style="color: var(--text-muted);">Modell:</span> {esc(ad.get('Modell')) or '—'}</div>
-            <div><span style="color: var(--text-muted);">Pris:</span> {esc(format_price(pris))}</div>
-            <div><span style="color: var(--text-muted);">Km:</span> {esc(ad.get('Kilometerstand')) or '—'}</div>
-            <div><span style="color: var(--text-muted);">Type:</span> {esc(ad.get('Typebobil')) or '—'}</div>
-            <div><span style="color: var(--text-muted);">Girkasse:</span> {esc(ad.get('Girkasse')) or '—'}</div>
-            <div><span style="color: var(--text-muted);">Nyttelast (Finn):</span> {esc(ad.get('Nyttelast')) or '—'}</div>
-            <div><span style="color: var(--text-muted);">Nyttelast (SVV):</span> {kg(v('SvvNyttelast'))}</div>
-            <div><span style="color: var(--text-muted);">Tilhengervekt m/brems:</span> {kg(v('SvvTilhengervektMedBrems'))}</div>
-            <div><span style="color: var(--text-muted);">Lokasjon:</span> {esc(lokasjon) or '—'}</div>
-            <div><span style="color: var(--text-muted);">Sist sett:</span> <span class="{esc(alder_cls)}">{esc(alder_txt)}</span></div>
-            <div><span style="color: var(--text-muted);">Sengelayout:</span> {esc(ad.get('Sengelayout')) or '—'}</div>
-            <div><span style="color: var(--text-muted);">Vendbare forseter:</span> {"Ja" if ad.get('VendbareForerstoler') == 1 else ("Nei" if ad.get('VendbareForerstoler') == 0 else "—")}</div>
-            <div><span style="color: var(--text-muted);">Heftelser (Brreg):</span> {_heftelse_html(ad.get('Heftelser'), ad.get('HeftelseSjekket'))}</div>
+            <div><span style="color: var(--label-sec);">{"AutodbId" if kilde == "autodb" else "Finnkode"}:</span> <a href="{esc(finn_url)}" target="_blank">{esc(ad.get("AutodbId") if kilde == "autodb" else finnkode)}</a></div>
+            <div><span style="color: var(--label-sec);">Modell:</span> {esc(ad.get('Modell')) or '—'}</div>
+            <div><span style="color: var(--label-sec);">Pris:</span> {esc(format_price(pris))}</div>
+            <div><span style="color: var(--label-sec);">Km:</span> {esc(ad.get('Kilometerstand')) or '—'}</div>
+            <div><span style="color: var(--label-sec);">Type:</span> {esc(ad.get('Typebobil')) or '—'}</div>
+            <div><span style="color: var(--label-sec);">Girkasse:</span> {esc(ad.get('Girkasse')) or '—'}</div>
+            <div><span style="color: var(--label-sec);">Nyttelast (Finn):</span> {esc(ad.get('Nyttelast')) or '—'}</div>
+            <div><span style="color: var(--label-sec);">Nyttelast (SVV):</span> {kg(v('SvvNyttelast'))}</div>
+            <div><span style="color: var(--label-sec);">Tilhengervekt m/brems:</span> {kg(v('SvvTilhengervektMedBrems'))}</div>
+            <div><span style="color: var(--label-sec);">Lokasjon:</span> {esc(lokasjon) or '—'}</div>
+            <div><span style="color: var(--label-sec);">Sist sett:</span> <span class="{esc(alder_cls)}">{esc(alder_txt)}</span></div>
+            <div><span style="color: var(--label-sec);">Sengelayout:</span> {esc(ad.get('Sengelayout')) or '—'}</div>
+            <div><span style="color: var(--label-sec);">Vendbare forseter:</span> {"Ja" if ad.get('VendbareForerstoler') == 1 else ("Nei" if ad.get('VendbareForerstoler') == 0 else "—")}</div>
+            <div><span style="color: var(--label-sec);">Heftelser (Brreg):</span> {_heftelse_html(ad.get('Heftelser'), ad.get('HeftelseSjekket'))}</div>
         </div>
         {svv_block}
-        <div style="color: var(--text-muted); font-size: 0.85em; margin-bottom: 20px;">
+        <div style="color: var(--label-sec); font-size: 0.85em; margin-bottom: 20px;">
             {esc(ad.get('Beskrivelse', ''))}
         </div>
         """
@@ -1993,7 +2107,7 @@ def view_annonse(finnkode):
         if chart_data and len(chart_data) > 1:
             import json as json_mod
             html += f"""
-            <h3 style="color: var(--primary-color); margin-bottom: 10px;">Prishistorikk</h3>
+            <h3 style="color: var(--accent); margin-bottom: 10px;">Prishistorikk</h3>
             <div style="max-width: 700px; margin-bottom: 20px;">
                 <canvas id="prisChart"></canvas>
             </div>
@@ -2006,12 +2120,12 @@ def view_annonse(finnkode):
                         datasets: [{{
                             label: 'Pris (kr)',
                             data: {json_mod.dumps(chart_data)},
-                            borderColor: '#4caf50',
-                            backgroundColor: 'rgba(76,175,80,0.1)',
+                            borderColor: '#0A84FF',
+                            backgroundColor: 'rgba(10,132,255,0.1)',
                             fill: true,
                             tension: 0.3,
                             pointRadius: 4,
-                            pointBackgroundColor: '#4caf50'
+                            pointBackgroundColor: '#0A84FF'
                         }}]
                     }},
                     options: {{
@@ -2042,14 +2156,14 @@ def view_annonse(finnkode):
             </script>
             """
         elif prishistorikk:
-            html += '<p style="color: var(--text-muted);">Kun ett datapunkt i prishistorikken.</p>'
+            html += '<p style="color: var(--label-sec);">Kun ett datapunkt i prishistorikken.</p>'
         else:
-            html += '<p style="color: var(--text-muted);">Ingen prishistorikk registrert.</p>'
+            html += '<p style="color: var(--label-sec);">Ingen prishistorikk registrert.</p>'
 
         # Prisendringer-tabell
         if prishistorikk:
             html += """
-            <h3 style="color: var(--primary-color); margin: 20px 0 10px;">Prisendringer</h3>
+            <h3 style="color: var(--accent); margin: 20px 0 10px;">Prisendringer</h3>
             <table style="max-width: 500px;">
                 <thead><tr><th>Tidspunkt</th><th>Pris</th></tr></thead>
                 <tbody>
@@ -2176,12 +2290,12 @@ def view_mine_biler():
             <td style="white-space:nowrap">{_kilde_lenker(r)}</td>
             <td>
                 <span class="notat-vis" data-fk="{esc(finnkode)}"
-                      style="cursor:pointer; color: var(--text-muted); font-size:0.85em;"
+                      style="cursor:pointer; color: var(--label-sec); font-size:0.85em;"
                       onclick="toggleNotat({esc(finnkode)})">{notat_tekst or '<em>Legg til notat...</em>'}</span>
                 <div id="notat-form-{esc(finnkode)}" style="display:none; margin-top:4px;">
                     <textarea id="notat-txt-{esc(finnkode)}" rows="2"
-                              style="width:200px; background:var(--bg-color); color:var(--text-color);
-                                     border:1px solid var(--border-color); border-radius:4px; padding:4px; font-size:0.85em;"
+                              style="width:200px; background:var(--bg); color:var(--label);
+                                     border:1px solid var(--separator-op); border-radius:4px; padding:4px; font-size:0.85em;"
                     >{notat_tekst}</textarea>
                     <br>
                     <button class="btn" style="margin-top:4px; font-size:0.75em;"
@@ -2189,7 +2303,7 @@ def view_mine_biler():
                 </div>
             </td>
             <td>
-                <button class="btn" style="background:#f44336; font-size:0.75em;"
+                <button class="btn" style="background:var(--red); font-size:0.75em;"
                         onclick="fjernFavoritt({esc(finnkode)}, this)">✕</button>
             </td>
         </tr>
