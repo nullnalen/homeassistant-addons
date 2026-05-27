@@ -401,7 +401,7 @@ class ChangeDetector:
                     pris_endret = True
             else:
                 if str(gammel) != str(ny):
-                    if ny is None and felt.startswith("Svv"):
+                    if ny is None and (felt.startswith("Svv") or felt.startswith("Heftels")):
                         continue
                     endringer.append(f"{felt}: '{gammel}' -> '{ny}'")
         return endringer, pris_endret
@@ -490,6 +490,7 @@ def _build_nye_verdier(ad: dict) -> list:
         detect_vendbare_forseter(tekst_nlp),
         ad.get("Heftelser"),
         ad.get("HeftelseSjekket"),
+        ad.get("HeftelserDetaljer"),
     ]
 
 
@@ -1042,7 +1043,7 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
 
             # Dedup: samme kjennemerke finnes allerede som en Finn.no-oppføring (positiv Finnkode)
             if kjennemerke and kjennemerke in existing_kjennemerker:
-                finn_finnkode = existing_kjennemerker[kjennemerke]
+                finn_finnkode = int(existing_kjennemerker[kjennemerke])
                 if finn_finnkode > 0:
                     duplikat += 1
                     logger.debug("autodb %s — kjennemerke %s finnes som Finnkode %s, oppdaterer kilde", autodb_id, kjennemerke, finn_finnkode)
@@ -1262,10 +1263,10 @@ def _parse_brreg_rettsstiftelser(html: str) -> list[dict] | None:
     """
     Parser rettsstiftelser fra Brreg Next.js-side.
     Returnerer liste av rettsstiftelse-dicts, eller None om parsing feiler.
-    Tom liste = ingen heftelser.
+    Tom liste = ingen heftelser (side lastet, ingen tinglysninger).
     """
     for chunk_raw in _BRREG_NEXT_F_RE.findall(html):
-        if "dokumentnummer" not in chunk_raw:
+        if '"rettsstiftelser":' not in chunk_raw:
             continue
         decoded = chunk_raw.replace("\\n", "\n").replace('\\"', '"').replace("\\\\", "\\")
         idx = decoded.find('"rettsstiftelser":[')
