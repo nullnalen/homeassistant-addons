@@ -8,7 +8,12 @@ import asyncio
 import aiohttp
 import mysql.connector
 from datetime import datetime, timedelta
+from urllib.parse import urlencode
 from bs4 import BeautifulSoup
+
+HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
+HTTP_HEADERS = {"User-Agent": "Mozilla/5.0"}
+MAX_RETRIES = 3
 
 # RUN_LOCALLY blir False hvis miljøvariabelen ikke er satt eller ikke finnes.
 RUN_LOCALLY = os.getenv("RUN_LOCALLY", "false").lower() == "true"
@@ -46,10 +51,7 @@ AUTODB_SEARCH_URL = "https://www.autodb.no/s/extsearch/"
 AUTODB_DETAIL_URL = "https://www.autodb.no/a/view"
 
 def build_search_url(opts: dict) -> str:
-    """
-    Bygg søke-URL fra konfigurerbare parametere.
-    """
-    from urllib.parse import urlencode
+    """Bygg søke-URL fra konfigurerbare parametere."""
     params = []
     locations = opts.get("locations", [])
     if not isinstance(locations, list):
@@ -93,74 +95,61 @@ def connect_to_database() -> mysql.connector.connection.MySQLConnection | None:
         logger.info("Koblet til databasen.")
         return conn
     except mysql.connector.Error as err:
-        logger.error(f"Feil ved tilkobling til databasen: {err}")
+        logger.error("Feil ved tilkobling til databasen: %s", err)
         return None
     except Exception as e:
-        logger.error(f"Uventet feil ved tilkobling til databasen: {e}")
+        logger.error("Uventet feil ved tilkobling til databasen: %s", e)
         return None
 
-async def fetch_json(session: aiohttp.ClientSession, url: str, max_retries: int = 3) -> dict | None:
-    """
-    Hent JSON-data fra gitt URL med retry ved feil.
-    Validerer at responsen inneholder forventet struktur.
-    """
-    logger.info("Henter JSON fra Finn.no API...")
+async def fetch_json(session: aiohttp.ClientSession, url: str, max_retries: int = MAX_RETRIES) -> dict | None:
+    """Hent JSON-data fra gitt URL med retry. Validerer at responsen har 'docs'-feltet."""
+    logger.info("Henter JSON fra %s", url)
     for attempt in range(1, max_retries + 1):
         try:
-            async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                if response.status == 429:
+            async with session.get(url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT) as response:
+                if response.status == 429 or response.status >= 500:
                     wait = 2 ** attempt
-                    logger.warning(f"Rate limited (429), venter {wait}s (forsøk {attempt}/{max_retries})")
-                    await asyncio.sleep(wait)
-                    continue
-                if response.status >= 500:
-                    wait = 2 ** attempt
-                    logger.warning(f"Serverfeil HTTP {response.status}, venter {wait}s (forsøk {attempt}/{max_retries})")
+                    logger.warning("HTTP %s for %s, venter %ds (forsøk %d/%d)", response.status, url, wait, attempt, max_retries)
                     await asyncio.sleep(wait)
                     continue
                 if response.status != 200:
-                    logger.error(f"Finn.no API returnerte HTTP {response.status} for {url}")
+                    logger.error("HTTP %s for %s", response.status, url)
                     return None
                 data = await response.json()
                 if not isinstance(data, dict):
-                    logger.error(f"Uventet responstype fra Finn.no API: {type(data).__name__} (forventet dict)")
+                    logger.error("Uventet responstype: %s (forventet dict) fra %s", type(data).__name__, url)
                     return None
                 if "docs" not in data:
                     logger.error(
-                        "Finn.no API-responsen mangler 'docs'-feltet. "
-                        "API-strukturen kan ha endret seg. "
-                        f"Nøkler i responsen: {list(data.keys())}"
+                        "'docs'-feltet mangler i respons fra %s — API-strukturen kan ha endret seg. Nøkler: %s",
+                        url, list(data.keys())
                     )
                     return None
                 return data
         except (aiohttp.ContentTypeError, aiohttp.ClientError, asyncio.TimeoutError) as e:
             wait = 2 ** attempt
-            logger.warning(f"Nettverksfeil (forsøk {attempt}/{max_retries}): {e}. Venter {wait}s...")
+            logger.warning("Nettverksfeil (forsøk %d/%d) for %s: %s", attempt, max_retries, url, e)
             if attempt < max_retries:
                 await asyncio.sleep(wait)
             else:
-                logger.error(f"Ga opp etter {max_retries} forsøk for {url}: {e}")
+                logger.error("Ga opp etter %d forsøk for %s: %s", max_retries, url, e)
                 return None
         except Exception as e:
-            logger.error(f"Uventet feil ved henting av JSON fra {url}: {e}")
+            logger.error("Uventet feil ved henting av JSON fra %s: %s", url, e)
             return None
     return None
 
 async def fetch_all_pages(session: aiohttp.ClientSession, base_url: str) -> list[dict]:
-    """
-    Henter alle sider fra Finn.no API med paginering.
-    """
+    """Henter alle sider fra Finn.no-API med paginering."""
     all_ads = []
     seen_ids = set()
     page = 1
 
-    logger.info("Henter side 1...")
     initial_data = await fetch_json(session, f"{base_url}&page={page}")
     if not initial_data:
-        logger.error("Kunne ikke hente første side.")
+        logger.error("Finn.no: Kunne ikke hente første side.")
         return []
 
-    # Hent totalt antall treff fra metadata
     metadata = initial_data.get("metadata", {})
     result_size = metadata.get("result_size", {})
     total_matches = result_size.get("match_count", 0)
@@ -168,59 +157,50 @@ async def fetch_all_pages(session: aiohttp.ClientSession, base_url: str) -> list
         docs = initial_data.get("docs", [])
         if docs:
             total_matches = len(docs)
-            logger.warning(f"match_count ikke funnet i metadata, bruker fallback: {total_matches}")
+            logger.warning("Finn.no: match_count mangler i metadata, fallback: %d", total_matches)
         else:
-            logger.error("Ingen annonser funnet (docs er tom).")
+            logger.error("Finn.no: Ingen annonser funnet (docs er tom).")
             return []
 
-    # Bruk faktisk sidesize fra første respons
     page_size = len(initial_data.get("docs", []))
     total_pages = (total_matches + page_size - 1) // page_size if page_size > 0 else 1
-    logger.info(f"Totalt antall annonser: {total_matches}, sidesize: {page_size}, sider: {total_pages}")
+    logger.info("Finn.no: %d annonser, sidesize=%d, sider=%d", total_matches, page_size, total_pages)
 
-    # Hent og legg til første side (med dedup)
     for ad in extract_info_from_json(initial_data):
         if ad["Finnkode"] not in seen_ids:
             seen_ids.add(ad["Finnkode"])
             all_ads.append(ad)
 
-    # Hent videre sider
     for page in range(2, total_pages + 1):
-        logger.debug(f"Henter side {page} av {total_pages}")
-        await asyncio.sleep(0.2)  # Rate limit
-        paged_url = f"{base_url}&page={page}"
-        data = await fetch_json(session, paged_url)
+        logger.debug("Finn.no: henter side %d av %d", page, total_pages)
+        await asyncio.sleep(0.2)
+        data = await fetch_json(session, f"{base_url}&page={page}")
         if data:
             for ad in extract_info_from_json(data):
                 if ad["Finnkode"] not in seen_ids:
                     seen_ids.add(ad["Finnkode"])
                     all_ads.append(ad)
         else:
-            logger.warning(f"Kunne ikke hente side {page}")
+            logger.warning("Finn.no: Kunne ikke hente side %d", page)
 
-    logger.info(f"Totalt hentet {len(all_ads)} unike annonser (av {total_matches} treff fra API).")
+    logger.info("Finn.no: hentet %d unike annonser (av %d treff)", len(all_ads), total_matches)
     return all_ads
 
 
 def extract_info_from_json(json_data: dict) -> list[dict]:
-    """
-    Ekstraher relevante felter fra FINN JSON-data.
-    Validerer at hver annonse har kritiske felter.
-    """
+    """Ekstraher relevante felter fra Finn.no JSON-data."""
     try:
         ads = json_data.get("docs", [])
         if not ads:
             return []
 
-        # Sjekk at første annonse har forventede nøkler
         first = ads[0]
         expected_keys = {"id", "heading", "canonical_url"}
         missing = expected_keys - set(first.keys())
         if missing:
             logger.error(
-                f"Finn.no API-annonser mangler forventede felter: {missing}. "
-                f"Tilgjengelige nøkler: {list(first.keys())}. "
-                "API-strukturen kan ha endret seg."
+                "Finn.no: annonser mangler forventede felter: %s. Tilgjengelige nøkler: %s",
+                missing, list(first.keys())
             )
             return []
 
@@ -229,7 +209,7 @@ def extract_info_from_json(json_data: dict) -> list[dict]:
             finnkode = ad.get("id")
             url = ad.get("canonical_url")
             if not finnkode or not url:
-                logger.warning(f"Hopper over annonse uten id/url: {ad.get('heading', 'ukjent')}")
+                logger.warning("Hopper over annonse uten id/url: %s", ad.get("heading", "ukjent"))
                 continue
             timestamp = ad.get("timestamp")
             formatted_date = datetime.fromtimestamp(timestamp / 1000).strftime(DATE_FORMAT) if timestamp else "Ukjent"
@@ -269,19 +249,17 @@ def extract_info_from_json(json_data: dict) -> list[dict]:
             })
         return extracted_data
     except Exception as e:
-        logger.error(f"Feil ved ekstraksjon av JSON-data: {e}")
+        logger.error("Feil ved ekstraksjon av JSON-data: %s", e)
         return []
 
-async def fetch_html(session: aiohttp.ClientSession, url: str, max_retries: int = 3) -> str | None:
-    """
-    Hent HTML-innhold fra gitt URL med retry ved feil.
-    """
+async def fetch_html(session: aiohttp.ClientSession, url: str, max_retries: int = MAX_RETRIES) -> str | None:
+    """Hent HTML-innhold fra gitt URL med retry ved feil."""
     for attempt in range(1, max_retries + 1):
         try:
-            async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=30)) as response:
+            async with session.get(url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT) as response:
                 if response.status == 429 or response.status >= 500:
                     wait = 2 ** attempt
-                    logger.warning(f"HTTP {response.status} for {url}, venter {wait}s (forsøk {attempt}/{max_retries})")
+                    logger.warning("HTTP %s for %s, venter %ds (forsøk %d/%d)", response.status, url, wait, attempt, max_retries)
                     if attempt < max_retries:
                         await asyncio.sleep(wait)
                         continue
@@ -290,14 +268,14 @@ async def fetch_html(session: aiohttp.ClientSession, url: str, max_retries: int 
                 return await response.text()
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             wait = 2 ** attempt
-            logger.warning(f"Nettverksfeil for {url} (forsøk {attempt}/{max_retries}): {e}")
+            logger.warning("Nettverksfeil for %s (forsøk %d/%d): %s", url, attempt, max_retries, e)
             if attempt < max_retries:
                 await asyncio.sleep(wait)
             else:
-                logger.error(f"Ga opp HTML-henting etter {max_retries} forsøk for {url}: {e}")
+                logger.error("Ga opp HTML-henting etter %d forsøk for %s: %s", max_retries, url, e)
                 return None
         except Exception as e:
-            logger.error(f"Uventet feil ved henting av HTML fra {url}: {e}")
+            logger.error("Uventet feil ved henting av HTML fra %s: %s", url, e)
             return None
     return None
 
@@ -325,11 +303,11 @@ def extract_detailed_ad_info(html_content: str) -> dict:
         if RUN_LOCALLY:
             logger.debug("--- Detaljer fra annonse ---")
             for k, v in info_dict.items():
-                logger.debug(f"{k}: {v}")
+                logger.debug("%s: %s", k, v)
 
         return info_dict
     except Exception as e:
-        logger.error(f"Feil under detaljuttrekk: {e}")
+        logger.error("Feil under detaljuttrekk: %s", e)
         return {}
 
 async def fetch_and_combine_data(session, ads, max_concurrent=5):
@@ -358,7 +336,7 @@ def normalize_and_format_price(price: str, output_format: bool = True) -> str | 
         else:
             return price_as_int
     except Exception as e:
-        logger.error(f"Feil ved formatering av pris: {e}")
+        logger.error("Feil ved formatering av pris: %s", e)
         return None
 
 def format_kilometerstand(km: str) -> str:
@@ -369,7 +347,7 @@ def format_kilometerstand(km: str) -> str:
         normalized = re.sub(r"[^\d]", "", str(km))
         return f"{int(normalized):,} km".replace(",", " ")
     except Exception as e:
-        logger.error(f"Feil ved formatering av kilometerstand: {e}")
+        logger.error("Feil ved formatering av kilometerstand: %s", e)
         return "Ukjent"
 
 _FELT_NAVN = [
@@ -442,7 +420,7 @@ class PriceLog:
                 (finnkode, pris),
             )
         except Exception as e:
-            logger.error(f"Feil ved logging av prisendring for {finnkode}: {e}")
+            logger.error("Feil ved logging av prisendring for %s: %s", finnkode, e)
 
     def record_ignore(self, finnkode: int, pris: int) -> None:
         try:
@@ -451,7 +429,7 @@ class PriceLog:
                 (finnkode, pris),
             )
         except Exception as e:
-            logger.error(f"Feil ved logging av startpris for {finnkode}: {e}")
+            logger.error("Feil ved logging av startpris for %s: %s", finnkode, e)
 
 
 def _build_nye_verdier(ad: dict) -> list:
@@ -520,6 +498,36 @@ def _build_svv_upsert_clause() -> str:
         f"{c} = IF(VALUES({c}) IS NOT NULL, VALUES({c}), {c})" for c in _SVV_COLS
     )
 
+_SVV_UPSERT_CLAUSE = _build_svv_upsert_clause()
+
+_SVV_KEY_MAP = {
+    "SvvMerke": "svv_merke", "SvvHandelsbetegnelse": "svv_handelsbetegnelse",
+    "SvvTypebetegnelse": "svv_typebetegnelse", "SvvAarsmodell": "svv_aarsmodell",
+    "SvvForstegangNorge": "svv_forstegang_norge", "SvvRegistreringsstatus": "svv_registreringsstatus",
+    "SvvEuKontrollfrist": "svv_eu_kontrollfrist", "SvvEuSistGodkjent": "svv_eu_sist_godkjent",
+    "SvvFarge": "svv_farge", "SvvKarosseritype": "svv_karosseritype", "SvvAntallDorer": "svv_antall_dorer",
+    "SvvDrivstoff": "svv_drivstoff", "SvvMotorvolum": "svv_motorvolum", "SvvMotoreffekt": "svv_motoreffekt",
+    "SvvAntallSylindre": "svv_antall_sylindre", "SvvGirkassetype": "svv_girkassetype",
+    "SvvAntallGir": "svv_antall_gir", "SvvMaksHastighet": "svv_maks_hastighet",
+    "SvvElektrisk": "svv_elektrisk", "SvvLengde": "svv_lengde", "SvvBredde": "svv_bredde",
+    "SvvHoyde": "svv_hoyde", "SvvEgenvekt": "svv_egenvekt", "SvvNyttelast": "svv_nyttelast",
+    "SvvTotalvekt": "svv_totalvekt", "SvvTillattTotalvekt": "svv_tillatt_totalvekt",
+    "SvvTilhengervektMedBrems": "svv_tilhengervekt_med_brems",
+    "SvvTilhengervektUtenBrems": "svv_tilhengervekt_uten_brems",
+    "SvvVertikalKoplingslast": "svv_vertikal_koplingslast",
+    "SvvEuroKlasse": "svv_euro_klasse", "SvvSitteplasser": "svv_sitteplasser",
+    "SvvKjoretoytype": "svv_kjoretoytype",
+}
+
+
+def _build_svv_data_tuple(svv: dict) -> tuple:
+    """Bygg SVV-datatuple i _SVV_COLS-rekkefølge fra VegvesenData-dict."""
+    return tuple(
+        (svv.get(_SVV_KEY_MAP[c]) or None) if c in ("SvvEuKontrollfrist", "SvvEuSistGodkjent")
+        else svv.get(_SVV_KEY_MAP[c])
+        for c in _SVV_COLS
+    )
+
 
 class BobilRepository:
     """Upsert-interface mot bobil-tabellen. Én seam mot MariaDB."""
@@ -527,7 +535,7 @@ class BobilRepository:
     def __init__(self, cursor, conn):
         self.cursor = cursor
         self.conn = conn
-        self._svv_upsert = _build_svv_upsert_clause()
+        self._svv_upsert = _SVV_UPSERT_CLAUSE
 
     def fetch_existing(self, finnkode: int) -> tuple | None:
         self.cursor.execute(
@@ -537,11 +545,10 @@ class BobilRepository:
         return self.cursor.fetchone()
 
     def upsert(self, ad: dict, nye_verdier: list) -> None:
-        svv = ad.get("VegvesenData") or {}
         finnkode = ad["Finnkode"]
-        ny_pris_int = nye_verdier[_FELT_NAVN.index("Pris")]
-        tekst_nlp = " ".join(filter(None, [ad.get("Annonsenavn", ""), ad.get("Detaljer", {}).get("Beskrivelse", "")]))
         placeholders = ", ".join(["%s"] * (19 + len(_SVV_COLS)))
+        # nye_verdier følger _FELT_NAVN-rekkefølge: Annonsenavn[0], Modell[1], ..., HeftelseSjekket[-1]
+        fn = _FELT_NAVN
         query = f"""
             INSERT INTO bobil (
                 Finnkode, Annonsenavn, Modell, Kilometerstand, Girkasse, Beskrivelse,
@@ -572,61 +579,30 @@ class BobilRepository:
         """
         data = (
             finnkode,
-            ad["Annonsenavn"],
-            ad["Modell"],
-            format_kilometerstand(ad["Kilometerstand"]),
-            ad["Detaljer"].get("Girkasse", "Ikke oppgitt"),
-            ad["Detaljer"].get("Beskrivelse", "Ikke tilgjengelig"),
-            ad["Detaljer"].get("Nyttelast", "Ikke oppgitt"),
-            ad["Detaljer"].get("Type bobil", "Ikke oppgitt"),
-            ad["Oppdatert"],
-            ad["URL"],
-            ny_pris_int,
-            ad.get("ImageURL", ""),
-            ad.get("Lokasjon", ""),
-            ad.get("Kjennemerke", "") or "",
-            svv.get("svv_merke"),
-            svv.get("svv_handelsbetegnelse"),
-            svv.get("svv_typebetegnelse"),
-            svv.get("svv_aarsmodell"),
-            svv.get("svv_forstegang_norge"),
-            svv.get("svv_registreringsstatus"),
-            svv.get("svv_eu_kontrollfrist") or None,
-            svv.get("svv_eu_sist_godkjent") or None,
-            svv.get("svv_farge"),
-            svv.get("svv_karosseritype"),
-            svv.get("svv_antall_dorer"),
-            svv.get("svv_drivstoff"),
-            svv.get("svv_motorvolum"),
-            svv.get("svv_motoreffekt"),
-            svv.get("svv_antall_sylindre"),
-            svv.get("svv_girkassetype"),
-            svv.get("svv_antall_gir"),
-            svv.get("svv_maks_hastighet"),
-            svv.get("svv_elektrisk"),
-            svv.get("svv_lengde"),
-            svv.get("svv_bredde"),
-            svv.get("svv_hoyde"),
-            svv.get("svv_egenvekt"),
-            svv.get("svv_nyttelast"),
-            svv.get("svv_totalvekt"),
-            svv.get("svv_tillatt_totalvekt"),
-            svv.get("svv_tilhengervekt_med_brems"),
-            svv.get("svv_tilhengervekt_uten_brems"),
-            svv.get("svv_vertikal_koplingslast"),
-            svv.get("svv_euro_klasse"),
-            svv.get("svv_sitteplasser"),
-            svv.get("svv_kjoretoytype"),
-            detect_sengelayout(tekst_nlp),
-            detect_vendbare_forseter(tekst_nlp),
-            ad.get("Heftelser"),
-            ad.get("HeftelseSjekket"),
+            nye_verdier[fn.index("Annonsenavn")],
+            nye_verdier[fn.index("Modell")],
+            nye_verdier[fn.index("Kilometerstand")],
+            nye_verdier[fn.index("Girkasse")],
+            nye_verdier[fn.index("Beskrivelse")],
+            nye_verdier[fn.index("Nyttelast")],
+            nye_verdier[fn.index("Typebobil")],
+            nye_verdier[fn.index("Oppdatert")],
+            nye_verdier[fn.index("URL")],
+            nye_verdier[fn.index("Pris")],
+            nye_verdier[fn.index("ImageURL")],
+            nye_verdier[fn.index("Lokasjon")],
+            nye_verdier[fn.index("Kjennemerke")],
+            *[nye_verdier[fn.index(c)] for c in _SVV_COLS],
+            nye_verdier[fn.index("Sengelayout")],
+            nye_verdier[fn.index("VendbareForerstoler")],
+            nye_verdier[fn.index("Heftelser")],
+            nye_verdier[fn.index("HeftelseSjekket")],
             "finn",
         )
         try:
             self.cursor.execute(query, data)
         except Exception as e:
-            logger.error(f"Feil ved lagring av annonse {finnkode}: {e}")
+            logger.error("Feil ved lagring av annonse %s: %s", finnkode, e)
 
 
 def update_database(ads: list[dict], dry_run: bool = False) -> None:
@@ -639,7 +615,7 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
     men utfører ingen INSERT/UPDATE. Logger hva som ville blitt endret.
     """
     mode = "DRY RUN" if dry_run else "LIVE"
-    logger.info(f"[{mode}] Starter databaseoppdatering for {len(ads)} annonser.")
+    logger.info("[%s] Starter databaseoppdatering for %d annonser.", mode, len(ads))
 
     conn = connect_to_database()
     if not conn:
@@ -670,7 +646,7 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
             finnkode = ad["Finnkode"]
             ny_pris_int = normalize_and_format_price(ad["Pris"], output_format=False)
             if ny_pris_int is None:
-                logger.error(f"Kan ikke lagre annonse {finnkode}: pris ikke gyldig ({ad['Pris']})")
+                logger.error("Kan ikke lagre annonse %s: pris ikke gyldig (%s)", finnkode, ad['Pris'])
                 continue
 
             nye_verdier = _build_nye_verdier(ad)
@@ -680,7 +656,7 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
                 endringer, pris_endret = detector.detect(row, nye_verdier)
                 if endringer:
                     endrede_annonser += 1
-                    logger.info(f"[{mode}] Endringer for Finnkode {finnkode}: {', '.join(endringer)}")
+                    logger.info("[%s] Endringer for Finnkode %s: %s", mode, finnkode, ', '.join(endringer))
                     if pris_endret:
                         try:
                             gammel_pris = int(re.sub(r"[^\d]", "", str(row[_FELT_NAVN.index("Pris")])))
@@ -698,7 +674,7 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
             else:
                 nye_annonser += 1
                 nye_titler.append(f"{ad['Annonsenavn']} ({normalize_and_format_price(ad['Pris'])})")
-                logger.info(f"[{mode}] Ny annonse: Finnkode {finnkode} — {ad['Annonsenavn']} ({normalize_and_format_price(ad['Pris'])})")
+                logger.info("[%s] Ny annonse: Finnkode %s — %s (%s)", mode, finnkode, ad['Annonsenavn'], normalize_and_format_price(ad['Pris']))
                 if not dry_run:
                     nye_prislogger.append((finnkode, ny_pris_int))
 
@@ -713,8 +689,8 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
                 conn.commit()
 
         logger.info(
-            f"[{mode}] Oppsummering: {nye_annonser} nye, {endrede_annonser} endret, "
-            f"{uendrede_annonser} uendret av {len(ads)} annonser."
+            "[%s] Oppsummering: %d nye, %d endret, %d uendret av %d annonser.",
+            mode, nye_annonser, endrede_annonser, uendrede_annonser, len(ads)
         )
 
         if not dry_run and (nye_titler or prisfall_titler):
@@ -729,23 +705,23 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
                     parts.append(f"... og {len(prisfall_titler) - 10} til")
             send_ha_notification("Bobil-oppdatering", "\n\n".join(parts))
     except mysql.connector.Error as err:
-        logger.error(f"Feil ved databaseoppdatering: {err}")
+        logger.error("Feil ved databaseoppdatering: %s", err)
     except Exception as e:
-        logger.error(f"Uventet feil ved databaseoppdatering: {e}")
+        logger.error("Uventet feil ved databaseoppdatering: %s", e)
     finally:
         conn.close()
 
 
 def _log_dry_run_summary(ads: list[dict]) -> None:
     """Logg en oppsummering av hentet data når DB ikke er tilgjengelig i dry_run."""
-    logger.info(f"[DRY RUN] Hentet {len(ads)} annonser fra Finn.no:")
+    logger.info("[DRY RUN] Hentet %d annonser:", len(ads))
     for ad in ads[:5]:
         logger.info(
             f"  {ad['Finnkode']} — {ad['Annonsenavn']} — "
             f"{normalize_and_format_price(ad['Pris'])} — {ad['Modell']}"
         )
     if len(ads) > 5:
-        logger.info(f"  ... og {len(ads) - 5} til.")
+        logger.info("  ... og %d til.", len(ads) - 5)
 
 def mark_removed_ads(current_ads: list[dict], dry_run: bool = False) -> None:
     """
@@ -768,7 +744,7 @@ def mark_removed_ads(current_ads: list[dict], dry_run: bool = False) -> None:
             conn.commit()
         except Exception as e:
             if "Duplicate column" not in str(e) and "1060" not in str(e):
-                logger.error(f"Feil ved ALTER TABLE SistSett: {e}")
+                logger.error("Feil ved ALTER TABLE SistSett: %s", e)
 
         active_ids = {ad["Finnkode"] for ad in current_ads}
         now = datetime.now()
@@ -789,15 +765,15 @@ def mark_removed_ads(current_ads: list[dict], dry_run: bool = False) -> None:
         stale_ids = {row[0] for row in cursor.fetchall()} - active_ids
 
         if not stale_ids:
-            logger.info(f"[{mode}] Ingen annonser å markere som solgt.")
+            logger.info("[%s] Ingen annonser å markere som solgt.", mode)
             if not dry_run:
                 conn.commit()
             return
 
-        logger.info(f"[{mode}] {len(stale_ids)} annonser ikke sett på over 48t — markeres som solgt.")
+        logger.info("[%s] %d annonser ikke sett på over 48t — markeres som solgt.", mode, len(stale_ids))
 
         for finnkode in stale_ids:
-            logger.info(f"[{mode}] Markerer Finnkode {finnkode} som Solgt/Fjernet.")
+            logger.info("[%s] Markerer Finnkode %s som Solgt/Fjernet.", mode, finnkode)
             if not dry_run:
                 cursor.execute(
                     "UPDATE bobil SET Solgt = 1 WHERE Finnkode = %s",
@@ -809,13 +785,13 @@ def mark_removed_ads(current_ads: list[dict], dry_run: bool = False) -> None:
                         (finnkode, "Solgt/Fjernet")
                     )
                 except Exception as e:
-                    logger.error(f"Feil ved logging av solgt-status for {finnkode}: {e}")
+                    logger.error("Feil ved logging av solgt-status for %s: %s", finnkode, e)
 
         if not dry_run:
             conn.commit()
-        logger.info(f"[{mode}] Markerte {len(stale_ids)} annonser som Solgt/Fjernet.")
+        logger.info("[%s] Markerte %d annonser som Solgt/Fjernet.", mode, len(stale_ids))
     except Exception as e:
-        logger.error(f"Feil ved markering av fjernede annonser: {e}")
+        logger.error("Feil ved markering av fjernede annonser: %s", e)
     finally:
         conn.close()
 
@@ -875,21 +851,20 @@ async def fetch_autodb_pages(session: aiohttp.ClientSession, opts: dict) -> list
 
     while True:
         params["page"] = page
-        from urllib.parse import urlencode
         url = AUTODB_SEARCH_URL + "?" + urlencode(params)
-        logger.info(f"Henter autodb side {page}...")
+        logger.info("Henter autodb side %d...", page)
         try:
             async with session.get(
                 url,
                 headers={**AUTODB_HEADERS, "Referer": "https://www.autodb.no/"},
-                timeout=aiohttp.ClientTimeout(total=30),
+                timeout=HTTP_TIMEOUT,
             ) as resp:
                 if resp.status != 200:
-                    logger.error(f"autodb søke-API HTTP {resp.status} på side {page}")
+                    logger.error("autodb søke-API HTTP %s på side %d", resp.status, page)
                     break
                 data = await resp.json()
         except Exception as e:
-            logger.error(f"Feil ved henting av autodb side {page}: {e}")
+            logger.error("Feil ved henting av autodb side %d: %s", page, e)
             break
 
         ads = data.get("data", [])
@@ -905,45 +880,37 @@ async def fetch_autodb_pages(session: aiohttp.ClientSession, opts: dict) -> list
                 seen_ids.add(aid)
                 all_ads.append(ad)
 
-        logger.info(f"autodb side {page}: {len(ads)} annonser (totalt {total})")
+        logger.info("autodb side %d: %d annonser (totalt %d)", page, len(ads), total)
 
         if (page + 1) * limit >= total:
             break
         page += 1
         await asyncio.sleep(0.5)
 
-    logger.info(f"autodb: hentet totalt {len(all_ads)} unike annonser")
+    logger.info("autodb: hentet totalt %d unike annonser", len(all_ads))
     return all_ads
 
 
 async def fetch_autodb_detail(session: aiohttp.ClientSession, aditemid: int) -> dict | None:
-    """
-    Hent detaljdata for én autodb-annonse, inkl. kjennemerke.
-    """
+    """Hent detaljdata for én autodb-annonse, inkl. kjennemerke."""
     url = f"{AUTODB_DETAIL_URL}?idlist={aditemid}"
     try:
         async with session.get(
             url,
-            headers={
-                **AUTODB_HEADERS,
-                "Referer": f"https://www.autodb.no/view/{aditemid}",
-            },
-            timeout=aiohttp.ClientTimeout(total=20),
+            headers={**AUTODB_HEADERS, "Referer": f"https://www.autodb.no/view/{aditemid}"},
+            timeout=HTTP_TIMEOUT,
         ) as resp:
             if resp.status != 200:
-                logger.debug(f"autodb detalj HTTP {resp.status} for {aditemid}")
+                logger.debug("autodb detalj HTTP %s for %s", resp.status, aditemid)
                 return None
             return await resp.json()
     except Exception as e:
-        logger.warning(f"Feil ved autodb-detalj for {aditemid}: {e}")
+        logger.warning("Feil ved autodb-detalj for %s: %s", aditemid, e)
         return None
 
 
 def parse_autodb_ad(list_ad: dict, detail: dict | None) -> dict:
-    """
-    Kombiner autodb liste- og detaljdata til et standardisert annonseobjekt.
-    Bruker samme nøkkelstruktur som Finn.no-annonser der mulig.
-    """
+    """Kombiner autodb liste- og detaljdata til et standardisert annonseobjekt."""
     aditemid = list_ad.get("aditemid")
 
     # Kjennemerke fra detaljrespons — feltet ligger i typedata.regNo (skjult hvis hideRegNo=True)
@@ -1044,7 +1011,7 @@ def get_existing_kjennemerker() -> dict:
         )
         return {row[0]: row[1] for row in cursor.fetchall()}
     except Exception as e:
-        logger.warning(f"Kunne ikke hente eksisterende kjennemerker: {e}")
+        logger.warning("Kunne ikke hente eksisterende kjennemerker: %s", e)
         return {}
     finally:
         conn.close()
@@ -1077,7 +1044,7 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                 finn_finnkode = existing_kjennemerker[kjennemerke]
                 if finn_finnkode > 0:
                     duplikat += 1
-                    logger.debug(f"autodb {autodb_id} — kjennemerke {kjennemerke} finnes som Finnkode {finn_finnkode}, oppdaterer kilde")
+                    logger.debug("autodb %s — kjennemerke %s finnes som Finnkode %s, oppdaterer kilde", autodb_id, kjennemerke, finn_finnkode)
                     if not dry_run:
                         cursor.execute(
                             "UPDATE bobil SET Kilde = 'finn+autodb', AutodbId = %s WHERE Finnkode = %s AND (Kilde = 'finn' OR Kilde IS NULL)",
@@ -1093,11 +1060,10 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
 
             ny_pris_int = int(ad.get("Pris") or 0) or None
             if not ny_pris_int:
-                logger.warning(f"autodb {autodb_id}: ingen pris, hopper over")
+                logger.warning("autodb %s: ingen pris, hopper over", autodb_id)
                 continue
 
-            km_raw = ad.get("Kilometerstand") or 0
-            km_str = f"{int(km_raw):,} km".replace(",", " ") if km_raw else "Ikke oppgitt"
+            km_str = format_kilometerstand(ad.get("Kilometerstand") or 0)
 
             oppdatert_raw = ad.get("Oppdatert") or ""
             try:
@@ -1110,39 +1076,7 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                 oppdatert_str = oppdatert_raw[:16] if oppdatert_raw else "Ukjent"
 
             svv = ad.get("VegvesenData") or {}
-            svv_data = tuple(
-                svv.get(k) if k not in ("svv_eu_kontrollfrist", "svv_eu_sist_godkjent") else (svv.get(k) or None)
-                for k in [c[0].lower() + c[1:].replace("Svv", "svv_").replace("S", "_s").replace("A", "_a").replace("H", "_h")
-                           .replace("N", "_n").replace("T", "_t").replace("M", "_m").replace("G", "_g").replace("D", "_d")
-                           .replace("F", "_f").replace("K", "_k").replace("E", "_e").replace("L", "_l").replace("V", "_v")
-                           .replace("B", "_b").replace("W", "_w").replace("C", "_c").replace("R", "_r").replace("U", "_u")
-                           .replace("O", "_o").replace("I", "_i").replace("P", "_p").replace("Y", "_y").replace("Z", "_z")
-                           for c in _SVV_COLS]
-            )
-            svv_key_map = {
-                "SvvMerke": "svv_merke", "SvvHandelsbetegnelse": "svv_handelsbetegnelse",
-                "SvvTypebetegnelse": "svv_typebetegnelse", "SvvAarsmodell": "svv_aarsmodell",
-                "SvvForstegangNorge": "svv_forstegang_norge", "SvvRegistreringsstatus": "svv_registreringsstatus",
-                "SvvEuKontrollfrist": "svv_eu_kontrollfrist", "SvvEuSistGodkjent": "svv_eu_sist_godkjent",
-                "SvvFarge": "svv_farge", "SvvKarosseritype": "svv_karosseritype", "SvvAntallDorer": "svv_antall_dorer",
-                "SvvDrivstoff": "svv_drivstoff", "SvvMotorvolum": "svv_motorvolum", "SvvMotoreffekt": "svv_motoreffekt",
-                "SvvAntallSylindre": "svv_antall_sylindre", "SvvGirkassetype": "svv_girkassetype",
-                "SvvAntallGir": "svv_antall_gir", "SvvMaksHastighet": "svv_maks_hastighet",
-                "SvvElektrisk": "svv_elektrisk", "SvvLengde": "svv_lengde", "SvvBredde": "svv_bredde",
-                "SvvHoyde": "svv_hoyde", "SvvEgenvekt": "svv_egenvekt", "SvvNyttelast": "svv_nyttelast",
-                "SvvTotalvekt": "svv_totalvekt", "SvvTillattTotalvekt": "svv_tillatt_totalvekt",
-                "SvvTilhengervektMedBrems": "svv_tilhengervekt_med_brems",
-                "SvvTilhengervektUtenBrems": "svv_tilhengervekt_uten_brems",
-                "SvvVertikalKoplingslast": "svv_vertikal_koplingslast",
-                "SvvEuroKlasse": "svv_euro_klasse", "SvvSitteplasser": "svv_sitteplasser",
-                "SvvKjoretoytype": "svv_kjoretoytype",
-            }
-            svv_data = tuple(
-                (svv.get(svv_key_map[c]) or None) if c in ("SvvEuKontrollfrist", "SvvEuSistGodkjent")
-                else svv.get(svv_key_map[c])
-                for c in _SVV_COLS
-            )
-            svv_upsert = _build_svv_upsert_clause()
+            svv_data = _build_svv_data_tuple(svv)
             tekst_nlp = ad.get("Annonsenavn", "") or ""
             placeholders_a = ", ".join(["%s"] * (20 + len(_SVV_COLS)))
 
@@ -1167,7 +1101,7 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                             ImageURL = VALUES(ImageURL),
                             Lokasjon = VALUES(Lokasjon),
                             Kjennemerke = VALUES(Kjennemerke),
-                            {svv_upsert},
+                            {_SVV_UPSERT_CLAUSE},
                             Heftelser = IF(VALUES(Heftelser) IS NOT NULL, VALUES(Heftelser), Heftelser),
                             HeftelseSjekket = IF(VALUES(HeftelseSjekket) IS NOT NULL, VALUES(HeftelseSjekket), HeftelseSjekket),
                             Kilde = VALUES(Kilde)
@@ -1196,20 +1130,18 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                     ))
                     PriceLog(cursor).record_ignore(surrogate_finnkode, ny_pris_int)
                     nye += 1
-                    logger.info(f"[autodb] Ny annonse: {autodb_id} — {ad['Annonsenavn']} ({ny_pris_int})")
+                    logger.info("[autodb] Ny annonse: %s — %s (%s)", autodb_id, ad['Annonsenavn'], ny_pris_int)
                 except Exception as e:
-                    logger.error(f"Feil ved lagring av autodb {autodb_id}: {e}")
+                    logger.error("Feil ved lagring av autodb %s: %s", autodb_id, e)
             else:
                 nye += 1
 
         if not dry_run:
             conn.commit()
 
-        logger.info(
-            f"[{mode}] autodb: {nye} nye, {duplikat} duplikater (samme kjennemerke som Finn)"
-        )
+        logger.info("[%s] autodb: %d nye, %d duplikater (samme kjennemerke som Finn)", mode, nye, duplikat)
     except Exception as e:
-        logger.error(f"Feil i update_database_autodb: {e}")
+        logger.error("Feil i update_database_autodb: %s", e)
     finally:
         conn.close()
 
@@ -1239,7 +1171,7 @@ async def main() -> None:
     logger.info("Starter script...")
     if DRY_RUN:
         logger.info("*** DRY RUN MODUS — ingen data vil bli skrevet til databasen ***")
-    logger.info(f"Søke-URL: {LISTINGS_PAGE_URL}")
+    logger.info("Søke-URL: %s", LISTINGS_PAGE_URL)
 
     alle_aktive_ads = []
 
@@ -1248,6 +1180,7 @@ async def main() -> None:
         if finn_ads:
             finn_ads = await enrich_ads_with_vegvesen(session, finn_ads)
             finn_ads = await enrich_ads_with_heftelser(session, finn_ads)
+            finn_ads = await enrich_ads_with_km_historikk(session, finn_ads)
             update_database(finn_ads, dry_run=DRY_RUN)
             alle_aktive_ads.extend(finn_ads)
 
@@ -1255,6 +1188,7 @@ async def main() -> None:
         if autodb_ads:
             autodb_ads = await enrich_ads_with_vegvesen(session, autodb_ads)
             autodb_ads = await enrich_ads_with_heftelser(session, autodb_ads)
+            autodb_ads = await enrich_ads_with_km_historikk(session, autodb_ads)
             existing_kjennemerker = get_existing_kjennemerker()
             update_database_autodb(autodb_ads, existing_kjennemerker, dry_run=DRY_RUN)
             alle_aktive_ads.extend(autodb_ads)
@@ -1335,31 +1269,31 @@ async def fetch_heftelser(session: aiohttp.ClientSession, kjennemerke: str) -> i
             url,
             headers={
                 "Accept": "text/html,application/xhtml+xml,*/*",
-                "User-Agent": "Mozilla/5.0 (compatible; finn-bobil-addon/1.0)",
+                "User-Agent": "Mozilla/5.0 (compatible; bobil-addon/1.0)",
                 "Referer": "https://www.brreg.no/",
             },
-            timeout=aiohttp.ClientTimeout(total=20),
+            timeout=HTTP_TIMEOUT,
             allow_redirects=True,
         ) as resp:
             if resp.status != 200:
-                logger.debug(f"Brreg {regnr}: HTTP {resp.status}")
+                logger.debug("Brreg %s: HTTP %s", regnr, resp.status)
                 return None
             html = await resp.text()
 
             m = _BRREG_OPPFORINGER_RE.search(html)
             if m:
                 if m.group(1):  # "ingen"
-                    logger.info(f"Brreg {regnr}: ingen heftelser")
+                    logger.info("Brreg %s: ingen heftelser", regnr)
                     return 0
                 antall = int(m.group(2))
-                logger.info(f"Brreg {regnr}: {antall} heftelse(r) funnet")
+                logger.info("Brreg %s: %d heftelse(r) funnet", regnr, antall)
                 return antall
 
             # Siden lastet men vi klarte ikke tolke svaret
-            logger.warning(f"Brreg {regnr}: ukjent sideformat, kunne ikke telle heftelser")
+            logger.warning("Brreg %s: ukjent sideformat, kunne ikke telle heftelser", regnr)
             return None
     except Exception as e:
-        logger.warning(f"Feil ved Brreg-oppslag for {regnr}: {e}")
+        logger.warning("Feil ved Brreg-oppslag for %s: %s", regnr, e)
         return None
 
 
@@ -1373,28 +1307,8 @@ def get_finnkoder_med_heftelsessjekk() -> set:
         cursor.execute("SELECT Finnkode FROM bobil WHERE HeftelseSjekket IS NOT NULL")
         return {row[0] for row in cursor.fetchall()}
     except Exception as e:
-        logger.warning(f"Kunne ikke hente finnkoder med heftelsessjekk: {e}")
+        logger.warning("Kunne ikke hente finnkoder med heftelsessjekk: %s", e)
         return set()
-    finally:
-        conn.close()
-
-
-def save_heftelser(finnkode: int, antall: int | None) -> None:
-    """Lagre heftelsesresultat i databasen."""
-    if antall is None:
-        return
-    conn = connect_to_database()
-    if not conn:
-        return
-    try:
-        cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE bobil SET Heftelser = %s, HeftelseSjekket = %s WHERE Finnkode = %s",
-            (antall, datetime.now(), finnkode),
-        )
-        conn.commit()
-    except Exception as e:
-        logger.error(f"Feil ved lagring av heftelser for {finnkode}: {e}")
     finally:
         conn.close()
 
@@ -1423,8 +1337,6 @@ async def enrich_ads_with_heftelser(session: aiohttp.ClientSession, ads: list[di
 
 # -- SVV km-historikk -------------------------------------------------------
 
-SVV_KM_API_URL = "https://akfell-datautlevering.atlas.vegvesen.no/enkeltoppslag/kjoretoydata"
-
 
 def ensure_km_historikk_table() -> None:
     """Opprett km_historikk-tabellen hvis den ikke finnes."""
@@ -1446,7 +1358,7 @@ def ensure_km_historikk_table() -> None:
         """)
         conn.commit()
     except Exception as e:
-        logger.error(f"Feil ved oppretting av km_historikk: {e}")
+        logger.error("Feil ved oppretting av km_historikk: %s", e)
     finally:
         conn.close()
 
@@ -1460,18 +1372,18 @@ async def fetch_svv_km_historikk(session: aiohttp.ClientSession, kjennemerke: st
     """
     if not kjennemerke or not api_key:
         return []
-    url = SVV_KM_API_URL + "?kjennemerke=" + kjennemerke.strip().upper().replace(" ", "")
+    url = SVV_API_URL + "?kjennemerke=" + kjennemerke.strip().upper().replace(" ", "")
     try:
         async with session.get(
             url,
             headers={"SVV-Authorization": "Apikey " + api_key, "Accept": "application/json"},
-            timeout=aiohttp.ClientTimeout(total=10),
+            timeout=HTTP_TIMEOUT,
         ) as resp:
             if resp.status != 200:
                 return []
             data = await resp.json()
     except Exception as e:
-        logger.warning(f"Feil ved SVV km-oppslag for {kjennemerke}: {e}")
+        logger.warning("Feil ved SVV km-oppslag for %s: %s", kjennemerke, e)
         return []
 
     try:
@@ -1505,16 +1417,12 @@ async def fetch_svv_km_historikk(session: aiohttp.ClientSession, kjennemerke: st
                     pass
 
         if resultater:
-            logger.info(f"SVV km-historikk for {kjennemerke}: {len(resultater)} kontroller")
+            logger.info("SVV km-historikk for %s: %d kontroller", kjennemerke, len(resultater))
         else:
-            logger.debug(
-                f"SVV km-historikk for {kjennemerke}: ingen kontroller funnet i responsen. "
-                "Merk: enkeltoppslag/kjoretoydata returnerer ikke alltid periodiskeKontroller "
-                "med kmStand — dette endepunktet må verifiseres mot SVV-dokumentasjonen."
-            )
+            logger.debug("SVV km-historikk for %s: ingen kontroller i responsen", kjennemerke)
         return resultater
     except Exception as e:
-        logger.warning(f"Feil ved parsing av SVV km-historikk for {kjennemerke}: {e}")
+        logger.warning("Feil ved parsing av SVV km-historikk for %s: %s", kjennemerke, e)
         return []
 
 
@@ -1532,9 +1440,9 @@ def save_km_historikk(finnkode: int, km_data: list[dict]) -> None:
             [(finnkode, d["Dato"], d["Km"]) for d in km_data],
         )
         conn.commit()
-        logger.debug(f"Lagret {cursor.rowcount} km-datapunkter for Finnkode {finnkode}")
+        logger.debug("Lagret %d km-datapunkter for Finnkode %s", cursor.rowcount, finnkode)
     except Exception as e:
-        logger.error(f"Feil ved lagring av km-historikk for {finnkode}: {e}")
+        logger.error("Feil ved lagring av km-historikk for %s: %s", finnkode, e)
     finally:
         conn.close()
 
@@ -1651,8 +1559,8 @@ def parse_vegvesen_data(data: dict) -> dict:
         miljo = td.get("miljodata", {})
         result["svv_euro_klasse"] = (miljo.get("euroKlasse") or {}).get("kodeVerdi")
         result["svv_sitteplasser"] = td.get("persontall", {}).get("sitteplasserTotalt")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Feil ved parsing av Vegvesen-data: %s", e)
     return result
 
 _REGNR_RE = re.compile(r"^[A-Z]{2}[0-9]{4,5}$")
@@ -1718,7 +1626,7 @@ class VegvesenEnricher:
             """)
             return {row[0] for row in cursor.fetchall()}
         except Exception as e:
-            logger.warning(f"Kunne ikke hente finnkoder med SVV-data: {e}")
+            logger.warning("Kunne ikke hente finnkoder med SVV-data: %s", e)
             return set()
         finally:
             conn.close()
@@ -1733,25 +1641,25 @@ class VegvesenEnricher:
         else:
             return None
         url = SVV_API_URL + "?" + param
-        logger.info("Vegvesen-oppslag for " + ident + "...")
+        logger.info("Vegvesen-oppslag for %s...", ident)
         try:
             async with session.get(
                 url,
                 headers={"SVV-Authorization": "Apikey " + self.api_key, "Accept": "application/json"},
-                timeout=aiohttp.ClientTimeout(total=10),
+                timeout=HTTP_TIMEOUT,
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    logger.info("Vegvesen-data hentet for " + ident)
+                    logger.info("Vegvesen-data hentet for %s", ident)
                     return parse_vegvesen_data(data)
                 elif resp.status == 204:
-                    logger.debug("Vegvesen API 204 for " + ident + " — ingen data, markerer i DB")
+                    logger.debug("Vegvesen API 204 for %s — ingen data", ident)
                     return {"svv_registreringsstatus": "INGEN_DATA"}
                 else:
-                    logger.debug("Vegvesen API HTTP " + str(resp.status) + " for " + ident)
+                    logger.debug("Vegvesen API HTTP %s for %s", resp.status, ident)
                     return None
         except Exception as e:
-            logger.warning("Feil ved Vegvesen-oppslag for " + ident + ": " + str(e))
+            logger.warning("Feil ved Vegvesen-oppslag for %s: %s", ident, e)
             return None
 
     async def enrich(self, session, ads: list[dict]) -> list[dict]:
@@ -1772,7 +1680,7 @@ class VegvesenEnricher:
                 ad["VegvesenData"] = svv or {}
                 if svv:
                     ident = kjennemerke or chassis
-                    logger.info("  Finnkode " + str(ad["Finnkode"]) + ": SVV OK (" + ident + ") - " + str(svv.get("svv_merke")) + " " + str(svv.get("svv_handelsbetegnelse")))
+                    logger.info("  Finnkode %s: SVV OK (%s) - %s %s", ad["Finnkode"], ident, svv.get("svv_merke"), svv.get("svv_handelsbetegnelse"))
             return ad
 
         return list(await asyncio.gather(*(_enrich_one(ad) for ad in ads)))

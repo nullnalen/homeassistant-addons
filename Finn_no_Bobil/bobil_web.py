@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Finn.no Bobil — Ingress Web UI
-Flask-basert webgrensesnitt for å vise bobilannonser fra databasen.
+Bobil — Ingress Web UI
+Flask-basert webgrensesnitt for å vise bobilannonser (Finn.no + autodb) fra databasen.
 """
 import os
 import sys
@@ -123,40 +123,26 @@ def format_price(price_int):
     return f"{price_int:,.0f} kr".replace(",", " ")
 
 
-def format_sistsett(dt):
-    """Formater SistSett (datetime-objekt eller None) til lesbar tekst, fargeklasse og sorteringsverdi (antall dager, lavere = nyere)."""
-    if not dt:
+def format_age(date_val):
+    """Formater alder fra norsk datostreng, ISO-streng eller datetime til (tekst, css-klasse, sorteringsverdi)."""
+    if not date_val:
         return "Ukjent", "age-unknown", 99999
-    if isinstance(dt, str):
-        try:
-            dt = datetime.strptime(dt, "%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            return "Ukjent", "age-unknown", 99999
-    delta = datetime.now() - dt
-    dager = delta.days
-    if dager == 0:
-        timer = delta.seconds // 3600
-        if timer == 0:
-            return "Nå", "age-fresh", 0
-        return f"{timer}t siden", "age-fresh", 0
-    if dager == 1:
-        return "I går", "age-fresh", 1
-    if dager < 7:
-        return f"{dager} dager", "age-fresh", dager
-    if dager < 30:
-        return f"{dager} dager", "age-weeks", dager
-    mnd = dager // 30
-    return f"{mnd} mnd", "age-old", dager
-
-
-def format_age(date_str):
-    """Formater alder fra norsk datostreng til lesbar tekst, fargeklasse og sorteringsverdi."""
-    dato = parse_norwegian_date(date_str)
+    if isinstance(date_val, datetime):
+        dato = date_val
+    elif isinstance(date_val, str):
+        if re.match(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", date_val):
+            try:
+                dato = datetime.strptime(date_val, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return "Ukjent", "age-unknown", 99999
+        else:
+            dato = parse_norwegian_date(date_val)
+    else:
+        return "Ukjent", "age-unknown", 99999
     if not dato:
         return "Ukjent", "age-unknown", 99999
     delta = datetime.now() - dato
     dager = delta.days
-    sort_val = dager
     if dager == 0:
         timer = delta.seconds // 3600
         if timer == 0:
@@ -172,6 +158,35 @@ def format_age(date_str):
         mnd = dager // 30
         return f"{mnd} mnd", "age-old", dager
     return f"{dager // 365} år", "age-old", dager
+
+
+def safe_int(val) -> int | None:
+    """Parse en verdi til int, returnerer None ved feil."""
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def enrich_row_with_prices(r: dict) -> None:
+    """Berik én rad med formaterte prisfelter (NaaverendePris, LavestePrisF, HoyestePrisF, Prisfall)."""
+    pris = parse_price(r.get("Pris"))
+    laveste = parse_price(r.get("LavestePris"))
+    hoyeste = parse_price(r.get("HoyestePris"))
+    if not pris and laveste:
+        pris = laveste
+    if not laveste and pris:
+        laveste = pris
+    if not hoyeste and pris:
+        hoyeste = pris
+    r["NaaverendePris"] = format_price(pris)
+    r["LavestePrisF"] = format_price(laveste)
+    r["HoyestePrisF"] = format_price(hoyeste)
+    if hoyeste and pris and hoyeste > pris:
+        pct = round((hoyeste - pris) / hoyeste * 100, 1)
+        r["Prisfall"] = f"-{pct}%"
+    else:
+        r["Prisfall"] = None
 
 
 _db_pool = None
@@ -372,18 +387,8 @@ def get_alle_favoritter() -> list[dict]:
         """)
         rows = cur.fetchall()
         for r in rows:
-            pris = parse_price(r["Pris"])
-            hoyeste = r.get("HoyestePris")
-            laveste = r.get("LavestePris")
-            r["NaaverendePris"] = format_price(pris)
-            r["HoyestePrisF"] = format_price(hoyeste)
-            r["LavestePrisF"] = format_price(laveste)
+            enrich_row_with_prices(r)
             r["AdURL"] = _ad_url(r)
-            prisfall = ""
-            if hoyeste and pris and hoyeste > pris:
-                pct = round((hoyeste - pris) / hoyeste * 100, 1)
-                prisfall = f"-{pct}%"
-            r["Prisfall"] = prisfall
         return rows
     except Exception as e:
         logger.error("Feil i get_alle_favoritter: %s\n%s", e, traceback.format_exc())
@@ -432,15 +437,7 @@ def get_prisendringer():
         """)
         rows = cur.fetchall()
         for r in rows:
-            pris = parse_price(r["Pris"])
-            laveste = parse_price(r["LavestePris"])
-            hoyeste = parse_price(r["HoyestePris"])
-            # Hvis nåværende pris mangler (f.eks. solgt), bruk siste kjente pris
-            if not pris and laveste:
-                pris = laveste
-            r["NaaverendePris"] = format_price(pris)
-            r["LavestePrisF"] = format_price(laveste)
-            r["HoyestePrisF"] = format_price(hoyeste)
+            enrich_row_with_prices(r)
             r["AdURL"] = _ad_url(r)
             r["Alder"], r["AlderClass"], r["AlderSort"] = format_age(r.get("Oppdatert", ""))
         return rows
@@ -700,21 +697,9 @@ def get_sokresultater(keywords_str):
         rows = cur.fetchall()
 
         for r in rows:
-            pris = parse_price(r["Pris"])
-            laveste = parse_price(r["LavestePris"])
-            hoyeste = parse_price(r["HoyestePris"])
-            if not pris and laveste:
-                pris = laveste
-            if not laveste and pris:
-                laveste = pris
-            if not hoyeste and pris:
-                hoyeste = pris
-            r["NaaverendePris"] = format_price(pris)
-            r["LavestePrisF"] = format_price(laveste)
-            r["HoyestePrisF"] = format_price(hoyeste)
+            enrich_row_with_prices(r)
             r["AdURL"] = _ad_url(r)
             r["Alder"], r["AlderClass"], r["AlderSort"] = format_age(r.get("Oppdatert", ""))
-            # Finn hvilke termer som ga treff
             tekst = f"{r['Annonsenavn']} {r.get('Beskrivelse', '')}".lower()
             r["Soketreff"] = ", ".join(t for t in terms if t.lower() in tekst)
         return rows
@@ -763,11 +748,6 @@ def get_detaljer(page=1, per_page=50, filters=None):
             if filters.get("modell_til"):
                 where_parts.append("b.Modell <= %s")
                 params.append(filters["modell_til"])
-            def safe_int(val):
-                try:
-                    return int(val)
-                except (TypeError, ValueError):
-                    return None
 
             pris_fra = safe_int(filters.get("pris_fra"))
             if pris_fra is not None:
@@ -834,18 +814,9 @@ def get_detaljer(page=1, per_page=50, filters=None):
 
         now = datetime.now()
         for r in rows:
-            pris = parse_price(r["Pris"])
+            enrich_row_with_prices(r)
+            pris = parse_price(r.get("Pris"))
             km = parse_km(r["Kilometerstand"])
-            laveste = parse_price(r["LavestePris"])
-            hoyeste = parse_price(r["HoyestePris"])
-            # Fallback til nåværende pris hvis ingen prishistorikk
-            if not laveste and pris:
-                laveste = pris
-            if not hoyeste and pris:
-                hoyeste = pris
-            r["NaaverendePris"] = format_price(pris)
-            r["LavestePrisF"] = format_price(laveste)
-            r["HoyestePrisF"] = format_price(hoyeste)
             r["AdURL"] = _ad_url(r)
 
             # Sjekk om annonsen er ny (siste 24 timer)
@@ -2103,7 +2074,6 @@ def view_annonse(finnkode):
         """
 
         if chart_data and len(chart_data) > 1:
-            import json as json_mod
             html += f"""
             <h3 style="color: var(--accent); margin-bottom: 10px;">Prishistorikk</h3>
             <div style="max-width: 700px; margin-bottom: 20px;">
@@ -2114,10 +2084,10 @@ def view_annonse(finnkode):
                 new Chart(document.getElementById('prisChart'), {{
                     type: 'line',
                     data: {{
-                        labels: {json_mod.dumps(chart_labels)},
+                        labels: {json.dumps(chart_labels)},
                         datasets: [{{
                             label: 'Pris (kr)',
-                            data: {json_mod.dumps(chart_data)},
+                            data: {json.dumps(chart_data)},
                             borderColor: '#0A84FF',
                             backgroundColor: 'rgba(10,132,255,0.1)',
                             fill: true,
