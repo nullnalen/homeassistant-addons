@@ -1266,7 +1266,7 @@ def _parse_brreg_rettsstiftelser(html: str) -> list[dict] | None:
     Tom liste = ingen heftelser (side lastet, ingen tinglysninger).
     """
     for chunk_raw in _BRREG_NEXT_F_RE.findall(html):
-        if '"rettsstiftelser":' not in chunk_raw:
+        if 'rettsstiftelser' not in chunk_raw:
             continue
         decoded = chunk_raw.replace("\\n", "\n").replace('\\"', '"').replace("\\\\", "\\")
         idx = decoded.find('"rettsstiftelser":[')
