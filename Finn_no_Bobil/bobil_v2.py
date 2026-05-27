@@ -364,7 +364,7 @@ _FELT_NAVN = [
     "SvvTilhengervektMedBrems", "SvvTilhengervektUtenBrems", "SvvVertikalKoplingslast",
     "SvvEuroKlasse", "SvvSitteplasser", "SvvKjoretoytype",
     "Sengelayout", "VendbareForerstoler",
-    "Heftelser", "HeftelseSjekket",
+    "Heftelser", "HeftelseSjekket", "HeftelserDetaljer",
 ]
 
 _SVV_COLS = [
@@ -546,15 +546,14 @@ class BobilRepository:
 
     def upsert(self, ad: dict, nye_verdier: list) -> None:
         finnkode = ad["Finnkode"]
-        placeholders = ", ".join(["%s"] * (19 + len(_SVV_COLS)))
-        # nye_verdier følger _FELT_NAVN-rekkefølge: Annonsenavn[0], Modell[1], ..., HeftelseSjekket[-1]
+        placeholders = ", ".join(["%s"] * (20 + len(_SVV_COLS)))
         fn = _FELT_NAVN
         query = f"""
             INSERT INTO bobil (
                 Finnkode, Annonsenavn, Modell, Kilometerstand, Girkasse, Beskrivelse,
                 Nyttelast, Typebobil, Oppdatert, URL, Pris, ImageURL, Lokasjon,
                 Kjennemerke, {", ".join(_SVV_COLS)},
-                Sengelayout, VendbareForerstoler, Heftelser, HeftelseSjekket, Kilde
+                Sengelayout, VendbareForerstoler, Heftelser, HeftelseSjekket, HeftelserDetaljer, Kilde
             ) VALUES ({placeholders})
             ON DUPLICATE KEY UPDATE
                 Annonsenavn = VALUES(Annonsenavn),
@@ -575,6 +574,7 @@ class BobilRepository:
                 VendbareForerstoler = IF(VALUES(VendbareForerstoler) IS NOT NULL, VALUES(VendbareForerstoler), VendbareForerstoler),
                 Heftelser = IF(VALUES(Heftelser) IS NOT NULL, VALUES(Heftelser), Heftelser),
                 HeftelseSjekket = IF(VALUES(HeftelseSjekket) IS NOT NULL, VALUES(HeftelseSjekket), HeftelseSjekket),
+                HeftelserDetaljer = IF(VALUES(HeftelserDetaljer) IS NOT NULL, VALUES(HeftelserDetaljer), HeftelserDetaljer),
                 Kilde = IF(Kilde = 'autodb', 'finn+autodb', IF(Kilde IS NULL, 'finn', Kilde))
         """
         data = (
@@ -597,6 +597,7 @@ class BobilRepository:
             nye_verdier[fn.index("VendbareForerstoler")],
             nye_verdier[fn.index("Heftelser")],
             nye_verdier[fn.index("HeftelseSjekket")],
+            nye_verdier[fn.index("HeftelserDetaljer")],
             "finn",
         )
         try:
@@ -1078,7 +1079,7 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
             svv = ad.get("VegvesenData") or {}
             svv_data = _build_svv_data_tuple(svv)
             tekst_nlp = ad.get("Annonsenavn", "") or ""
-            placeholders_a = ", ".join(["%s"] * (20 + len(_SVV_COLS)))
+            placeholders_a = ", ".join(["%s"] * (21 + len(_SVV_COLS)))
 
             if not dry_run:
                 try:
@@ -1089,7 +1090,7 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                             Oppdatert, URL, Pris, ImageURL, Lokasjon, Kjennemerke,
                             {", ".join(_SVV_COLS)},
                             Sengelayout, VendbareForerstoler, Heftelser, HeftelseSjekket,
-                            Kilde
+                            HeftelserDetaljer, Kilde
                         ) VALUES ({placeholders_a})
                         ON DUPLICATE KEY UPDATE
                             Annonsenavn = VALUES(Annonsenavn),
@@ -1104,6 +1105,7 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                             {_SVV_UPSERT_CLAUSE},
                             Heftelser = IF(VALUES(Heftelser) IS NOT NULL, VALUES(Heftelser), Heftelser),
                             HeftelseSjekket = IF(VALUES(HeftelseSjekket) IS NOT NULL, VALUES(HeftelseSjekket), HeftelseSjekket),
+                            HeftelserDetaljer = IF(VALUES(HeftelserDetaljer) IS NOT NULL, VALUES(HeftelserDetaljer), HeftelserDetaljer),
                             Kilde = VALUES(Kilde)
                     """, (
                         surrogate_finnkode,
@@ -1126,6 +1128,7 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                         detect_vendbare_forseter(tekst_nlp),
                         ad.get("Heftelser"),
                         ad.get("HeftelseSjekket"),
+                        ad.get("HeftelserDetaljer"),
                         "autodb",
                     ))
                     PriceLog(cursor).record_ignore(surrogate_finnkode, ny_pris_int)
@@ -1250,18 +1253,74 @@ def detect_vendbare_forseter(tekst: str) -> int | None:
 
 BRREG_URL = "https://rettsstiftelser.brreg.no/nb/oppslag/motorvogn/{kjennemerke}"
 
-# Brreg bruker "Det er X oppføringer" (X=tall eller "ingen") for begge utfall
-_BRREG_OPPFORINGER_RE = re.compile(r"Det er (?:(ingen)|(\d+)) oppf", re.IGNORECASE)
+_BRREG_NEXT_F_RE = re.compile(
+    r'self\.__next_f\.push\(\[1,"((?:[^"\\]|\\.)*)"\]\)', re.DOTALL
+)
 
 
-async def fetch_heftelser(session: aiohttp.ClientSession, kjennemerke: str) -> int | None:
+def _parse_brreg_rettsstiftelser(html: str) -> list[dict] | None:
     """
-    Sjekk om kjøretøyet har aktive heftelser/pant i Brønnøysund Løsøreregisteret.
-    Brreg bruker server-side rendered Next.js — ingen JSON API, parser HTML.
-    Returnerer antall heftelser (0 = ingen), None ved nettverksfeil.
+    Parser rettsstiftelser fra Brreg Next.js-side.
+    Returnerer liste av rettsstiftelse-dicts, eller None om parsing feiler.
+    Tom liste = ingen heftelser.
+    """
+    for chunk_raw in _BRREG_NEXT_F_RE.findall(html):
+        if "dokumentnummer" not in chunk_raw:
+            continue
+        decoded = chunk_raw.replace("\\n", "\n").replace('\\"', '"').replace("\\\\", "\\")
+        idx = decoded.find('"rettsstiftelser":[')
+        if idx < 0:
+            continue
+        start = idx + len('"rettsstiftelser":')
+        depth, end = 0, start
+        for j, c in enumerate(decoded[start:], start):
+            if c == "[":
+                depth += 1
+            elif c == "]":
+                depth -= 1
+                if depth == 0:
+                    end = j + 1
+                    break
+        try:
+            return json.loads(decoded[start:end])
+        except (json.JSONDecodeError, ValueError):
+            return None
+    return None
+
+
+def _summarize_rettsstiftelse(rs: dict) -> dict:
+    """Destiller én rettsstiftelse til lagringsvennlig dict."""
+    roller_summary = []
+    for rolle in rs.get("roller", []):
+        rh = rolle["rolleinnehaver"]
+        roller_summary.append({
+            "rolle": rolle.get("rolletypeBeskrivelse", ""),
+            "navn": rh.get("navn", ""),
+            "org": rh.get("organisasjonsnummer"),
+        })
+    belop = [
+        {"belop": b["belop"], "valuta": b.get("valuta", "NOK")}
+        for b in rs.get("krav", {}).get("belop", [])
+    ]
+    return {
+        "dok": rs.get("dokumentnummer"),
+        "type": rs.get("typeBeskrivelse", ""),
+        "type_kode": rs.get("type", ""),
+        "dato": (rs.get("innkomsttidspunkt") or "")[:10],
+        "status": rs.get("statusBeskrivelse", ""),
+        "roller": roller_summary,
+        "belop": belop,
+    }
+
+
+async def fetch_heftelser(session: aiohttp.ClientSession, kjennemerke: str) -> tuple[int, list] | tuple[None, None]:
+    """
+    Sjekk kjøretøyet mot Brønnøysund Løsøreregisteret.
+    Returnerer (antall, detaljer_liste) eller (None, None) ved feil.
+    detaljer_liste er en liste av summerte rettsstiftelse-dicts.
     """
     if not kjennemerke:
-        return None
+        return None, None
     regnr = kjennemerke.strip().upper().replace(" ", "")
     url = BRREG_URL.format(kjennemerke=regnr)
     try:
@@ -1277,24 +1336,22 @@ async def fetch_heftelser(session: aiohttp.ClientSession, kjennemerke: str) -> i
         ) as resp:
             if resp.status != 200:
                 logger.debug("Brreg %s: HTTP %s", regnr, resp.status)
-                return None
+                return None, None
             html = await resp.text()
 
-            m = _BRREG_OPPFORINGER_RE.search(html)
-            if m:
-                if m.group(1):  # "ingen"
-                    logger.info("Brreg %s: ingen heftelser", regnr)
-                    return 0
-                antall = int(m.group(2))
-                logger.info("Brreg %s: %d heftelse(r) funnet", regnr, antall)
-                return antall
+        liste = _parse_brreg_rettsstiftelser(html)
+        if liste is None:
+            logger.warning("Brreg %s: ukjent sideformat, parsing feilet", regnr)
+            return None, None
 
-            # Siden lastet men vi klarte ikke tolke svaret
-            logger.warning("Brreg %s: ukjent sideformat, kunne ikke telle heftelser", regnr)
-            return None
+        detaljer = [_summarize_rettsstiftelse(rs) for rs in liste]
+        antall = len(detaljer)
+        logger.info("Brreg %s: %d rettsstiftelse(r) funnet", regnr, antall)
+        return antall, detaljer
+
     except Exception as e:
         logger.warning("Feil ved Brreg-oppslag for %s: %s", regnr, e)
-        return None
+        return None, None
 
 
 def get_finnkoder_med_heftelsessjekk() -> set:
@@ -1326,10 +1383,11 @@ async def enrich_ads_with_heftelser(session: aiohttp.ClientSession, ads: list[di
             return ad
         async with semaphore:
             await asyncio.sleep(0.3)
-            antall = await fetch_heftelser(session, kjennemerke)
+            antall, detaljer = await fetch_heftelser(session, kjennemerke)
             if antall is not None:
                 ad["Heftelser"] = antall
                 ad["HeftelseSjekket"] = datetime.now()
+                ad["HeftelserDetaljer"] = json.dumps(detaljer, ensure_ascii=False) if detaljer else None
         return ad
 
     return list(await asyncio.gather(*(sjekk(ad) for ad in ads)))

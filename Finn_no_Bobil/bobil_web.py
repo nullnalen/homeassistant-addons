@@ -277,6 +277,7 @@ def ensure_db_columns():
             ("VendbareForerstoler", "TINYINT(1)"),
             ("Heftelser", "TINYINT UNSIGNED"),
             ("HeftelseSjekket", "DATETIME"),
+            ("HeftelserDetaljer", "TEXT"),
             ("AutodbId", "INT"),
             ("Kilde", "VARCHAR(20) DEFAULT 'finn'"),
         ]:
@@ -370,7 +371,7 @@ def get_alle_favoritter() -> list[dict]:
             SELECT b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris, b.Kilometerstand,
                    b.Lokasjon, b.ImageURL, b.SvvNyttelast, b.SvvLengde,
                    b.SvvTilhengervektMedBrems, b.SvvEuKontrollfrist,
-                   b.Sengelayout, b.Heftelser, b.Solgt,
+                   b.Sengelayout, b.Heftelser, b.HeftelserDetaljer, b.Solgt,
                    u.Favoritt, u.Notat, u.Oppdatert AS BrukerOppdatert,
                    MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris,
                    MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris
@@ -381,7 +382,7 @@ def get_alle_favoritter() -> list[dict]:
             GROUP BY b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris, b.Kilometerstand,
                      b.Lokasjon, b.ImageURL, b.SvvNyttelast, b.SvvLengde,
                      b.SvvTilhengervektMedBrems, b.SvvEuKontrollfrist,
-                     b.Sengelayout, b.Heftelser, b.Solgt,
+                     b.Sengelayout, b.Heftelser, b.HeftelserDetaljer, b.Solgt,
                      u.Favoritt, u.Notat, u.Oppdatert
             ORDER BY u.Oppdatert DESC
         """)
@@ -796,7 +797,7 @@ def get_detaljer(page=1, per_page=50, filters=None):
             SELECT b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Beskrivelse, b.Modell,
                    b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
                    b.Oppdatert, b.Pris, b.URL, b.ImageURL, b.Lokasjon, b.Solgt,
-                   b.Sengelayout, b.Heftelser, b.HeftelseSjekket,
+                   b.Sengelayout, b.Heftelser, b.HeftelseSjekket, b.HeftelserDetaljer,
                    COUNT(p.Pris) AS AntallEndringer,
                    MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
                    MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris
@@ -806,7 +807,7 @@ def get_detaljer(page=1, per_page=50, filters=None):
             GROUP BY b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Beskrivelse, b.Modell,
                      b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
                      b.Oppdatert, b.Pris, b.URL, b.ImageURL, b.Lokasjon, b.Solgt,
-                     b.Sengelayout, b.Heftelser, b.HeftelseSjekket
+                     b.Sengelayout, b.Heftelser, b.HeftelseSjekket, b.HeftelserDetaljer
             ORDER BY STR_TO_DATE(b.Oppdatert, '%d. %m. %Y %H:%i') DESC
             LIMIT %s OFFSET %s
         """, params + [per_page, offset])
@@ -829,25 +830,6 @@ def get_detaljer(page=1, per_page=50, filters=None):
                 r["PrisPerKm"] = round(pris / km, 1)
             else:
                 r["PrisPerKm"] = None
-
-            # Prutet
-            if pris:
-                r["Prutet12"] = format_price(round(pris * 0.88))
-                r["Prutet13"] = format_price(round(pris * 0.87))
-            else:
-                r["Prutet12"] = "—"
-                r["Prutet13"] = "—"
-
-            # Kjøpsscore: (pris/km) * (år - modell)
-            modell = r.get("Modell")
-            if r["PrisPerKm"] and modell:
-                try:
-                    alder = now.year - int(modell)
-                    r["KjopsScore"] = round(r["PrisPerKm"] * alder, 1)
-                except (ValueError, TypeError):
-                    r["KjopsScore"] = None
-            else:
-                r["KjopsScore"] = None
 
         return rows, total
     except Exception as e:
@@ -1287,6 +1269,104 @@ TEMPLATE = """
         .detail-row dt { color: var(--label-sec); font-weight: 500; }
         .detail-row dd { color: var(--label); }
 
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px 24px;
+            margin-bottom: 20px;
+            font-size: 0.9em;
+        }
+        .info-grid .lbl { color: var(--label-sec); }
+
+        .svv-panel {
+            background: rgba(0,0,0,0.15);
+            padding: 16px;
+            border-radius: var(--radius-sm);
+            margin-bottom: 20px;
+        }
+        .svv-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px 24px;
+            font-size: 0.9em;
+        }
+        .svv-grid .lbl { color: var(--label-sec); }
+
+        .section-heading {
+            color: var(--accent);
+            margin: 20px 0 10px;
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .kjennemerke-hint {
+            font-size: 0.85em;
+            color: var(--label-sec);
+            margin: 10px 0 20px;
+            padding: 10px 16px;
+            background: rgba(0,0,0,0.1);
+            border-radius: var(--radius-sm);
+        }
+
+        /* ── Detail-side navigasjon og layout ── */
+        .detail-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            font-size: 0.85em;
+        }
+        .detail-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 10px;
+            color: var(--label);
+        }
+        .fav-btn {
+            background: none;
+            border: none;
+            font-size: 1.5em;
+            cursor: pointer;
+            line-height: 1;
+            padding: 0;
+        }
+        .notat-section {
+            margin-bottom: 16px;
+        }
+        .notat-label {
+            font-size: 0.8em;
+            color: var(--label-sec);
+            margin-bottom: 4px;
+        }
+        .notat-textarea {
+            width: 100%;
+            max-width: 600px;
+            background: var(--bg);
+            color: var(--label);
+            border: 1px solid var(--separator-op);
+            border-radius: var(--radius-sm);
+            padding: 8px;
+            font-size: 0.9em;
+            resize: vertical;
+            font-family: inherit;
+        }
+        .beskrivelse {
+            color: var(--label-sec);
+            font-size: 0.85em;
+            margin-bottom: 20px;
+        }
+        .chart-container {
+            max-width: 700px;
+            margin-bottom: 20px;
+        }
+        .prishistorikk-tabell {
+            max-width: 500px;
+        }
+        .note-secondary {
+            color: var(--label-sec);
+        }
+
         /* ── Mobile ── */
         @media (max-width: 680px) {
             .container { padding: 12px 10px 32px; }
@@ -1406,13 +1486,82 @@ TEMPLATE = """
 """
 
 
-def _heftelse_html(antall, sjekket_dato):
-    """Formater heftelsesresultat for visning i UI."""
+_HEFTELSE_RISIKO_TYPER = {
+    "rettsstiftelsestype.utp": "high",   # Utleggspant (namsfogd/tvang)
+    "rettsstiftelsestype.sap": "medium", # Salgspant (vanlig bilfinansiering)
+    "rettsstiftelsestype.lea": "medium", # Leasing
+}
+
+
+def _heftelse_badge(antall, detaljer_json=None) -> str:
+    """Kompakt badge for tabellvisning med risikofarge."""
     if antall is None:
-        return '<span style="color: var(--label-ter);">Ikke sjekket</span>'
+        return '<span class="age-unknown">Ikke sjekket</span>'
     if antall == 0:
-        return '<span style="color: var(--green);">Ingen heftelser ✓</span>'
-    return f'<span style="color: var(--red); font-weight: bold;">⚠ {antall} heftelse{"r" if antall != 1 else ""}</span>'
+        return '<span class="age-fresh">Ingen ✓</span>'
+
+    detaljer = []
+    if detaljer_json:
+        try:
+            detaljer = json.loads(detaljer_json) if isinstance(detaljer_json, str) else detaljer_json
+        except (ValueError, TypeError):
+            pass
+
+    har_utlegg = any(
+        rs.get("type_kode") == "rettsstiftelsestype.utp" for rs in detaljer
+    )
+    cls = "price-down" if not har_utlegg else ""
+    label = f"⚠ {antall}" if har_utlegg else str(antall)
+    color = "var(--red)" if har_utlegg else "var(--orange)"
+    return f'<span style="color:{color}; font-weight:600;">{label} heftelse{"r" if antall != 1 else ""}</span>'
+
+
+def _heftelse_html(antall, sjekket_dato, detaljer_json=None) -> str:
+    """Formater heftelsesresultat for detaljside — viser full tinglysningsliste."""
+    if antall is None:
+        return '<span class="age-unknown">Ikke sjekket</span>'
+    if antall == 0:
+        return '<span class="age-fresh">Ingen heftelser ✓</span>'
+
+    detaljer = []
+    if detaljer_json:
+        try:
+            detaljer = json.loads(detaljer_json) if isinstance(detaljer_json, str) else detaljer_json
+        except (ValueError, TypeError):
+            pass
+
+    if not detaljer:
+        return f'<span style="color:var(--red); font-weight:bold;">⚠ {antall} heftelse{"r" if antall != 1 else ""}</span>'
+
+    lines = []
+    for rs in detaljer:
+        risiko = _HEFTELSE_RISIKO_TYPER.get(rs.get("type_kode", ""), "low")
+        if risiko == "high":
+            ikon = "🚨"
+            farge = "var(--red)"
+        elif risiko == "medium":
+            ikon = "⚠️"
+            farge = "var(--orange)"
+        else:
+            ikon = "ℹ️"
+            farge = "var(--label-sec)"
+
+        roller_tekst = ", ".join(
+            f"{r['rolle']}: {r['navn']}" for r in rs.get("roller", [])
+        )
+        belop_tekst = " / ".join(
+            f"{b['belop']:,.0f} {b['valuta']}".replace(",", " ")
+            for b in rs.get("belop", [])
+        )
+        lines.append(
+            f'<div style="margin-bottom:6px; color:{farge};">'
+            f'<strong>{ikon} {esc(rs["type"])}</strong>'
+            f'<span style="color:var(--label-sec); font-size:0.85em;"> — dok.nr {esc(rs["dok"])} ({esc(rs["dato"])})</span>'
+            f'<br><span style="font-size:0.85em; color:var(--label-sec);">{esc(roller_tekst)}</span>'
+            + (f'<br><span style="font-size:0.85em;">Krav: {esc(belop_tekst)}</span>' if belop_tekst else "")
+            + "</div>"
+        )
+    return "\n".join(lines)
 
 
 def _kilde_badge(kilde):
@@ -1800,7 +1949,7 @@ def view_detaljer():
         <div class="filter-group">
             <label>&nbsp;</label>
             <a href="detaljer?modell_fra=2017&pris_til=660000&min_nyttelast=550&min_lengde=600&max_lengde=800&min_tilhengervekt=2000&skjul_solgt=1"
-               class="btn" style="background: #1976d2; display:inline-block; text-align:center;">Familie-filter</a>
+               class="btn" style="display:inline-block; text-align:center;">Familie-filter</a>
         </div>
     </form>
     """
@@ -1850,7 +1999,7 @@ def view_detaljer():
                 <td class="price-up">{esc(r['HoyestePrisF'])}</td>
                 <td>{priskm_html}</td>
                 <td>{esc(r.get('Sengelayout')) or '—'}</td>
-                <td>{_heftelse_html(r.get('Heftelser'), r.get('HeftelseSjekket'))}</td>
+                <td>{_heftelse_badge(r.get('Heftelser'), r.get('HeftelserDetaljer'))}</td>
                 <td>{esc(lokasjon)}</td>
                 <td style="white-space:nowrap">{_kilde_lenker(r)}</td>
                 <td class="{esc(r['AlderClass'])}" data-sort-value="{esc(r['AlderSort'])}">{esc(r['Alder'])}</td>
@@ -1944,46 +2093,48 @@ def view_annonse(finnkode):
         svv_block = ""
         if har_svv:
             svv_block = f"""
-        <h3 style="color: var(--accent); margin: 20px 0 10px;">Kjøretøydata fra Statens vegvesen</h3>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin-bottom: 20px; font-size: 0.9em; background: rgba(0,0,0,0.15); padding: 16px; border-radius: 8px;">
-            <div><span style="color: var(--label-sec);">Kjennemerke:</span> <strong>{esc(kjennemerke) or '—'}</strong></div>
-            <div><span style="color: var(--label-sec);">Kjøretøytype:</span> {vs('SvvKjoretoytype')}</div>
-            <div><span style="color: var(--label-sec);">Merke (SVV):</span> {vs('SvvMerke')}</div>
-            <div><span style="color: var(--label-sec);">Handelsbetegnelse:</span> {vs('SvvHandelsbetegnelse')}</div>
-            <div><span style="color: var(--label-sec);">Typebetegnelse:</span> {vs('SvvTypebetegnelse')}</div>
-            <div><span style="color: var(--label-sec);">Årsmodell (SVV):</span> {vs('SvvAarsmodell')}</div>
-            <div><span style="color: var(--label-sec);">1. gang reg. Norge:</span> {vs('SvvForstegangNorge')}</div>
-            <div><span style="color: var(--label-sec);">Registreringsstatus:</span> {vs('SvvRegistreringsstatus')}</div>
-            <div><span style="color: var(--label-sec);">EU-kontroll frist:</span> {vs('SvvEuKontrollfrist')}</div>
-            <div><span style="color: var(--label-sec);">EU-kontroll sist:</span> {vs('SvvEuSistGodkjent')}</div>
-            <div><span style="color: var(--label-sec);">Farge:</span> {vs('SvvFarge')}</div>
-            <div><span style="color: var(--label-sec);">Karosseritype:</span> {vs('SvvKarosseritype')}</div>
-            <div><span style="color: var(--label-sec);">Antall dører:</span> {vs('SvvAntallDorer')}</div>
-            <div><span style="color: var(--label-sec);">Drivstoff (SVV):</span> {vs('SvvDrivstoff')}</div>
-            <div><span style="color: var(--label-sec);">Motorvolum:</span> {liter(v('SvvMotorvolum'))}</div>
-            <div><span style="color: var(--label-sec);">Motoreffekt:</span> {kw(v('SvvMotoreffekt'))}</div>
-            <div><span style="color: var(--label-sec);">Antall sylindre:</span> {vs('SvvAntallSylindre')}</div>
-            <div><span style="color: var(--label-sec);">Girkasse (SVV):</span> {vs('SvvGirkassetype')}</div>
-            <div><span style="color: var(--label-sec);">Antall gir:</span> {vs('SvvAntallGir')}</div>
-            <div><span style="color: var(--label-sec);">Maks hastighet:</span> {"—" if not v('SvvMaksHastighet') else f"{v('SvvMaksHastighet')} km/t"}</div>
-            <div><span style="color: var(--label-sec);">Elektrisk/hybrid:</span> {"Ja" if v('SvvElektrisk') else "—"}</div>
-            <div><span style="color: var(--label-sec);">Euro-klasse:</span> {vs('SvvEuroKlasse')}</div>
-            <div><span style="color: var(--label-sec);">Lengde (SVV):</span> {cm(v('SvvLengde'))}</div>
-            <div><span style="color: var(--label-sec);">Bredde (SVV):</span> {cm(v('SvvBredde'))}</div>
-            <div><span style="color: var(--label-sec);">Høyde (SVV):</span> {cm(v('SvvHoyde'))}</div>
-            <div><span style="color: var(--label-sec);">Egenvekt:</span> {kg(v('SvvEgenvekt'))}</div>
-            <div><span style="color: var(--label-sec);">Nyttelast (SVV):</span> {kg(v('SvvNyttelast'))}</div>
-            <div><span style="color: var(--label-sec);">Teknisk tillatt totalvekt:</span> {kg(v('SvvTotalvekt'))}</div>
-            <div><span style="color: var(--label-sec);">Tillatt totalvekt:</span> {kg(v('SvvTillattTotalvekt'))}</div>
-            <div><span style="color: var(--label-sec);">Tilhengervekt m/brems:</span> {kg(v('SvvTilhengervektMedBrems'))}</div>
-            <div><span style="color: var(--label-sec);">Tilhengervekt u/brems:</span> {kg(v('SvvTilhengervektUtenBrems'))}</div>
-            <div><span style="color: var(--label-sec);">Vertikal koplingslast:</span> {kg(v('SvvVertikalKoplingslast'))}</div>
-            <div><span style="color: var(--label-sec);">Sitteplasser (SVV):</span> {vs('SvvSitteplasser')}</div>
+        <h3 class="section-heading">Kjøretøydata fra Statens vegvesen</h3>
+        <div class="svv-panel">
+        <div class="svv-grid">
+            <div><span class="lbl">Kjennemerke:</span> <strong>{esc(kjennemerke) or '—'}</strong></div>
+            <div><span class="lbl">Kjøretøytype:</span> {vs('SvvKjoretoytype')}</div>
+            <div><span class="lbl">Merke (SVV):</span> {vs('SvvMerke')}</div>
+            <div><span class="lbl">Handelsbetegnelse:</span> {vs('SvvHandelsbetegnelse')}</div>
+            <div><span class="lbl">Typebetegnelse:</span> {vs('SvvTypebetegnelse')}</div>
+            <div><span class="lbl">Årsmodell (SVV):</span> {vs('SvvAarsmodell')}</div>
+            <div><span class="lbl">1. gang reg. Norge:</span> {vs('SvvForstegangNorge')}</div>
+            <div><span class="lbl">Registreringsstatus:</span> {vs('SvvRegistreringsstatus')}</div>
+            <div><span class="lbl">EU-kontroll frist:</span> {vs('SvvEuKontrollfrist')}</div>
+            <div><span class="lbl">EU-kontroll sist:</span> {vs('SvvEuSistGodkjent')}</div>
+            <div><span class="lbl">Farge:</span> {vs('SvvFarge')}</div>
+            <div><span class="lbl">Karosseritype:</span> {vs('SvvKarosseritype')}</div>
+            <div><span class="lbl">Antall dører:</span> {vs('SvvAntallDorer')}</div>
+            <div><span class="lbl">Drivstoff (SVV):</span> {vs('SvvDrivstoff')}</div>
+            <div><span class="lbl">Motorvolum:</span> {liter(v('SvvMotorvolum'))}</div>
+            <div><span class="lbl">Motoreffekt:</span> {kw(v('SvvMotoreffekt'))}</div>
+            <div><span class="lbl">Antall sylindre:</span> {vs('SvvAntallSylindre')}</div>
+            <div><span class="lbl">Girkasse (SVV):</span> {vs('SvvGirkassetype')}</div>
+            <div><span class="lbl">Antall gir:</span> {vs('SvvAntallGir')}</div>
+            <div><span class="lbl">Maks hastighet:</span> {"—" if not v('SvvMaksHastighet') else f"{v('SvvMaksHastighet')} km/t"}</div>
+            <div><span class="lbl">Elektrisk/hybrid:</span> {"Ja" if v('SvvElektrisk') else "—"}</div>
+            <div><span class="lbl">Euro-klasse:</span> {vs('SvvEuroKlasse')}</div>
+            <div><span class="lbl">Lengde (SVV):</span> {cm(v('SvvLengde'))}</div>
+            <div><span class="lbl">Bredde (SVV):</span> {cm(v('SvvBredde'))}</div>
+            <div><span class="lbl">Høyde (SVV):</span> {cm(v('SvvHoyde'))}</div>
+            <div><span class="lbl">Egenvekt:</span> {kg(v('SvvEgenvekt'))}</div>
+            <div><span class="lbl">Nyttelast (SVV):</span> {kg(v('SvvNyttelast'))}</div>
+            <div><span class="lbl">Teknisk tillatt totalvekt:</span> {kg(v('SvvTotalvekt'))}</div>
+            <div><span class="lbl">Tillatt totalvekt:</span> {kg(v('SvvTillattTotalvekt'))}</div>
+            <div><span class="lbl">Tilhengervekt m/brems:</span> {kg(v('SvvTilhengervektMedBrems'))}</div>
+            <div><span class="lbl">Tilhengervekt u/brems:</span> {kg(v('SvvTilhengervektUtenBrems'))}</div>
+            <div><span class="lbl">Vertikal koplingslast:</span> {kg(v('SvvVertikalKoplingslast'))}</div>
+            <div><span class="lbl">Sitteplasser (SVV):</span> {vs('SvvSitteplasser')}</div>
+        </div>
         </div>
         """
         elif kjennemerke:
             svv_block = f"""
-        <div style="font-size: 0.85em; color: var(--label-sec); margin: 10px 0 20px; padding: 10px 16px; background: rgba(0,0,0,0.1); border-radius: 6px;">
+        <div class="kjennemerke-hint">
             Kjennemerke: <strong>{esc(kjennemerke)}</strong> — ingen Vegvesen-data hentet ennå.
         </div>
         """
@@ -1999,25 +2150,20 @@ def view_annonse(finnkode):
         stjerne = "⭐" if er_favoritt else "☆"
         stjerne_title = "Fjern fra favoritter" if er_favoritt else "Legg til i favoritter"
         html = f"""
-        <div style="margin-bottom: 15px; display:flex; justify-content:space-between; align-items:center;">
-            <a href="javascript:history.back()" style="font-size: 0.85em;">&larr; Tilbake</a>
-            <a href="../mine-biler" style="font-size: 0.85em;">⭐ Mine biler</a>
+        <div class="detail-nav">
+            <a href="javascript:history.back()">&larr; Tilbake</a>
+            <a href="../mine-biler">⭐ Mine biler</a>
         </div>
-        <h2 style="margin-bottom: 10px; color: var(--label); display:flex; align-items:center; gap:12px;">
+        <h2 class="detail-title">
             <a href="{esc(ad_url)}" target="_blank">{esc(ad.get('Annonsenavn', finnkode))}</a>
             {_kilde_badge(kilde)}{ekstra_lenke}
-            <button id="fav-btn" onclick="toggleFavoritt({esc(finnkode)})"
-                    title="{esc(stjerne_title)}"
-                    style="background:none; border:none; font-size:1.5em; cursor:pointer; line-height:1;"
-            >{stjerne}</button>
+            <button id="fav-btn" class="fav-btn" onclick="toggleFavoritt({esc(finnkode)})"
+                    title="{esc(stjerne_title)}">{stjerne}</button>
         </h2>
         {img_html}
-        <div style="margin-bottom: 16px;">
-            <div style="font-size: 0.8em; color: var(--label-sec); margin-bottom: 4px;">Notat</div>
-            <textarea id="notat-felt" rows="3"
-                      style="width: 100%; max-width: 600px; background: var(--bg);
-                             color: var(--label); border: 1px solid var(--separator-op);
-                             border-radius: 6px; padding: 8px; font-size: 0.9em; resize: vertical;"
+        <div class="notat-section">
+            <div class="notat-label">Notat</div>
+            <textarea id="notat-felt" class="notat-textarea" rows="3"
                       placeholder="Skriv ditt notat om denne bilen her..."
             >{notat_verdi}</textarea>
             <br>
@@ -2051,32 +2197,32 @@ def view_annonse(finnkode):
             }});
         }}
         </script>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin-bottom: 20px; font-size: 0.9em;">
-            <div><span style="color: var(--label-sec);">{"AutodbId" if kilde == "autodb" else "Finnkode"}:</span> <a href="{esc(ad_url)}" target="_blank">{esc(ad.get("AutodbId") if kilde == "autodb" else finnkode)}</a></div>
-            <div><span style="color: var(--label-sec);">Modell:</span> {esc(ad.get('Modell')) or '—'}</div>
-            <div><span style="color: var(--label-sec);">Pris:</span> {esc(format_price(pris))}</div>
-            <div><span style="color: var(--label-sec);">Km:</span> {esc(ad.get('Kilometerstand')) or '—'}</div>
-            <div><span style="color: var(--label-sec);">Type:</span> {esc(ad.get('Typebobil')) or '—'}</div>
-            <div><span style="color: var(--label-sec);">Girkasse:</span> {esc(ad.get('Girkasse')) or '—'}</div>
-            <div><span style="color: var(--label-sec);">Nyttelast (annonse):</span> {esc(ad.get('Nyttelast')) or '—'}</div>
-            <div><span style="color: var(--label-sec);">Nyttelast (SVV):</span> {kg(v('SvvNyttelast'))}</div>
-            <div><span style="color: var(--label-sec);">Tilhengervekt m/brems:</span> {kg(v('SvvTilhengervektMedBrems'))}</div>
-            <div><span style="color: var(--label-sec);">Lokasjon:</span> {esc(lokasjon) or '—'}</div>
-            <div><span style="color: var(--label-sec);">Sist sett:</span> <span class="{esc(alder_cls)}">{esc(alder_txt)}</span></div>
-            <div><span style="color: var(--label-sec);">Sengelayout:</span> {esc(ad.get('Sengelayout')) or '—'}</div>
-            <div><span style="color: var(--label-sec);">Vendbare forseter:</span> {"Ja" if ad.get('VendbareForerstoler') == 1 else ("Nei" if ad.get('VendbareForerstoler') == 0 else "—")}</div>
-            <div><span style="color: var(--label-sec);">Heftelser (Brreg):</span> {_heftelse_html(ad.get('Heftelser'), ad.get('HeftelseSjekket'))}</div>
+        <div class="info-grid">
+            <div><span class="lbl">{"AutodbId" if kilde == "autodb" else "Finnkode"}:</span> <a href="{esc(ad_url)}" target="_blank">{esc(ad.get("AutodbId") if kilde == "autodb" else finnkode)}</a></div>
+            <div><span class="lbl">Modell:</span> {esc(ad.get('Modell')) or '—'}</div>
+            <div><span class="lbl">Pris:</span> {esc(format_price(pris))}</div>
+            <div><span class="lbl">Km:</span> {esc(ad.get('Kilometerstand')) or '—'}</div>
+            <div><span class="lbl">Type:</span> {esc(ad.get('Typebobil')) or '—'}</div>
+            <div><span class="lbl">Girkasse:</span> {esc(ad.get('Girkasse')) or '—'}</div>
+            <div><span class="lbl">Nyttelast (annonse):</span> {esc(ad.get('Nyttelast')) or '—'}</div>
+            <div><span class="lbl">Nyttelast (SVV):</span> {kg(v('SvvNyttelast'))}</div>
+            <div><span class="lbl">Tilhengervekt m/brems:</span> {kg(v('SvvTilhengervektMedBrems'))}</div>
+            <div><span class="lbl">Lokasjon:</span> {esc(lokasjon) or '—'}</div>
+            <div><span class="lbl">Sist sett:</span> <span class="{esc(alder_cls)}">{esc(alder_txt)}</span></div>
+            <div><span class="lbl">Sengelayout:</span> {esc(ad.get('Sengelayout')) or '—'}</div>
+            <div><span class="lbl">Vendbare forseter:</span> {"Ja" if ad.get('VendbareForerstoler') == 1 else ("Nei" if ad.get('VendbareForerstoler') == 0 else "—")}</div>
+            <div><span class="lbl">Heftelser (Brreg):</span> {_heftelse_html(ad.get('Heftelser'), ad.get('HeftelseSjekket'), ad.get('HeftelserDetaljer'))}</div>
         </div>
         {svv_block}
-        <div style="color: var(--label-sec); font-size: 0.85em; margin-bottom: 20px;">
+        <div class="beskrivelse">
             {esc(ad.get('Beskrivelse', ''))}
         </div>
         """
 
         if chart_data and len(chart_data) > 1:
             html += f"""
-            <h3 style="color: var(--accent); margin-bottom: 10px;">Prishistorikk</h3>
-            <div style="max-width: 700px; margin-bottom: 20px;">
+            <h3 class="section-heading">Prishistorikk</h3>
+            <div class="chart-container">
                 <canvas id="prisChart"></canvas>
             </div>
             <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
@@ -2124,15 +2270,15 @@ def view_annonse(finnkode):
             </script>
             """
         elif prishistorikk:
-            html += '<p style="color: var(--label-sec);">Kun ett datapunkt i prishistorikken.</p>'
+            html += '<p class="note-secondary">Kun ett datapunkt i prishistorikken.</p>'
         else:
-            html += '<p style="color: var(--label-sec);">Ingen prishistorikk registrert.</p>'
+            html += '<p class="note-secondary">Ingen prishistorikk registrert.</p>'
 
         # Prisendringer-tabell
         if prishistorikk:
             html += """
-            <h3 style="color: var(--accent); margin: 20px 0 10px;">Prisendringer</h3>
-            <table style="max-width: 500px;">
+            <h3 class="section-heading">Prisendringer</h3>
+            <table class="prishistorikk-tabell">
                 <thead><tr><th>Tidspunkt</th><th>Pris</th></tr></thead>
                 <tbody>
             """
@@ -2254,7 +2400,7 @@ def view_mine_biler():
             <td>{nyttelast}</td>
             <td>{esc(r.get('Sengelayout')) or '—'}</td>
             <td>{eu_frist}</td>
-            <td>{_heftelse_html(r.get('Heftelser'), None)}</td>
+            <td>{_heftelse_badge(r.get('Heftelser'), r.get('HeftelserDetaljer'))}</td>
             <td style="white-space:nowrap">{_kilde_lenker(r)}</td>
             <td>
                 <span class="notat-vis" data-fk="{esc(finnkode)}"
