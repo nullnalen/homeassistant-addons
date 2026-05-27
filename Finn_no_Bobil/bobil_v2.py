@@ -1251,10 +1251,8 @@ def detect_vendbare_forseter(tekst: str) -> int | None:
 
 BRREG_URL = "https://rettsstiftelser.brreg.no/nb/oppslag/motorvogn/{kjennemerke}"
 
-# Mønster som matcher "Det er ingen oppføringer"-teksten i HTML
-_BRREG_INGEN_RE = re.compile(r"Det er ingen oppf", re.IGNORECASE)
-# Mønster som teller antall heftelser fra heading-teksten, f.eks. "3 rettsstiftelser"
-_BRREG_ANTALL_RE = re.compile(r"(\d+)\s+rettsstiftels", re.IGNORECASE)
+# Brreg bruker "Det er X oppføringer" (X=tall eller "ingen") for begge utfall
+_BRREG_OPPFORINGER_RE = re.compile(r"Det er (?:(ingen)|(\d+)) oppf", re.IGNORECASE)
 
 
 async def fetch_heftelser(session: aiohttp.ClientSession, kjennemerke: str) -> int | None:
@@ -1283,13 +1281,12 @@ async def fetch_heftelser(session: aiohttp.ClientSession, kjennemerke: str) -> i
                 return None
             html = await resp.text()
 
-            if _BRREG_INGEN_RE.search(html):
-                logger.info(f"Brreg {regnr}: ingen heftelser")
-                return 0
-
-            m = _BRREG_ANTALL_RE.search(html)
+            m = _BRREG_OPPFORINGER_RE.search(html)
             if m:
-                antall = int(m.group(1))
+                if m.group(1):  # "ingen"
+                    logger.info(f"Brreg {regnr}: ingen heftelser")
+                    return 0
+                antall = int(m.group(2))
                 logger.info(f"Brreg {regnr}: {antall} heftelse(r) funnet")
                 return antall
 
