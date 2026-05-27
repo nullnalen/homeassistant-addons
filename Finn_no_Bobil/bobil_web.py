@@ -183,10 +183,20 @@ def enrich_row_with_prices(r: dict) -> None:
     r["LavestePrisF"] = format_price(laveste)
     r["HoyestePrisF"] = format_price(hoyeste)
     if hoyeste and pris and hoyeste > pris:
-        pct = round((hoyeste - pris) / hoyeste * 100, 1)
+        diff = hoyeste - pris
+        pct = round(diff / hoyeste * 100, 1)
+        diff_f = f"{diff:,.0f}".replace(",", " ")
         r["Prisfall"] = f"-{pct}%"
+        r["PrisfallHtml"] = (
+            f'<span class="prisfall-cell">'
+            f'<span class="prisfall-pil">↓</span>'
+            f'<span class="prisfall-kr"> {diff_f} kr</span>'
+            f'<span class="prisfall-pct">({pct}%)</span>'
+            f'</span>'
+        )
     else:
         r["Prisfall"] = None
+        r["PrisfallHtml"] = '<span class="note-secondary">—</span>'
 
 
 _db_pool = None
@@ -1114,19 +1124,19 @@ TEMPLATE = """
 
         /* ── Filter panel ── */
         .filter-panel {
-            display: flex;
-            gap: 10px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+            gap: 8px 10px;
             margin-bottom: 16px;
-            flex-wrap: wrap;
-            align-items: flex-end;
+            align-items: end;
         }
         .filter-group {
             display: flex;
             flex-direction: column;
-            gap: 5px;
+            gap: 4px;
         }
         .filter-group label {
-            font-size: 0.72rem;
+            font-size: 0.68rem;
             color: var(--label-sec);
             font-weight: 600;
             text-transform: uppercase;
@@ -1135,14 +1145,14 @@ TEMPLATE = """
         .filter-group select,
         .filter-group input[type="number"],
         .search-form input {
-            padding: 8px 12px;
+            padding: 7px 10px;
             border-radius: var(--radius-sm);
             border: 0.5px solid var(--separator-op);
             background: var(--bg-grouped);
             color: var(--label);
-            font-size: 0.85rem;
+            font-size: 0.83rem;
             font-family: inherit;
-            min-width: 120px;
+            width: 100%;
             -webkit-appearance: none;
             appearance: none;
             transition: border-color 0.15s;
@@ -1152,6 +1162,15 @@ TEMPLATE = """
         .search-form input:focus {
             outline: none;
             border-color: var(--accent);
+        }
+        .filter-checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.83rem;
+            color: var(--label-sec);
+            cursor: pointer;
+            padding: 7px 0;
         }
 
         /* ── Search ── */
@@ -1216,13 +1235,17 @@ TEMPLATE = """
             font-size: 0.9rem;
         }
 
-        /* ── Truncate ── */
+        /* ── Truncate / nowrap ── */
         .truncate {
             max-width: 280px;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
         }
+        .nowrap { white-space: nowrap; }
+        .inline-form { display: inline; }
+        .row-divider td { border-top: 2px solid var(--separator-op) !important; }
+        .mt-4 { margin-top: 4px; }
 
         /* ── Status bar ── */
         .status-bar {
@@ -1279,9 +1302,10 @@ TEMPLATE = """
         .info-grid .lbl { color: var(--label-sec); }
 
         .svv-panel {
-            background: rgba(0,0,0,0.15);
+            background: var(--bg-grouped);
+            border: 0.5px solid var(--separator-op);
             padding: 16px;
-            border-radius: var(--radius-sm);
+            border-radius: var(--radius-md);
             margin-bottom: 20px;
         }
         .svv-grid {
@@ -1295,8 +1319,9 @@ TEMPLATE = """
         .section-heading {
             color: var(--accent);
             margin: 20px 0 10px;
-            font-size: 1.1rem;
+            font-size: 1.05rem;
             font-weight: 600;
+            letter-spacing: -0.2px;
         }
 
         .kjennemerke-hint {
@@ -1304,7 +1329,8 @@ TEMPLATE = """
             color: var(--label-sec);
             margin: 10px 0 20px;
             padding: 10px 16px;
-            background: rgba(0,0,0,0.1);
+            background: var(--bg-grouped);
+            border: 0.5px solid var(--separator-op);
             border-radius: var(--radius-sm);
         }
 
@@ -1330,31 +1356,54 @@ TEMPLATE = """
             cursor: pointer;
             line-height: 1;
             padding: 0;
+            transition: transform 0.15s;
         }
+        .fav-btn:hover { transform: scale(1.2); }
         .notat-section {
-            margin-bottom: 16px;
+            margin-bottom: 20px;
+            padding: 14px 16px;
+            background: var(--bg-grouped);
+            border: 0.5px solid var(--separator-op);
+            border-radius: var(--radius-md);
         }
         .notat-label {
-            font-size: 0.8em;
+            font-size: 0.72rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
             color: var(--label-sec);
-            margin-bottom: 4px;
+            margin-bottom: 8px;
         }
         .notat-textarea {
             width: 100%;
             max-width: 600px;
-            background: var(--bg);
+            background: var(--bg-elevated);
             color: var(--label);
-            border: 1px solid var(--separator-op);
+            border: 0.5px solid var(--separator-op);
             border-radius: var(--radius-sm);
-            padding: 8px;
+            padding: 8px 10px;
             font-size: 0.9em;
             resize: vertical;
             font-family: inherit;
+            transition: border-color 0.15s;
+        }
+        .notat-textarea:focus { outline: none; border-color: var(--accent); }
+        .notat-save-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 8px;
+        }
+        .notat-status {
+            font-size: 0.8em;
+            color: var(--label-sec);
         }
         .beskrivelse {
             color: var(--label-sec);
             font-size: 0.85em;
+            line-height: 1.6;
             margin-bottom: 20px;
+            white-space: pre-wrap;
         }
         .chart-container {
             max-width: 700px;
@@ -1365,7 +1414,85 @@ TEMPLATE = """
         }
         .note-secondary {
             color: var(--label-sec);
+            font-size: 0.85em;
+            font-style: italic;
         }
+
+        /* ── Heftelse pills ── */
+        .heft-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .heft-ok    { background: rgba(48,209,88,0.15);  color: var(--green);  }
+        .heft-warn  { background: rgba(255,159,10,0.15); color: var(--orange); }
+        .heft-high  { background: rgba(255,69,58,0.18);  color: var(--red);    }
+        .heft-none  { color: var(--label-ter); font-size: 0.8rem; }
+
+        /* ── Heftelse detail items ── */
+        .heft-item { margin-bottom: 10px; padding: 10px 12px; border-radius: var(--radius-sm); border-left: 3px solid; }
+        .heft-item-high   { background: rgba(255,69,58,0.08);  border-color: var(--red); }
+        .heft-item-medium { background: rgba(255,159,10,0.08); border-color: var(--orange); }
+        .heft-item-low    { background: rgba(120,120,128,0.1); border-color: var(--separator-op); }
+        .heft-item-type   { font-weight: 600; font-size: 0.9em; }
+        .heft-type-high   { color: var(--red); }
+        .heft-type-medium { color: var(--orange); }
+        .heft-type-low    { color: var(--label-sec); }
+        .heft-item-meta   { font-size: 0.8em; color: var(--label-sec); margin-top: 2px; }
+        .heft-item-krav   { font-size: 0.82em; color: var(--label); margin-top: 2px; }
+
+        /* ── Prisfall indikator ── */
+        .prisfall-cell { white-space: nowrap; }
+        .prisfall-pil  { color: var(--green); font-weight: 700; }
+        .prisfall-kr   { font-weight: 600; color: var(--green); }
+        .prisfall-pct  { font-size: 0.78em; color: var(--label-sec); margin-left: 3px; }
+
+        /* ── Thumb-kolonne ── */
+        .thumb-cell { width: 56px; padding: 6px 8px 6px 4px !important; }
+        .thumb {
+            width: 52px;
+            height: 39px;
+            object-fit: cover;
+            border-radius: 6px;
+            display: block;
+            background: var(--bg-grouped);
+        }
+
+        /* ── Inline notat-felt i Mine biler ── */
+        .notat-inline-textarea {
+            width: 200px;
+            background: var(--bg);
+            color: var(--label);
+            border: 0.5px solid var(--separator-op);
+            border-radius: var(--radius-sm);
+            padding: 4px 6px;
+            font-size: 0.83em;
+            font-family: inherit;
+            resize: vertical;
+        }
+        .notat-vis {
+            cursor: pointer;
+            color: var(--label-sec);
+            font-size: 0.85em;
+        }
+        .notat-vis:hover { color: var(--label); }
+
+        /* ── Ekstern lenke-rad på detaljside ── */
+        .ext-links { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+
+        /* ── Btn variants ── */
+        .btn-sm   { padding: 5px 12px; font-size: 0.78rem; }
+        .btn-danger { background: var(--red); }
+        .btn-ghost {
+            background: transparent;
+            color: var(--accent);
+            border: 0.5px solid var(--accent);
+        }
+        .btn-ghost:hover { background: var(--accent-dim); opacity: 1; }
 
         /* ── Mobile ── */
         @media (max-width: 680px) {
@@ -1448,7 +1575,7 @@ TEMPLATE = """
                 {% if last_scrape %}&nbsp;·&nbsp;Oppdatert {{ last_scrape }}{% endif %}
                 {% if scraper_running %}&nbsp;·&nbsp;Scraping pågår…{% endif %}
             </span>
-            <form method="POST" action="{{ bp }}scrape" style="display:inline">
+            <form method="POST" action="{{ bp }}scrape" class="inline-form">
                 <button type="submit" class="btn" {{ 'disabled' if scraper_running }}>Oppdater nå</button>
             </form>
         </div>
@@ -1494,11 +1621,11 @@ _HEFTELSE_RISIKO_TYPER = {
 
 
 def _heftelse_badge(antall, detaljer_json=None) -> str:
-    """Kompakt badge for tabellvisning med risikofarge."""
+    """Kompakt pill-badge for tabellvisning med risikofarge."""
     if antall is None:
-        return '<span class="age-unknown">Ikke sjekket</span>'
+        return '<span class="heft-none">— ikke sjekket</span>'
     if antall == 0:
-        return '<span class="age-fresh">Ingen ✓</span>'
+        return '<span class="heft-pill heft-ok">✓ Ingen</span>'
 
     detaljer = []
     if detaljer_json:
@@ -1507,21 +1634,19 @@ def _heftelse_badge(antall, detaljer_json=None) -> str:
         except (ValueError, TypeError):
             pass
 
-    har_utlegg = any(
-        rs.get("type_kode") == "rettsstiftelsestype.utp" for rs in detaljer
-    )
-    cls = "price-down" if not har_utlegg else ""
-    label = f"⚠ {antall}" if har_utlegg else str(antall)
-    color = "var(--red)" if har_utlegg else "var(--orange)"
-    return f'<span style="color:{color}; font-weight:600;">{label} heftelse{"r" if antall != 1 else ""}</span>'
+    har_utlegg = any(rs.get("type_kode") == "rettsstiftelsestype.utp" for rs in detaljer)
+    label = f"⚠ {antall}" if har_utlegg else f"△ {antall}"
+    cls = "heft-high" if har_utlegg else "heft-warn"
+    enhet = "heftelse" if antall == 1 else "heftelser"
+    return f'<span class="heft-pill {cls}">{label} {enhet}</span>'
 
 
 def _heftelse_html(antall, sjekket_dato, detaljer_json=None) -> str:
     """Formater heftelsesresultat for detaljside — viser full tinglysningsliste."""
     if antall is None:
-        return '<span class="age-unknown">Ikke sjekket</span>'
+        return '<span class="heft-none">Ikke sjekket ennå</span>'
     if antall == 0:
-        return '<span class="age-fresh">Ingen heftelser ✓</span>'
+        return '<span class="heft-pill heft-ok">✓ Ingen heftelser</span>'
 
     detaljer = []
     if detaljer_json:
@@ -1531,35 +1656,41 @@ def _heftelse_html(antall, sjekket_dato, detaljer_json=None) -> str:
             pass
 
     if not detaljer:
-        return f'<span style="color:var(--red); font-weight:bold;">⚠ {antall} heftelse{"r" if antall != 1 else ""}</span>'
+        enhet = "heftelse" if antall == 1 else "heftelser"
+        return f'<span class="heft-pill heft-high">⚠ {antall} {enhet}</span>'
 
     lines = []
     for rs in detaljer:
         risiko = _HEFTELSE_RISIKO_TYPER.get(rs.get("type_kode", ""), "low")
         if risiko == "high":
             ikon = "🚨"
-            farge = "var(--red)"
+            item_cls = "heft-item-high"
+            type_color = "var(--red)"
         elif risiko == "medium":
             ikon = "⚠️"
-            farge = "var(--orange)"
+            item_cls = "heft-item-medium"
+            type_color = "var(--orange)"
         else:
             ikon = "ℹ️"
-            farge = "var(--label-sec)"
+            item_cls = "heft-item-low"
+            type_color = "var(--label-sec)"
 
-        roller_tekst = ", ".join(
+        roller_tekst = " · ".join(
             f"{r['rolle']}: {r['navn']}" for r in rs.get("roller", [])
         )
         belop_tekst = " / ".join(
-            f"{b['belop']:,.0f} {b['valuta']}".replace(",", " ")
+            f"{b['belop']:,.0f} {b['valuta']}".replace(",", " ")
             for b in rs.get("belop", [])
         )
+        type_cls = {"high": "heft-type-high", "medium": "heft-type-medium", "low": "heft-type-low"}.get(risiko, "heft-type-low")
+        krav_html = f'<div class="heft-item-krav">Krav: {esc(belop_tekst)}</div>' if belop_tekst else ""
         lines.append(
-            f'<div style="margin-bottom:6px; color:{farge};">'
-            f'<strong>{ikon} {esc(rs["type"])}</strong>'
-            f'<span style="color:var(--label-sec); font-size:0.85em;"> — dok.nr {esc(rs["dok"])} ({esc(rs["dato"])})</span>'
-            f'<br><span style="font-size:0.85em; color:var(--label-sec);">{esc(roller_tekst)}</span>'
-            + (f'<br><span style="font-size:0.85em;">Krav: {esc(belop_tekst)}</span>' if belop_tekst else "")
-            + "</div>"
+            f'<div class="heft-item {item_cls}">'
+            f'<div class="heft-item-type {type_cls}">{ikon} {esc(rs["type"])}</div>'
+            f'<div class="heft-item-meta">Dok.nr {esc(rs["dok"])} · {esc(rs["dato"])}</div>'
+            f'<div class="heft-item-meta">{esc(roller_tekst)}</div>'
+            f'{krav_html}'
+            f'</div>'
         )
     return "\n".join(lines)
 
@@ -1677,7 +1808,7 @@ def view_prisendringer():
                 <td>{f"{r['SvvNyttelast']} kg" if r.get('SvvNyttelast') else '—'}</td>
                 <td>{f"{r['SvvTilhengervektMedBrems']} kg" if r.get('SvvTilhengervektMedBrems') else '—'}</td>
                 <td><strong>{esc(r['AntallEndringer'])}</strong></td>
-                <td style="white-space:nowrap">{_kilde_lenker(r)}</td>
+                <td class="nowrap">{_kilde_lenker(r)}</td>
                 <td class="{esc(r['AlderClass'])}" data-sort-value="{esc(r['AlderSort'])}">{esc(r['Alder'])}</td>
             </tr>
         """
@@ -1728,7 +1859,7 @@ def view_kjopsscore():
                 <td>{nyttelast}</td>
                 <td>{esc(r['Sengelayout']) or '—'}</td>
                 <td>{esc(r['DagerPaaMarkedet'])}</td>
-                <td style="white-space:nowrap">{_kilde_lenker(r)}</td>
+                <td class="nowrap">{_kilde_lenker(r)}</td>
                 <td>{treff_html}</td>
             </tr>
         """
@@ -1757,9 +1888,9 @@ def view_prisutvikling():
     prev_modell = None
     for r in rows:
         modell_display = r["Modell"] if r["Modell"] != prev_modell else ""
-        style = ' style="border-top: 2px solid var(--separator-op)"' if modell_display else ""
+        row_cls = ' class="row-divider"' if modell_display else ""
         html += f"""
-            <tr{style}>
+            <tr{row_cls}>
                 <td><strong>{esc(modell_display)}</strong></td>
                 <td>{esc(r['Periode'])}</td>
                 <td>{esc(r['GjSnittPrisF'])}</td>
@@ -1822,7 +1953,7 @@ def view_sok():
                     <td class="price-down">{esc(r['LavestePrisF'])}</td>
                     <td class="price-up">{esc(r['HoyestePrisF'])}</td>
                     <td class="{esc(r['AlderClass'])}" data-sort-value="{esc(r['AlderSort'])}">{esc(r['Alder'])}</td>
-                    <td style="white-space:nowrap">{_kilde_lenker(r)}</td>
+                    <td class="nowrap">{_kilde_lenker(r)}</td>
                     <td>{treff_html}</td>
                 </tr>
             """
@@ -1938,7 +2069,7 @@ def view_detaljer():
         </div>
         <div class="filter-group">
             <label>&nbsp;</label>
-            <label style="font-size: 0.85em; text-transform: none; letter-spacing: normal; cursor: pointer;">
+            <label class="filter-checkbox-label">
                 <input type="checkbox" name="skjul_solgt" value="1" {skjul_checked}> Skjul solgt
             </label>
         </div>
@@ -1949,7 +2080,7 @@ def view_detaljer():
         <div class="filter-group">
             <label>&nbsp;</label>
             <a href="detaljer?modell_fra=2017&pris_til=660000&min_nyttelast=550&min_lengde=600&max_lengde=800&min_tilhengervekt=2000&skjul_solgt=1"
-               class="btn" style="display:inline-block; text-align:center;">Familie-filter</a>
+               class="btn btn-ghost">Familie-filter</a>
         </div>
     </form>
     """
@@ -1962,14 +2093,13 @@ def view_detaljer():
     <table>
         <thead>
             <tr>
-                <th></th>
+                <th class="thumb-cell"></th>
                 <th class="sortable">Annonse</th>
                 <th class="sortable" data-sort="number">Modell</th>
                 <th class="sortable" data-sort="number">Km</th>
                 <th class="sortable" data-sort="number">Pris</th>
-                <th class="sortable" data-sort="number">Laveste</th>
-                <th class="sortable" data-sort="number">Høyeste</th>
-                <th class="sortable" data-sort="number">Pris/km</th>
+                <th class="sortable" data-sort="number">Prisfall</th>
+                <th class="sortable" data-sort="number">Nyttelast</th>
                 <th class="sortable">Seng</th>
                 <th class="sortable">Heftelser</th>
                 <th class="sortable">Lokasjon</th>
@@ -1980,7 +2110,6 @@ def view_detaljer():
         <tbody>
     """
     for r in rows:
-        priskm_html = esc(r['PrisPerKm']) if r["PrisPerKm"] is not None else "—"
         is_sold = bool(r.get("Solgt")) or "solgt" in str(r.get("Pris", "")).lower()
         row_class = ' class="sold"' if is_sold else ""
         sold_badge = '<span class="sold-badge">Solgt</span>' if is_sold else ""
@@ -1988,20 +2117,20 @@ def view_detaljer():
         img_url = r.get("ImageURL", "") or ""
         thumb_html = f'<img src="{esc(img_url)}" class="thumb" alt="">' if img_url else ""
         lokasjon = r.get("Lokasjon", "") or ""
+        nyttelast = f"{r['SvvNyttelast']} kg" if r.get("SvvNyttelast") else "—"
         html += f"""
             <tr{row_class}>
-                <td>{thumb_html}</td>
+                <td class="thumb-cell">{thumb_html}</td>
                 <td class="truncate"><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Annonsenavn'] or r['Finnkode'])}</a>{sold_badge}{ny_badge}{_kilde_badge(r.get('Kilde'))}</td>
                 <td>{esc(r['Modell'])}</td>
                 <td>{esc(r.get('Kilometerstand'))}</td>
                 <td>{esc(r['NaaverendePris'])}</td>
-                <td class="price-down">{esc(r['LavestePrisF'])}</td>
-                <td class="price-up">{esc(r['HoyestePrisF'])}</td>
-                <td>{priskm_html}</td>
+                <td>{r.get('PrisfallHtml') or '<span class="note-secondary">—</span>'}</td>
+                <td>{nyttelast}</td>
                 <td>{esc(r.get('Sengelayout')) or '—'}</td>
                 <td>{_heftelse_badge(r.get('Heftelser'), r.get('HeftelserDetaljer'))}</td>
                 <td>{esc(lokasjon)}</td>
-                <td style="white-space:nowrap">{_kilde_lenker(r)}</td>
+                <td class="nowrap">{_kilde_lenker(r)}</td>
                 <td class="{esc(r['AlderClass'])}" data-sort-value="{esc(r['AlderSort'])}">{esc(r['Alder'])}</td>
             </tr>
         """
@@ -2141,35 +2270,33 @@ def view_annonse(finnkode):
 
         kilde = ad.get("Kilde") or "finn"
         autodb_id = ad.get("AutodbId")
-        ekstra_lenke = ""
-        if kilde == "finn+autodb" and autodb_id:
-            ekstra_lenke = f' &nbsp;<a href="https://www.autodb.no/view/{esc(autodb_id)}" target="_blank" style="font-size:0.7em;">[autodb]</a>'
-        elif kilde == "autodb" and autodb_id:
-            ekstra_lenke = ""  # ad_url er allerede autodb-lenken
 
         stjerne = "⭐" if er_favoritt else "☆"
         stjerne_title = "Fjern fra favoritter" if er_favoritt else "Legg til i favoritter"
+
+        ext_links_html = _kilde_lenker(ad)
+
         html = f"""
         <div class="detail-nav">
             <a href="javascript:history.back()">&larr; Tilbake</a>
             <a href="../mine-biler">⭐ Mine biler</a>
         </div>
         <h2 class="detail-title">
-            <a href="{esc(ad_url)}" target="_blank">{esc(ad.get('Annonsenavn', finnkode))}</a>
-            {_kilde_badge(kilde)}{ekstra_lenke}
+            {esc(ad.get('Annonsenavn', finnkode))}
+            {_kilde_badge(kilde)}
             <button id="fav-btn" class="fav-btn" onclick="toggleFavoritt({esc(finnkode)})"
                     title="{esc(stjerne_title)}">{stjerne}</button>
         </h2>
+        <div class="ext-links">{ext_links_html}</div>
         {img_html}
         <div class="notat-section">
             <div class="notat-label">Notat</div>
             <textarea id="notat-felt" class="notat-textarea" rows="3"
-                      placeholder="Skriv ditt notat om denne bilen her..."
-            >{notat_verdi}</textarea>
-            <br>
-            <button class="btn" style="margin-top:6px; font-size:0.82em;"
-                    onclick="lagreNotat({esc(finnkode)})">Lagre notat</button>
-            <span id="notat-status" style="font-size:0.8em; color:var(--label-sec); margin-left:8px;"></span>
+                      placeholder="Skriv ditt notat om denne bilen her...">{notat_verdi}</textarea>
+            <div class="notat-save-row">
+                <button class="btn btn-sm" onclick="lagreNotat({esc(finnkode)})">Lagre notat</button>
+                <span id="notat-status" class="notat-status"></span>
+            </div>
         </div>
         <script>
         const _apiBase = '{esc(bp)}';
@@ -2256,12 +2383,12 @@ def view_annonse(finnkode):
                             y: {{
                                 ticks: {{
                                     callback: v => (v/1000) + 'k',
-                                    color: '#9e9e9e'
+                                    color: 'rgba(235,235,245,0.6)'
                                 }},
                                 grid: {{ color: 'rgba(255,255,255,0.05)' }}
                             }},
                             x: {{
-                                ticks: {{ color: '#9e9e9e', maxRotation: 45 }},
+                                ticks: {{ color: 'rgba(235,235,245,0.6)', maxRotation: 45 }},
                                 grid: {{ color: 'rgba(255,255,255,0.05)' }}
                             }}
                         }}
@@ -2364,7 +2491,7 @@ def view_mine_biler():
         return render_page("mine-biler", '<p class="no-data">Ingen favoritter ennå — klikk stjernen på en annonse for å legge til.</p>')
 
     html = '<table><thead><tr>'
-    html += '<th></th>'
+    html += '<th class="thumb-cell"></th>'
     html += '<th class="sortable">Annonse</th>'
     html += '<th class="sortable" data-sort="number">Modell</th>'
     html += '<th class="sortable" data-sort="number">Pris</th>'
@@ -2384,13 +2511,13 @@ def view_mine_biler():
         solgt_badge = '<span class="sold-badge">Solgt</span>' if r.get("Solgt") else ""
         nyttelast = f"{r['SvvNyttelast']} kg" if r.get("SvvNyttelast") else "—"
         eu_frist = esc(r.get("SvvEuKontrollfrist") or "—")
-        prisfall = f'<span class="price-down">{esc(r["Prisfall"])}</span>' if r.get("Prisfall") else "—"
+        prisfall = r.get("PrisfallHtml") or '<span class="note-secondary">—</span>'
         notat_tekst = esc(r.get("Notat") or "")
         finnkode = r["Finnkode"]
 
         html += f"""
         <tr>
-            <td>{thumb}</td>
+            <td class="thumb-cell">{thumb}</td>
             <td class="truncate">
                 <a href="annonse/{esc(finnkode)}">{esc(r['Annonsenavn'])}</a>{solgt_badge}{_kilde_badge(r.get('Kilde'))}
             </td>
@@ -2401,23 +2528,20 @@ def view_mine_biler():
             <td>{esc(r.get('Sengelayout')) or '—'}</td>
             <td>{eu_frist}</td>
             <td>{_heftelse_badge(r.get('Heftelser'), r.get('HeftelserDetaljer'))}</td>
-            <td style="white-space:nowrap">{_kilde_lenker(r)}</td>
+            <td class="nowrap">{_kilde_lenker(r)}</td>
             <td>
                 <span class="notat-vis" data-fk="{esc(finnkode)}"
-                      style="cursor:pointer; color: var(--label-sec); font-size:0.85em;"
                       onclick="toggleNotat({esc(finnkode)})">{notat_tekst or '<em>Legg til notat...</em>'}</span>
                 <div id="notat-form-{esc(finnkode)}" style="display:none; margin-top:4px;">
                     <textarea id="notat-txt-{esc(finnkode)}" rows="2"
-                              style="width:200px; background:var(--bg); color:var(--label);
-                                     border:1px solid var(--separator-op); border-radius:4px; padding:4px; font-size:0.85em;"
-                    >{notat_tekst}</textarea>
+                              class="notat-inline-textarea">{notat_tekst}</textarea>
                     <br>
-                    <button class="btn" style="margin-top:4px; font-size:0.75em;"
+                    <button class="btn btn-sm mt-4"
                             onclick="lagreNotat({esc(finnkode)})">Lagre</button>
                 </div>
             </td>
             <td>
-                <button class="btn" style="background:var(--red); font-size:0.75em;"
+                <button class="btn btn-sm btn-danger"
                         onclick="fjernFavoritt({esc(finnkode)}, this)">✕</button>
             </td>
         </tr>
