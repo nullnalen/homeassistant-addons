@@ -1401,7 +1401,8 @@ async def enrich_ads_with_heftelser(session: aiohttp.ClientSession, ads: list[di
         if ad["Finnkode"] in har_sjekket:
             return ad
         kjennemerke = ad.get("Kjennemerke", "") or ""
-        if not kjennemerke:
+        # Norsk kjennemerke: 2 bokstaver + 5 siffer (7 tegn). VIN er 17 tegn — hopp over.
+        if not kjennemerke or len(kjennemerke) != 7:
             return ad
         async with semaphore:
             await asyncio.sleep(0.3)

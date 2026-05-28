@@ -427,8 +427,8 @@ def get_total_count():
 # View-funksjoner
 # ---------------------------------------------------------------------------
 
-def get_prisendringer():
-    """View 1: Alle annonser (Finn + autodb), sortert etter siste prisendring, ellers første gang sett."""
+def get_annonser():
+    """Alle annonser (Finn + autodb) med prishistorikk og kjøpsscore, sortert etter siste endring."""
     conn = get_db()
     if not conn:
         return []
@@ -436,8 +436,9 @@ def get_prisendringer():
         cur = conn.cursor(dictionary=True)
         cur.execute("""
             SELECT b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert,
-                   b.Opprettet,
+                   b.Opprettet, b.Kilometerstand, b.Beskrivelse, b.Sengelayout,
                    b.SvvNyttelast, b.SvvTilhengervektMedBrems,
+                   b.SvvEuKontrollfrist, b.SvvEuSistGodkjent, b.SvvAarsmodell, b.SvvMerke,
                    COUNT(p.Pris) AS AntallEndringer,
                    MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
                    MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris,
@@ -445,23 +446,35 @@ def get_prisendringer():
                    b.URL
             FROM bobil b
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
+            WHERE (b.Solgt = 0 OR b.Solgt IS NULL)
             GROUP BY b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris,
-                     b.Oppdatert, b.Opprettet, b.SvvNyttelast, b.SvvTilhengervektMedBrems, b.URL
+                     b.Oppdatert, b.Opprettet, b.Kilometerstand, b.Beskrivelse, b.Sengelayout,
+                     b.SvvNyttelast, b.SvvTilhengervektMedBrems,
+                     b.SvvEuKontrollfrist, b.SvvEuSistGodkjent, b.SvvAarsmodell, b.SvvMerke, b.URL
             ORDER BY COALESCE(MAX(p.Tidspunkt), b.Opprettet) DESC
         """)
         rows = cur.fetchall()
+        now = datetime.now()
+        keywords = ["køye", "senkeseng", "familie", "vendbare seter", "kapteinstoler", "alkove"]
         for r in rows:
             enrich_row_with_prices(r)
             r["AdURL"] = _ad_url(r)
-            # Siste prisendring vises om den finnes, ellers Opprettet (første gang sett i DB)
             alder_val = r.get("SistePrisendring") or r.get("Opprettet") or ""
             if not alder_val:
                 r["Alder"], r["AlderClass"], r["AlderSort"] = "—", "age-unknown", 99999
             else:
                 r["Alder"], r["AlderClass"], r["AlderSort"] = format_age(alder_val)
+            dato = parse_norwegian_date(r.get("Oppdatert") or "")
+            r["DagerPaaMarkedet"] = (now - dato).days if dato else 0
+            r["ErNy"] = r["DagerPaaMarkedet"] <= 1
+            tekst = f"{r.get('Annonsenavn', '')} {r.get('Beskrivelse', '')}".lower()
+            r["Soketreff"] = ", ".join(kw for kw in keywords if kw in tekst)
+            if not r.get("HoyestePris"):
+                r["HoyestePris"] = parse_price(r.get("Pris"))
+            r["KjopsScore"] = beregn_kjopsscore(r, now)
         return rows
     except Exception as e:
-        logger.error("Feil i get_prisendringer: %s\n%s", e, traceback.format_exc())
+        logger.error("Feil i get_annonser: %s\n%s", e, traceback.format_exc())
         return []
     finally:
         conn.close()
@@ -567,84 +580,11 @@ def beregn_kjopsscore(r: dict, now: datetime) -> int:
 
 
 def get_kjopsscore():
-    """View 2: Kjøpsscore — rangert liste med full scoring-algoritme."""
-    conn = get_db()
-    if not conn:
-        return []
-    try:
-        cur = conn.cursor(dictionary=True)
-        cur.execute("""
-            SELECT b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris, b.Kilometerstand,
-                   b.Oppdatert, b.Beskrivelse, b.Sengelayout,
-                   b.SvvNyttelast, b.SvvEuKontrollfrist, b.SvvEuSistGodkjent,
-                   b.SvvAarsmodell, b.SvvMerke,
-                   COUNT(p.Pris) AS AntallEndringer,
-                   MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
-                   MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris
-            FROM bobil b
-            LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
-            WHERE (b.Solgt = 0 OR b.Solgt IS NULL)
-            GROUP BY b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris,
-                     b.Kilometerstand, b.Oppdatert, b.Beskrivelse, b.Sengelayout,
-                     b.SvvNyttelast, b.SvvEuKontrollfrist, b.SvvEuSistGodkjent,
-                     b.SvvAarsmodell, b.SvvMerke
-        """)
-        rows = cur.fetchall()
-
-        results = []
-        now = datetime.now()
-        keywords = ["køye", "senkeseng", "familie", "vendbare seter", "kapteinstoler", "alkove"]
-
-        for r in rows:
-            pris = parse_price(r["Pris"])
-            hoyeste = r["HoyestePris"]
-            laveste = r["LavestePris"]
-            dato = parse_norwegian_date(r["Oppdatert"])
-
-            if not pris:
-                continue
-
-            dager = (now - dato).days if dato else 0
-            if dato and dager > 90:
-                continue
-
-            if not hoyeste:
-                hoyeste = pris
-            if not laveste:
-                laveste = pris
-
-            r["HoyestePris"] = hoyeste
-            score = beregn_kjopsscore(r, now)
-
-            tekst = f"{r['Annonsenavn']} {r.get('Beskrivelse', '')}".lower()
-            treff = [kw for kw in keywords if kw.lower() in tekst]
-
-            results.append({
-                "Finnkode": r["Finnkode"],
-                "AutodbId": r.get("AutodbId"),
-                "Kilde": r.get("Kilde") or "finn",
-                "Annonsenavn": r["Annonsenavn"],
-                "Modell": r["Modell"],
-                "NaaverendePris": format_price(pris),
-                "LavestePris": format_price(laveste),
-                "HoyestePris": format_price(hoyeste),
-                "AntallEndringer": r["AntallEndringer"],
-                "DagerPaaMarkedet": dager,
-                "KjopsScore": score,
-                "Nyttelast": r.get("SvvNyttelast"),
-                "Sengelayout": r.get("Sengelayout") or "",
-                "Soketreff": ", ".join(treff) if treff else "",
-                "AdURL": _ad_url(r),
-                "ErNy": dager <= 1,
-            })
-
-        results.sort(key=lambda x: x["KjopsScore"], reverse=True)
-        return results[:100]
-    except Exception as e:
-        logger.error("Feil i get_kjopsscore: %s\n%s", e, traceback.format_exc())
-        return []
-    finally:
-        conn.close()
+    """Returnerer annonser sortert etter kjøpsscore (synkende)."""
+    rows = get_annonser()
+    rows = [r for r in rows if parse_price(r.get("Pris"))]
+    rows.sort(key=lambda x: x["KjopsScore"], reverse=True)
+    return rows[:100]
 
 
 def get_prisutvikling():
@@ -1091,7 +1031,10 @@ TEMPLATE = """
         /* ── Price colors ── */
         .price-down { color: var(--green); }
         .price-up   { color: var(--red); }
-        .score      { font-weight: 700; color: var(--accent); }
+        .score      { font-weight: 700; display: inline-block; min-width: 2.2em; text-align: center; border-radius: 4px; padding: 1px 5px; }
+        .score-high { background: #d4edda; color: #155724; }
+        .score-mid  { background: #fff3cd; color: #856404; }
+        .score-low  { background: #f8d7da; color: #721c24; }
 
         /* ── Age colors ── */
         .age-fresh   { color: var(--green); }
@@ -1563,8 +1506,7 @@ TEMPLATE = """
             <span class="subtitle">Finn.no · AutoDB oversikt</span>
         </div>
         <nav class="tabs">
-            <a href="{{ bp }}prisendringer" class="tab {{ 'active' if active_tab == 'prisendringer' }}">Prisendringer</a>
-            <a href="{{ bp }}kjopsscore" class="tab {{ 'active' if active_tab == 'kjopsscore' }}">Kjøpsscore</a>
+            <a href="{{ bp }}annonser" class="tab {{ 'active' if active_tab == 'annonser' }}">Annonser</a>
             <a href="{{ bp }}prisutvikling" class="tab {{ 'active' if active_tab == 'prisutvikling' }}">Prisutvikling</a>
             <a href="{{ bp }}sok" class="tab {{ 'active' if active_tab == 'sok' }}">Søk</a>
             <a href="{{ bp }}detaljer" class="tab {{ 'active' if active_tab == 'detaljer' }}">Detaljert</a>
@@ -1778,101 +1720,67 @@ def render_page(active_tab, content_html, base_path=""):
 
 @app.route("/")
 def index():
-    return redirect("prisendringer")
+    return redirect("annonser")
 
 
 @app.route("/prisendringer")
-def view_prisendringer():
-    rows = get_prisendringer()
-    if not rows:
-        return render_page("prisendringer", '<p class="no-data">Ingen prisendringer funnet.</p>')
-
-    html = """
-    <table>
-        <thead>
-            <tr>
-                <th class="sortable">Annonse</th>
-                <th class="sortable" data-sort="number">Modell</th>
-                <th class="sortable" data-sort="number">Pris</th>
-                <th class="sortable" data-sort="number">Laveste</th>
-                <th class="sortable" data-sort="number">Høyeste</th>
-                <th class="sortable" data-sort="number">Nyttelast</th>
-                <th class="sortable" data-sort="number">Tilh. m/brems</th>
-                <th class="sortable" data-sort="number">Endringer</th>
-                <th>Lenke</th>
-                <th class="sortable sort-desc" data-sort="number">Sist sett</th>
-            </tr>
-        </thead>
-        <tbody>
-    """
-    for r in rows:
-        html += f"""
-            <tr>
-                <td class="truncate"><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Annonsenavn'])}</a>{_kilde_badge(r.get('Kilde'))}</td>
-                <td>{esc(r['Modell'])}</td>
-                <td>{esc(r['NaaverendePris'])}</td>
-                <td class="price-down">{esc(r['LavestePrisF'])}</td>
-                <td class="price-up">{esc(r['HoyestePrisF'])}</td>
-                <td>{f"{r['SvvNyttelast']} kg" if r.get('SvvNyttelast') else '—'}</td>
-                <td>{f"{r['SvvTilhengervektMedBrems']} kg" if r.get('SvvTilhengervektMedBrems') else '—'}</td>
-                <td><strong>{esc(r['AntallEndringer'])}</strong></td>
-                <td class="nowrap">{_kilde_lenker(r)}</td>
-                <td class="{esc(r['AlderClass'])}" data-sort-value="{esc(r['AlderSort'])}">{esc(r['Alder'])}</td>
-            </tr>
-        """
-    html += "</tbody></table>"
-    return render_page("prisendringer", html)
-
-
 @app.route("/kjopsscore")
-def view_kjopsscore():
-    rows = get_kjopsscore()
+@app.route("/annonser")
+def view_annonser():
+    rows = get_annonser()
     if not rows:
-        return render_page("kjopsscore", '<p class="no-data">Ingen aktive annonser med score.</p>')
+        return render_page("annonser", '<p class="no-data">Ingen annonser funnet.</p>')
 
     html = """
     <table>
         <thead>
             <tr>
-                <th class="sortable sort-desc" data-sort="number">Score</th>
+                <th class="sortable" data-sort="number">Score</th>
                 <th class="sortable">Annonse</th>
                 <th class="sortable" data-sort="number">Modell</th>
                 <th class="sortable" data-sort="number">Pris</th>
                 <th class="sortable" data-sort="number">Laveste</th>
                 <th class="sortable" data-sort="number">Høyeste</th>
                 <th class="sortable" data-sort="number">Nyttelast</th>
+                <th class="sortable" data-sort="number">Tilh.</th>
                 <th class="sortable">Seng</th>
+                <th class="sortable" data-sort="number">Endringer</th>
                 <th class="sortable" data-sort="number">Dager</th>
                 <th>Lenke</th>
-                <th>Treff</th>
+                <th class="sortable sort-desc" data-sort="number">Sist endret</th>
             </tr>
         </thead>
         <tbody>
     """
     for r in rows:
         treff_html = ""
-        if r["Soketreff"]:
+        if r.get("Soketreff"):
             for t in r["Soketreff"].split(", "):
                 treff_html += f'<span class="keyword-tag">{esc(t)}</span>'
         ny_badge = '<span class="new-badge">NY</span>' if r.get("ErNy") else ""
-        nyttelast = f"{r['Nyttelast']} kg" if r.get("Nyttelast") else "—"
+        score = r.get("KjopsScore", 0)
+        score_cls = "score-high" if score >= 70 else ("score-mid" if score >= 40 else "score-low")
+        nyttelast = f"{r['SvvNyttelast']} kg" if r.get('SvvNyttelast') else '—'
+        tilhenger = f"{r['SvvTilhengervektMedBrems']} kg" if r.get('SvvTilhengervektMedBrems') else '—'
         html += f"""
             <tr>
-                <td class="score">{esc(r['KjopsScore'])}</td>
-                <td class="truncate"><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Annonsenavn'])}</a>{ny_badge}{_kilde_badge(r.get('Kilde'))}</td>
+                <td><span class="score {score_cls}">{score}</span></td>
+                <td class="truncate"><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Annonsenavn'])}</a>{ny_badge}{_kilde_badge(r.get('Kilde'))}{treff_html}</td>
                 <td>{esc(r['Modell'])}</td>
                 <td>{esc(r['NaaverendePris'])}</td>
-                <td class="price-down">{esc(r['LavestePris'])}</td>
-                <td class="price-up">{esc(r['HoyestePris'])}</td>
+                <td class="price-down">{esc(r['LavestePrisF'])}</td>
+                <td class="price-up">{esc(r['HoyestePrisF'])}</td>
                 <td>{nyttelast}</td>
-                <td>{esc(r['Sengelayout']) or '—'}</td>
+                <td>{tilhenger}</td>
+                <td>{esc(r.get('Sengelayout') or '—')}</td>
+                <td><strong>{esc(r['AntallEndringer'])}</strong></td>
                 <td>{esc(r['DagerPaaMarkedet'])}</td>
                 <td class="nowrap">{_kilde_lenker(r)}</td>
-                <td>{treff_html}</td>
+                <td class="{esc(r['AlderClass'])}" data-sort-value="{esc(r['AlderSort'])}">{esc(r['Alder'])}</td>
             </tr>
         """
     html += "</tbody></table>"
-    return render_page("kjopsscore", html)
+    return render_page("annonser", html)
 
 
 @app.route("/prisutvikling")
@@ -2441,7 +2349,7 @@ def trigger_scrape():
     if not scraper_status["running"]:
         t = threading.Thread(target=run_scraper_background, daemon=True)
         t.start()
-    return redirect(request.referrer or "prisendringer")
+    return redirect(request.referrer or "annonser")
 
 
 @app.route("/api/favoritt/<int:finnkode>", methods=["POST"])
