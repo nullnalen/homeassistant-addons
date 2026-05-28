@@ -313,6 +313,32 @@ def ensure_db_columns():
         except Exception as e:
             logger.error("Feil ved migrering av solgt-status: %s", e)
 
+        # Dedupliser prisendringer: behold kun første rad per (Finnkode, Pris)
+        # så MAX(Tidspunkt) reflekterer første gang en pris ble sett, ikke siste scrape
+        try:
+            cur.execute("""
+                DELETE p FROM prisendringer p
+                INNER JOIN prisendringer p2
+                    ON p.Finnkode = p2.Finnkode
+                    AND LEFT(p.Pris, 50) = LEFT(p2.Pris, 50)
+                    AND p.Tidspunkt > p2.Tidspunkt
+            """)
+            if cur.rowcount > 0:
+                logger.info("Slettet %d duplikate prisendring-rader.", cur.rowcount)
+        except Exception as e:
+            logger.error("Feil ved deduplisering av prisendringer: %s", e)
+
+        # UNIQUE-nøkkel på prisendringer(Finnkode, Pris) slik at INSERT IGNORE
+        # faktisk ignorerer duplikater og ikke skriver ny timestamp ved uendret pris
+        try:
+            cur.execute(
+                "ALTER TABLE prisendringer ADD UNIQUE KEY uq_finnkode_pris (Finnkode, Pris(50))"
+            )
+            logger.info("La til UNIQUE KEY uq_finnkode_pris på prisendringer.")
+        except mysql.connector.Error as e:
+            if e.errno not in (1061, 1062):  # 1061=dup key name, 1062=dup entry
+                logger.error("Feil ved ALTER TABLE prisendringer UNIQUE: %s", e)
+
         # Indekser for raskere spørringer
         indexes = [
             ("idx_prisendringer_finnkode", "prisendringer", "Finnkode"),
