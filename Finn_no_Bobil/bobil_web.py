@@ -10,7 +10,7 @@ import re
 import logging
 import threading
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import mysql.connector
 from mysql.connector import pooling
@@ -749,8 +749,11 @@ def get_detaljer(page=1, per_page=50, filters=None):
             if filters.get("girkasse"):
                 where_parts.append("b.Girkasse = %s")
                 params.append(filters["girkasse"])
-            if filters.get("skjul_solgt"):
+            solgt_filter = filters.get("solgt_filter", "aktive")
+            if solgt_filter == "aktive":
                 where_parts.append("(b.Solgt = 0 OR b.Solgt IS NULL)")
+            elif solgt_filter == "solgte":
+                where_parts.append("b.Solgt = 1")
             min_nyttelast = safe_int(filters.get("min_nyttelast"))
             if min_nyttelast is not None:
                 where_parts.append("b.SvvNyttelast >= %s")
@@ -781,7 +784,7 @@ def get_detaljer(page=1, per_page=50, filters=None):
         cur.execute(f"""
             SELECT b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Beskrivelse, b.Modell,
                    b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
-                   b.Oppdatert, b.Pris, b.URL, b.ImageURL, b.Lokasjon, b.Solgt,
+                   b.Oppdatert, b.Pris, b.URL, b.ImageURL, b.Lokasjon, b.Solgt, b.SistSett,
                    b.Sengelayout, b.Heftelser, b.HeftelseSjekket, b.HeftelserDetaljer,
                    COUNT(p.Pris) AS AntallEndringer,
                    MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
@@ -791,7 +794,7 @@ def get_detaljer(page=1, per_page=50, filters=None):
             {where_clause}
             GROUP BY b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Beskrivelse, b.Modell,
                      b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
-                     b.Oppdatert, b.Pris, b.URL, b.ImageURL, b.Lokasjon, b.Solgt,
+                     b.Oppdatert, b.Pris, b.URL, b.ImageURL, b.Lokasjon, b.Solgt, b.SistSett,
                      b.Sengelayout, b.Heftelser, b.HeftelseSjekket, b.HeftelserDetaljer
             ORDER BY STR_TO_DATE(b.Oppdatert, '%d. %m. %Y %H:%i') DESC
             LIMIT %s OFFSET %s
@@ -1151,6 +1154,21 @@ TEMPLATE = """
             padding: 7px 0;
         }
 
+        .filter-radio-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 4px 0;
+        }
+        .filter-radio-group label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.83rem;
+            color: var(--label-sec);
+            cursor: pointer;
+        }
+
         /* ── Search ── */
         .search-form {
             display: flex;
@@ -1421,7 +1439,9 @@ TEMPLATE = """
         .heft-type-medium { color: var(--orange); }
         .heft-type-low    { color: var(--label-sec); }
         .heft-item-meta   { font-size: 0.8em; color: var(--label-sec); margin-top: 2px; }
-        .heft-item-krav   { font-size: 0.82em; color: var(--label); margin-top: 2px; }
+        .heft-item-krav        { font-size: 0.82em; color: var(--label); margin-top: 2px; }
+        .heft-item-salgspant   { font-size: 0.82em; color: #155724; background: rgba(40,167,69,0.1); border-radius: 4px; padding: 3px 6px; margin-top: 4px; }
+        .salgspant-hint        { font-size: 0.78em; color: #155724; background: rgba(40,167,69,0.12); border-radius: 4px; padding: 1px 5px; margin-left: 4px; white-space: nowrap; }
 
         /* ── Prisfall indikator ── */
         .prisfall-cell { white-space: nowrap; }
@@ -1597,6 +1617,26 @@ _HEFTELSE_RISIKO_TYPER = {
 }
 
 
+def _salgspant_alder_tekst(dato_str: str) -> str:
+    """Returner menneskelig alder-tekst for en salgspant-dato, eller tom streng."""
+    if not dato_str:
+        return ""
+    try:
+        dato = datetime.strptime(dato_str[:10], "%Y-%m-%d").date()
+        today = datetime.now().date()
+        maneder = (today.year - dato.year) * 12 + (today.month - dato.month)
+        if maneder < 1:
+            return "denne måneden"
+        if maneder == 1:
+            return "for 1 mnd siden"
+        if maneder < 24:
+            return f"for {maneder} mnd siden"
+        ar = round(maneder / 12)
+        return f"for {ar} år siden"
+    except (ValueError, TypeError):
+        return ""
+
+
 def _heftelse_badge(antall, detaljer_json=None) -> str:
     """Kompakt pill-badge for tabellvisning med risikofarge."""
     if antall is None:
@@ -1615,7 +1655,23 @@ def _heftelse_badge(antall, detaljer_json=None) -> str:
     label = f"⚠ {antall}" if har_utlegg else f"△ {antall}"
     cls = "heft-high" if har_utlegg else "heft-warn"
     enhet = "heftelse" if antall == 1 else "heftelser"
-    return f'<span class="heft-pill {cls}">{label} {enhet}</span>'
+    badge = f'<span class="heft-pill {cls}">{label} {enhet}</span>'
+
+    # Vis salgspant-hint om det finnes en nylig registrert salgspant (< 36 mnd)
+    salgspant = [rs for rs in detaljer if rs.get("type_kode") == "rettsstiftelsestype.sap"]
+    if salgspant:
+        nyeste = sorted(salgspant, key=lambda r: r.get("dato", ""), reverse=True)[0]
+        dato = nyeste.get("dato", "")
+        alder = _salgspant_alder_tekst(dato)
+        belop_liste = nyeste.get("belop", [])
+        belop_str = ""
+        if belop_liste:
+            b = belop_liste[0]
+            belop_str = f" · ~{int(b['belop']):,} kr".replace(",", " ")
+        if alder and dato >= (datetime.now().date() - timedelta(days=365 * 3)).isoformat():
+            badge += f' <span class="salgspant-hint" title="Salgspant registrert {dato}">🔑 Kjøpt {alder}{belop_str}</span>'
+
+    return badge
 
 
 def _heftelse_html(antall, sjekket_dato, detaljer_json=None) -> str:
@@ -1661,12 +1717,33 @@ def _heftelse_html(antall, sjekket_dato, detaljer_json=None) -> str:
         )
         type_cls = {"high": "heft-type-high", "medium": "heft-type-medium", "low": "heft-type-low"}.get(risiko, "heft-type-low")
         krav_html = f'<div class="heft-item-krav">Krav: {esc(belop_tekst)}</div>' if belop_tekst else ""
+
+        # Salgspant-signal: vis alder og beløp som klartekst kjøpsindikator
+        salgspant_signal = ""
+        if rs.get("type_kode") == "rettsstiftelsestype.sap":
+            alder = _salgspant_alder_tekst(rs.get("dato", ""))
+            belop_liste = rs.get("belop", [])
+            if alder and belop_liste:
+                kjopesum = f"{int(belop_liste[0]['belop']):,} kr".replace(",", " ")
+                salgspant_signal = (
+                    f'<div class="heft-item-salgspant">'
+                    f'🔑 Registrert {alder} — indikerer sannsynlig kjøpesum: ~{kjopesum}'
+                    f'</div>'
+                )
+            elif alder:
+                salgspant_signal = (
+                    f'<div class="heft-item-salgspant">'
+                    f'🔑 Registrert {alder} — indikerer nylig kjøp'
+                    f'</div>'
+                )
+
         lines.append(
             f'<div class="heft-item {item_cls}">'
             f'<div class="heft-item-type {type_cls}">{ikon} {esc(rs["type"])}</div>'
             f'<div class="heft-item-meta">Dok.nr {esc(rs["dok"])} · {esc(rs["dato"])}</div>'
             f'<div class="heft-item-meta">{esc(roller_tekst)}</div>'
             f'{krav_html}'
+            f'{salgspant_signal}'
             f'</div>'
         )
     return "\n".join(lines)
@@ -1903,7 +1980,7 @@ def view_detaljer():
         "pris_til": request.args.get("pris_til", ""),
         "type": request.args.get("type", ""),
         "girkasse": request.args.get("girkasse", ""),
-        "skjul_solgt": request.args.get("skjul_solgt", ""),
+        "solgt_filter": request.args.get("solgt_filter", "aktive"),
         "min_nyttelast": request.args.get("min_nyttelast", ""),
         "min_lengde": request.args.get("min_lengde", ""),
         "max_lengde": request.args.get("max_lengde", ""),
@@ -1935,7 +2012,7 @@ def view_detaljer():
         f'<option value="{g}" {"selected" if filters.get("girkasse") == g else ""}>{g}</option>'
         for g in filter_opts["girkasser"]
     )
-    skjul_checked = "checked" if filters.get("skjul_solgt") else ""
+    solgt_filter_val = filters.get("solgt_filter", "aktive")
     senge_valg = filters.get("sengelayout", "")
     senge_options = "".join(
         f'<option value="{s}" {"selected" if senge_valg == s else ""}>{s}</option>'
@@ -1998,10 +2075,12 @@ def view_detaljer():
             </select>
         </div>
         <div class="filter-group">
-            <label>&nbsp;</label>
-            <label class="filter-checkbox-label">
-                <input type="checkbox" name="skjul_solgt" value="1" {skjul_checked}> Skjul solgt
-            </label>
+            <label>Annonser</label>
+            <div class="filter-radio-group">
+                <label><input type="radio" name="solgt_filter" value="aktive" {"checked" if solgt_filter_val == "aktive" else ""}> Bare aktive</label>
+                <label><input type="radio" name="solgt_filter" value="alle" {"checked" if solgt_filter_val == "alle" else ""}> Alle</label>
+                <label><input type="radio" name="solgt_filter" value="solgte" {"checked" if solgt_filter_val == "solgte" else ""}> Bare solgte</label>
+            </div>
         </div>
         <div class="filter-group">
             <label>&nbsp;</label>
@@ -2009,7 +2088,7 @@ def view_detaljer():
         </div>
         <div class="filter-group">
             <label>&nbsp;</label>
-            <a href="detaljer?modell_fra=2017&pris_til=660000&min_nyttelast=550&min_lengde=600&max_lengde=800&min_tilhengervekt=2000&skjul_solgt=1"
+            <a href="detaljer?modell_fra=2017&pris_til=660000&min_nyttelast=550&min_lengde=600&max_lengde=800&min_tilhengervekt=2000&solgt_filter=aktive"
                class="btn btn-ghost">Familie-filter</a>
         </div>
     </form>
@@ -2019,7 +2098,9 @@ def view_detaljer():
         html += '<p class="no-data">Ingen annonser matcher filtrene.</p>'
         return render_page("detaljer", html)
 
-    html += """
+    vis_solgte = solgt_filter_val == "solgte"
+    solgt_th = '<th class="sortable" data-sort="number">Sist sett</th>' if vis_solgte else '<th class="sortable">Heftelser</th>'
+    html += f"""
     <table>
         <thead>
             <tr>
@@ -2031,10 +2112,10 @@ def view_detaljer():
                 <th class="sortable" data-sort="number">Prisfall</th>
                 <th class="sortable" data-sort="number">Nyttelast</th>
                 <th class="sortable">Seng</th>
-                <th class="sortable">Heftelser</th>
+                {solgt_th}
                 <th class="sortable">Lokasjon</th>
                 <th>Lenke</th>
-                <th class="sortable" data-sort="number">Sist sett</th>
+                <th class="sortable" data-sort="number">{"Fjernet" if vis_solgte else "Sist sett"}</th>
             </tr>
         </thead>
         <tbody>
@@ -2048,6 +2129,21 @@ def view_detaljer():
         thumb_html = f'<img src="{esc(img_url)}" class="thumb" alt="">' if img_url else ""
         lokasjon = r.get("Lokasjon", "") or ""
         nyttelast = f"{r['SvvNyttelast']} kg" if r.get("SvvNyttelast") else "—"
+        if vis_solgte:
+            sist_sett_raw = r.get("SistSett")
+            if sist_sett_raw:
+                try:
+                    ss_dt = datetime.strptime(str(sist_sett_raw)[:19], "%Y-%m-%d %H:%M:%S")
+                    sist_sett_td = f'<td class="note-secondary">{ss_dt.strftime("%-d. %b %Y")}</td>'
+                except (ValueError, TypeError):
+                    sist_sett_td = f'<td class="note-secondary">{esc(str(sist_sett_raw)[:10])}</td>'
+            else:
+                sist_sett_td = '<td class="note-secondary">—</td>'
+            ekstra_col = sist_sett_td
+            alder_col = f'<td class="{esc(r["AlderClass"])}" data-sort-value="{esc(r["AlderSort"])}">{esc(r["Alder"])}</td>'
+        else:
+            ekstra_col = f'<td>{_heftelse_badge(r.get("Heftelser"), r.get("HeftelserDetaljer"))}</td>'
+            alder_col = f'<td class="{esc(r["AlderClass"])}" data-sort-value="{esc(r["AlderSort"])}">{esc(r["Alder"])}</td>'
         html += f"""
             <tr{row_class}>
                 <td class="thumb-cell">{thumb_html}</td>
@@ -2058,10 +2154,10 @@ def view_detaljer():
                 <td>{r.get('PrisfallHtml') or '<span class="note-secondary">—</span>'}</td>
                 <td>{nyttelast}</td>
                 <td>{esc(r.get('Sengelayout')) or '—'}</td>
-                <td>{_heftelse_badge(r.get('Heftelser'), r.get('HeftelserDetaljer'))}</td>
+                {ekstra_col}
                 <td>{esc(lokasjon)}</td>
                 <td class="nowrap">{_kilde_lenker(r)}</td>
-                <td class="{esc(r['AlderClass'])}" data-sort-value="{esc(r['AlderSort'])}">{esc(r['Alder'])}</td>
+                {alder_col}
             </tr>
         """
     html += "</tbody></table>"
