@@ -450,7 +450,8 @@ def get_prisendringer():
         for r in rows:
             enrich_row_with_prices(r)
             r["AdURL"] = _ad_url(r)
-            r["Alder"], r["AlderClass"], r["AlderSort"] = format_age(r.get("Oppdatert", ""))
+            sist_sett_val = r.get("SistSett") or r.get("Oppdatert") or ""
+            r["Alder"], r["AlderClass"], r["AlderSort"] = format_age(sist_sett_val)
         return rows
     except Exception as e:
         logger.error("Feil i get_prisendringer: %s\n%s", e, traceback.format_exc())
