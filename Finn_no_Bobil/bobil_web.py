@@ -1739,43 +1739,30 @@ def view_annonser():
                 <th class="sortable">Annonse</th>
                 <th class="sortable" data-sort="number">Modell</th>
                 <th class="sortable" data-sort="number">Pris</th>
-                <th class="sortable" data-sort="number">Laveste</th>
-                <th class="sortable" data-sort="number">Høyeste</th>
+                <th class="sortable" data-sort="number">Prisfall</th>
                 <th class="sortable" data-sort="number">Nyttelast</th>
-                <th class="sortable" data-sort="number">Tilh.</th>
-                <th class="sortable">Seng</th>
                 <th class="sortable" data-sort="number">Endringer</th>
                 <th class="sortable" data-sort="number">Dager</th>
-                <th>Lenke</th>
                 <th class="sortable sort-desc" data-sort="number">Sist endret</th>
             </tr>
         </thead>
         <tbody>
     """
     for r in rows:
-        treff_html = ""
-        if r.get("Soketreff"):
-            for t in r["Soketreff"].split(", "):
-                treff_html += f'<span class="keyword-tag">{esc(t)}</span>'
         ny_badge = '<span class="new-badge">NY</span>' if r.get("ErNy") else ""
         score = r.get("KjopsScore", 0)
         score_cls = "score-high" if score >= 70 else ("score-mid" if score >= 40 else "score-low")
         nyttelast = f"{r['SvvNyttelast']} kg" if r.get('SvvNyttelast') else '—'
-        tilhenger = f"{r['SvvTilhengervektMedBrems']} kg" if r.get('SvvTilhengervektMedBrems') else '—'
         html += f"""
             <tr>
                 <td><span class="score {score_cls}">{score}</span></td>
-                <td class="truncate"><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Annonsenavn'])}</a>{ny_badge}{_kilde_badge(r.get('Kilde'))}{treff_html}</td>
+                <td class="truncate"><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Annonsenavn'])}</a>{ny_badge}{_kilde_badge(r.get('Kilde'))}</td>
                 <td>{esc(r['Modell'])}</td>
                 <td>{esc(r['NaaverendePris'])}</td>
-                <td class="price-down">{esc(r['LavestePrisF'])}</td>
-                <td class="price-up">{esc(r['HoyestePrisF'])}</td>
+                <td>{r.get('PrisfallHtml') or '<span class="note-secondary">—</span>'}</td>
                 <td>{nyttelast}</td>
-                <td>{tilhenger}</td>
-                <td>{esc(r.get('Sengelayout') or '—')}</td>
                 <td><strong>{esc(r['AntallEndringer'])}</strong></td>
                 <td>{esc(r['DagerPaaMarkedet'])}</td>
-                <td class="nowrap">{_kilde_lenker(r)}</td>
                 <td class="{esc(r['AlderClass'])}" data-sort-value="{esc(r['AlderSort'])}">{esc(r['Alder'])}</td>
             </tr>
         """
