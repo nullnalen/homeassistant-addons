@@ -428,7 +428,7 @@ def get_total_count():
 # ---------------------------------------------------------------------------
 
 def get_prisendringer():
-    """View 1: Alle annonser (Finn + autodb), sortert etter sist publisert/endret."""
+    """View 1: Alle annonser (Finn + autodb), sortert etter siste prisendring, ellers første gang sett."""
     conn = get_db()
     if not conn:
         return []
@@ -436,6 +436,7 @@ def get_prisendringer():
         cur = conn.cursor(dictionary=True)
         cur.execute("""
             SELECT b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert,
+                   b.Opprettet,
                    b.SvvNyttelast, b.SvvTilhengervektMedBrems,
                    COUNT(p.Pris) AS AntallEndringer,
                    MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
@@ -445,17 +446,16 @@ def get_prisendringer():
             FROM bobil b
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
             GROUP BY b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris,
-                     b.Oppdatert, b.SvvNyttelast, b.SvvTilhengervektMedBrems, b.URL
-            ORDER BY COALESCE(MAX(p.Tidspunkt), CAST(b.Oppdatert AS DATETIME)) DESC
+                     b.Oppdatert, b.Opprettet, b.SvvNyttelast, b.SvvTilhengervektMedBrems, b.URL
+            ORDER BY COALESCE(MAX(p.Tidspunkt), b.Opprettet) DESC
         """)
         rows = cur.fetchall()
         for r in rows:
             enrich_row_with_prices(r)
             r["AdURL"] = _ad_url(r)
-            # Vis siste prisendring om den finnes, ellers Oppdatert (kun meningsfull for Finn-annonser)
-            alder_val = r.get("SistePrisendring") or r.get("Oppdatert") or ""
-            kilde = r.get("Kilde") or "finn"
-            if not alder_val or kilde == "autodb" and not r.get("SistePrisendring"):
+            # Siste prisendring vises om den finnes, ellers Opprettet (første gang sett i DB)
+            alder_val = r.get("SistePrisendring") or r.get("Opprettet") or ""
+            if not alder_val:
                 r["Alder"], r["AlderClass"], r["AlderSort"] = "—", "age-unknown", 99999
             else:
                 r["Alder"], r["AlderClass"], r["AlderSort"] = format_age(alder_val)

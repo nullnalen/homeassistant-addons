@@ -725,6 +725,26 @@ def _log_dry_run_summary(ads: list[dict]) -> None:
     if len(ads) > 5:
         logger.info("  ... og %d til.", len(ads) - 5)
 
+def ensure_opprettet_column() -> None:
+    """Legg til Opprettet-kolonne i bobil-tabellen hvis den ikke finnes."""
+    conn = connect_to_database()
+    if not conn:
+        return
+    try:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "ALTER TABLE bobil ADD COLUMN Opprettet DATETIME NULL DEFAULT CURRENT_TIMESTAMP"
+            )
+            logger.info("La til kolonne Opprettet i bobil-tabellen.")
+            conn.commit()
+        except Exception as e:
+            if "Duplicate column" not in str(e) and "1060" not in str(e):
+                logger.error("Feil ved ALTER TABLE Opprettet: %s", e)
+    finally:
+        conn.close()
+
+
 def mark_removed_ads(current_ads: list[dict], dry_run: bool = False) -> None:
     """
     Oppdater SistSett for aktive annonser, og marker som solgt de som ikke
@@ -1175,6 +1195,8 @@ async def main() -> None:
     if DRY_RUN:
         logger.info("*** DRY RUN MODUS — ingen data vil bli skrevet til databasen ***")
     logger.info("Søke-URL: %s", LISTINGS_PAGE_URL)
+
+    ensure_opprettet_column()
 
     alle_aktive_ads = []
 
