@@ -745,11 +745,76 @@ def ensure_opprettet_column() -> None:
         conn.close()
 
 
-def mark_removed_ads(current_ads: list[dict], dry_run: bool = False) -> None:
+async def _finn_er_solgt(session: aiohttp.ClientSession, finnkode: int) -> bool:
+    """Dobbeltsjekk: hent Finn-annonsen direkte og se etter solgt/inaktiv-markør i HTML."""
+    url = f"https://www.finn.no/mobility/item/{finnkode}"
+    try:
+        async with session.get(url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT) as resp:
+            if resp.status == 404:
+                return True
+            html = await resp.text()
+            return "ikke lenger tilgjengelig" in html.lower()
+    except Exception as e:
+        logger.warning("Kunne ikke verifisere Finn %s: %s", finnkode, e)
+        return False
+
+
+async def _autodb_er_solgt(session: aiohttp.ClientSession, autodb_id: int) -> bool:
+    """Dobbeltsjekk: hent autodb-detalj og sjekk isActive/status."""
+    url = f"{AUTODB_DETAIL_URL}?idlist={autodb_id}"
+    try:
+        async with session.get(
+            url,
+            headers={**AUTODB_HEADERS, "Referer": f"https://www.autodb.no/view/{autodb_id}"},
+            timeout=HTTP_TIMEOUT,
+        ) as resp:
+            if resp.status == 404:
+                return True
+            data = await resp.json()
+            item = data[0] if isinstance(data, list) and data else data
+            return not item.get("isActive", True) or item.get("status", "active") != "active"
+    except Exception as e:
+        logger.warning("Kunne ikke verifisere autodb %s: %s", autodb_id, e)
+        return False
+
+
+async def _verifiser_stale_ads(
+    session: aiohttp.ClientSession,
+    stale_rows: list[tuple],
+) -> list[tuple]:
     """
-    Oppdater SistSett for aktive annonser, og marker som solgt de som ikke
-    har vært i søkeresultatet på over 48 timer. Dette unngår feilmerking av
-    annonser som midlertidig faller utenfor søkefilteret (f.eks. prisøkning).
+    Dobbeltsjekk kandidater mot Finn/autodb direkte.
+    Returnerer kun de som er bekreftet solgt/inaktiv.
+    stale_rows: liste av (finnkode, autodb_id)
+    """
+    bekreftede = []
+    semaphore = asyncio.Semaphore(3)
+
+    async def sjekk(finnkode, autodb_id):
+        async with semaphore:
+            await asyncio.sleep(0.5)
+            if autodb_id and finnkode < 0:
+                er_solgt = await _autodb_er_solgt(session, autodb_id)
+            else:
+                er_solgt = await _finn_er_solgt(session, finnkode)
+            if er_solgt:
+                logger.info("Bekreftet solgt/inaktiv: Finnkode %s", finnkode)
+                bekreftede.append((finnkode, autodb_id))
+            else:
+                logger.info("Ikke bekreftet solgt — beholder: Finnkode %s", finnkode)
+
+    await asyncio.gather(*(sjekk(fk, aid) for fk, aid in stale_rows))
+    return bekreftede
+
+
+async def mark_removed_ads(
+    current_ads: list[dict],
+    session: aiohttp.ClientSession | None = None,
+    dry_run: bool = False,
+) -> None:
+    """
+    Oppdater SistSett for aktive annonser. Annonser ikke sett på over 48t
+    dobbeltsjekkes direkte mot Finn/autodb før de merkes som solgt.
     """
     mode = "DRY RUN" if dry_run else "LIVE"
     conn = connect_to_database()
@@ -759,7 +824,6 @@ def mark_removed_ads(current_ads: list[dict], dry_run: bool = False) -> None:
     try:
         cursor = conn.cursor()
 
-        # Sørg for at SistSett-kolonnen finnes
         try:
             cursor.execute("ALTER TABLE bobil ADD COLUMN SistSett DATETIME NULL")
             logger.info("La til kolonne SistSett i bobil-tabellen.")
@@ -771,36 +835,47 @@ def mark_removed_ads(current_ads: list[dict], dry_run: bool = False) -> None:
         active_ids = {ad["Finnkode"] for ad in current_ads}
         now = datetime.now()
 
-        # Oppdater SistSett for alle annonser vi ser i dag
         if not dry_run and active_ids:
             cursor.executemany(
                 "UPDATE bobil SET SistSett = %s WHERE Finnkode = %s",
                 [(now, fk) for fk in active_ids]
             )
 
-        # Hent alle aktive annonser som ikke er sett på over 48 timer
+        # Hent kandidater: aktive annonser ikke sett på over 48 timer
         cursor.execute(
-            "SELECT Finnkode FROM bobil WHERE (Solgt = 0 OR Solgt IS NULL) "
+            "SELECT Finnkode, AutodbId FROM bobil WHERE (Solgt = 0 OR Solgt IS NULL) "
             "AND (SistSett IS NULL OR SistSett < %s)",
             (now - timedelta(hours=48),)
         )
-        stale_ids = {row[0] for row in cursor.fetchall()} - active_ids
+        stale_rows = [(row[0], row[1]) for row in cursor.fetchall()
+                      if row[0] not in active_ids]
 
-        if not stale_ids:
+        if not stale_rows:
             logger.info("[%s] Ingen annonser å markere som solgt.", mode)
             if not dry_run:
                 conn.commit()
             return
 
-        logger.info("[%s] %d annonser ikke sett på over 48t — markeres som solgt.", mode, len(stale_ids))
+        logger.info("[%s] %d kandidater ikke sett på over 48t — dobbeltsjekker...", mode, len(stale_rows))
 
-        for finnkode in stale_ids:
+        # Dobbeltsjekk mot Finn/autodb direkte
+        if session:
+            bekreftede = await _verifiser_stale_ads(session, stale_rows)
+        else:
+            # Ingen session tilgjengelig — stol på 48t-regelen alene
+            logger.warning("Ingen HTTP-session for dobbeltsjekk — bruker 48t-regelen direkte.")
+            bekreftede = stale_rows
+
+        if not bekreftede:
+            logger.info("[%s] Ingen annonser bekreftet solgt.", mode)
+            if not dry_run:
+                conn.commit()
+            return
+
+        for finnkode, _ in bekreftede:
             logger.info("[%s] Markerer Finnkode %s som Solgt/Fjernet.", mode, finnkode)
             if not dry_run:
-                cursor.execute(
-                    "UPDATE bobil SET Solgt = 1 WHERE Finnkode = %s",
-                    (finnkode,)
-                )
+                cursor.execute("UPDATE bobil SET Solgt = 1 WHERE Finnkode = %s", (finnkode,))
                 try:
                     cursor.execute(
                         "INSERT INTO prisendringer (Finnkode, Pris) VALUES (%s, %s)",
@@ -811,7 +886,7 @@ def mark_removed_ads(current_ads: list[dict], dry_run: bool = False) -> None:
 
         if not dry_run:
             conn.commit()
-        logger.info("[%s] Markerte %d annonser som Solgt/Fjernet.", mode, len(stale_ids))
+        logger.info("[%s] Markerte %d annonser som Solgt/Fjernet.", mode, len(bekreftede))
     except Exception as e:
         logger.error("Feil ved markering av fjernede annonser: %s", e)
     finally:
@@ -1224,7 +1299,7 @@ async def main() -> None:
             alle_aktive_ads.extend(autodb_ads)
 
     if alle_aktive_ads:
-        mark_removed_ads(alle_aktive_ads, dry_run=DRY_RUN)
+        await mark_removed_ads(alle_aktive_ads, session=session, dry_run=DRY_RUN)
 
     logger.info("Avslutter script...")
 
