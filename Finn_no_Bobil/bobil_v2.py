@@ -1097,7 +1097,6 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                             Annonsenavn = VALUES(Annonsenavn),
                             Modell = VALUES(Modell),
                             Kilometerstand = VALUES(Kilometerstand),
-                            Oppdatert = VALUES(Oppdatert),
                             URL = VALUES(URL),
                             Pris = VALUES(Pris),
                             ImageURL = VALUES(ImageURL),

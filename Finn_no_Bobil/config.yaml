@@ -1,6 +1,6 @@
 name: "Finn no Bobil"
 description: "Addon traverserer finn på jakt etter bobiler og lagrer historikk i database"
-version: "1.15"
+version: "1.16"
 slug: "finn_no_bobil"
 init: false
 arch:
