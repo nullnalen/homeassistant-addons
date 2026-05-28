@@ -428,7 +428,7 @@ def get_total_count():
 # ---------------------------------------------------------------------------
 
 def get_prisendringer():
-    """View 1: Alle annonser (Finn + autodb), sortert etter sist sett."""
+    """View 1: Alle annonser (Finn + autodb), sortert etter sist publisert/endret."""
     conn = get_db()
     if not conn:
         return []
@@ -436,25 +436,28 @@ def get_prisendringer():
         cur = conn.cursor(dictionary=True)
         cur.execute("""
             SELECT b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert,
-                   b.SistSett, b.SvvNyttelast, b.SvvTilhengervektMedBrems,
+                   b.SvvNyttelast, b.SvvTilhengervektMedBrems,
                    COUNT(p.Pris) AS AntallEndringer,
                    MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
                    MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris,
+                   MAX(p.Tidspunkt) AS SistePrisendring,
                    b.URL
             FROM bobil b
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
-            GROUP BY b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert, b.SistSett, b.SvvNyttelast, b.SvvTilhengervektMedBrems, b.URL
-            ORDER BY COALESCE(b.SistSett, CAST(b.Oppdatert AS DATETIME)) DESC
+            GROUP BY b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris,
+                     b.Oppdatert, b.SvvNyttelast, b.SvvTilhengervektMedBrems, b.URL
+            ORDER BY COALESCE(MAX(p.Tidspunkt), CAST(b.Oppdatert AS DATETIME)) DESC
         """)
         rows = cur.fetchall()
         for r in rows:
             enrich_row_with_prices(r)
             r["AdURL"] = _ad_url(r)
+            # Vis siste prisendring om den finnes, ellers Oppdatert (kun meningsfull for Finn-annonser)
+            alder_val = r.get("SistePrisendring") or r.get("Oppdatert") or ""
             kilde = r.get("Kilde") or "finn"
-            if kilde == "autodb":
+            if not alder_val or kilde == "autodb" and not r.get("SistePrisendring"):
                 r["Alder"], r["AlderClass"], r["AlderSort"] = "—", "age-unknown", 99999
             else:
-                alder_val = r.get("Oppdatert") or r.get("SistSett") or ""
                 r["Alder"], r["AlderClass"], r["AlderSort"] = format_age(alder_val)
         return rows
     except Exception as e:
