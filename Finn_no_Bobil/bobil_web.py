@@ -462,7 +462,7 @@ def get_annonser():
         cur = conn.cursor(dictionary=True)
         cur.execute("""
             SELECT b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris, b.Oppdatert,
-                   b.Opprettet, b.Kilometerstand, b.Beskrivelse, b.Sengelayout,
+                   b.Opprettet, b.SistSett, b.Kilometerstand, b.Beskrivelse, b.Sengelayout,
                    b.SvvNyttelast, b.SvvTilhengervektMedBrems,
                    b.SvvEuKontrollfrist, b.SvvEuSistGodkjent, b.SvvAarsmodell, b.SvvMerke,
                    COUNT(p.Pris) AS AntallEndringer,
@@ -474,10 +474,10 @@ def get_annonser():
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
             WHERE (b.Solgt = 0 OR b.Solgt IS NULL)
             GROUP BY b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris,
-                     b.Oppdatert, b.Opprettet, b.Kilometerstand, b.Beskrivelse, b.Sengelayout,
+                     b.Oppdatert, b.Opprettet, b.SistSett, b.Kilometerstand, b.Beskrivelse, b.Sengelayout,
                      b.SvvNyttelast, b.SvvTilhengervektMedBrems,
                      b.SvvEuKontrollfrist, b.SvvEuSistGodkjent, b.SvvAarsmodell, b.SvvMerke, b.URL
-            ORDER BY COALESCE(MAX(p.Tidspunkt), b.Opprettet) DESC
+            ORDER BY COALESCE(MAX(p.Tidspunkt), b.SistSett, b.Opprettet) DESC
         """)
         rows = cur.fetchall()
         now = datetime.now()
@@ -485,7 +485,8 @@ def get_annonser():
         for r in rows:
             enrich_row_with_prices(r)
             r["AdURL"] = _ad_url(r)
-            alder_val = r.get("SistePrisendring") or r.get("Opprettet") or ""
+            # Sorteringsrekkefølge: siste prisendring > sist endret på autodb > opprettet i DB
+            alder_val = r.get("SistePrisendring") or r.get("SistSett") or r.get("Opprettet") or ""
             if not alder_val:
                 r["Alder"], r["AlderClass"], r["AlderSort"] = "—", "age-unknown", 99999
             else:

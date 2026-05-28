@@ -982,6 +982,7 @@ def parse_autodb_ad(list_ad: dict, detail: dict | None) -> dict:
         "Modell": yearmodel,
         "Kilometerstand": km,
         "Oppdatert": list_ad.get("timePublished") or list_ad.get("timeModified") or "",
+        "SistSett": list_ad.get("timeModified") or "",
         "URL": f"https://www.autodb.no/view/{aditemid}",
         "ImageURL": img_url,
         "Lokasjon": list_ad.get("ccounty") or "",
@@ -1087,20 +1088,21 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
 
             km_str = format_kilometerstand(ad.get("Kilometerstand") or 0)
 
-            oppdatert_raw = ad.get("Oppdatert") or ""
-            try:
-                if oppdatert_raw:
-                    dt = datetime.fromisoformat(oppdatert_raw.replace("Z", "+00:00"))
-                    oppdatert_str = dt.strftime(DATE_FORMAT)
-                else:
-                    oppdatert_str = "Ukjent"
-            except Exception:
-                oppdatert_str = oppdatert_raw[:16] if oppdatert_raw else "Ukjent"
+            def _iso_to_str(raw):
+                if not raw:
+                    return "Ukjent"
+                try:
+                    return datetime.fromisoformat(raw.replace("Z", "+00:00")).strftime(DATE_FORMAT)
+                except Exception:
+                    return raw[:16] if raw else "Ukjent"
+
+            oppdatert_str = _iso_to_str(ad.get("Oppdatert"))
+            sistsett_str = _iso_to_str(ad.get("SistSett")) if ad.get("SistSett") else None
 
             svv = ad.get("VegvesenData") or {}
             svv_data = _build_svv_data_tuple(svv)
             tekst_nlp = ad.get("Annonsenavn", "") or ""
-            placeholders_a = ", ".join(["%s"] * (21 + len(_SVV_COLS)))
+            placeholders_a = ", ".join(["%s"] * (22 + len(_SVV_COLS)))
 
             if not dry_run:
                 try:
@@ -1108,7 +1110,7 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                         INSERT INTO bobil (
                             Finnkode, AutodbId, Annonsenavn, Modell, Kilometerstand,
                             Girkasse, Beskrivelse, Nyttelast, Typebobil,
-                            Oppdatert, URL, Pris, ImageURL, Lokasjon, Kjennemerke,
+                            Oppdatert, SistSett, URL, Pris, ImageURL, Lokasjon, Kjennemerke,
                             {", ".join(_SVV_COLS)},
                             Sengelayout, VendbareForerstoler, Heftelser, HeftelseSjekket,
                             HeftelserDetaljer, Kilde
@@ -1123,6 +1125,7 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                             Lokasjon = VALUES(Lokasjon),
                             Kjennemerke = VALUES(Kjennemerke),
                             Oppdatert = IF(VALUES(Oppdatert) < Oppdatert, VALUES(Oppdatert), Oppdatert),
+                            SistSett = VALUES(SistSett),
                             {_SVV_UPSERT_CLAUSE},
                             Heftelser = IF(VALUES(Heftelser) IS NOT NULL, VALUES(Heftelser), Heftelser),
                             HeftelseSjekket = IF(VALUES(HeftelseSjekket) IS NOT NULL, VALUES(HeftelseSjekket), HeftelseSjekket),
@@ -1139,6 +1142,7 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                         "Ikke oppgitt",
                         "Ikke oppgitt",
                         oppdatert_str,
+                        sistsett_str,
                         ad["URL"],
                         ny_pris_int,
                         ad.get("ImageURL", ""),
