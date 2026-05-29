@@ -786,6 +786,24 @@ def ensure_selger_columns() -> None:
         conn.close()
 
 
+def ensure_autodb_sist_endret_column() -> None:
+    """Legg til AutodbSistEndret i bobil-tabellen hvis den ikke finnes."""
+    conn = connect_to_database()
+    if not conn:
+        return
+    try:
+        cursor = conn.cursor()
+        try:
+            cursor.execute("ALTER TABLE bobil ADD COLUMN AutodbSistEndret DATETIME NULL")
+            logger.info("La til kolonne AutodbSistEndret i bobil-tabellen.")
+            conn.commit()
+        except Exception as e:
+            if "Duplicate column" not in str(e) and "1060" not in str(e):
+                logger.error("Feil ved ALTER TABLE AutodbSistEndret: %s", e)
+    finally:
+        conn.close()
+
+
 async def _finn_er_solgt(session: aiohttp.ClientSession, finnkode: int) -> bool:
     """Dobbeltsjekk: hent Finn-annonsen direkte og se etter solgt/inaktiv-markør i HTML."""
     url = f"https://www.finn.no/mobility/item/{finnkode}"
@@ -1112,6 +1130,7 @@ def parse_autodb_ad(list_ad: dict, detail: dict | None) -> dict:
         "Kilometerstand": km,
         "Oppdatert": list_ad.get("timePublished") or list_ad.get("timeModified") or "",
         "SistSett": list_ad.get("timeModified") or "",
+        "AutodbSistEndret": list_ad.get("timeModified") or "",
         "URL": f"https://www.autodb.no/view/{aditemid}",
         "ImageURL": img_url,
         "Lokasjon": list_ad.get("ccounty") or "",
@@ -1234,7 +1253,8 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
             svv = ad.get("VegvesenData") or {}
             svv_data = _build_svv_data_tuple(svv)
             tekst_nlp = ad.get("Annonsenavn", "") or ""
-            placeholders_a = ", ".join(["%s"] * (25 + len(_SVV_COLS)))
+            placeholders_a = ", ".join(["%s"] * (26 + len(_SVV_COLS)))
+            autodb_sist_endret_str = _iso_to_str(ad.get("AutodbSistEndret")) if ad.get("AutodbSistEndret") else None
 
             if not dry_run:
                 try:
@@ -1242,7 +1262,7 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                         INSERT INTO bobil (
                             Finnkode, AutodbId, Annonsenavn, Modell, Kilometerstand,
                             Girkasse, Beskrivelse, Nyttelast, Typebobil,
-                            Oppdatert, SistSett, URL, Pris, ImageURL, Lokasjon, Kjennemerke,
+                            Oppdatert, SistSett, AutodbSistEndret, URL, Pris, ImageURL, Lokasjon, Kjennemerke,
                             {", ".join(_SVV_COLS)},
                             Sengelayout, VendbareForerstoler, Heftelser, HeftelseSjekket,
                             HeftelserDetaljer, SelgerNavn, SelgerType, SelgerOrgId, Kilde
@@ -1258,6 +1278,7 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                             Kjennemerke = VALUES(Kjennemerke),
                             Oppdatert = IF(VALUES(Oppdatert) < Oppdatert, VALUES(Oppdatert), Oppdatert),
                             SistSett = VALUES(SistSett),
+                            AutodbSistEndret = IF(VALUES(AutodbSistEndret) IS NOT NULL AND (AutodbSistEndret IS NULL OR VALUES(AutodbSistEndret) > AutodbSistEndret), VALUES(AutodbSistEndret), AutodbSistEndret),
                             {_SVV_UPSERT_CLAUSE},
                             Heftelser = IF(VALUES(Heftelser) IS NOT NULL, VALUES(Heftelser), Heftelser),
                             HeftelseSjekket = IF(VALUES(HeftelseSjekket) IS NOT NULL, VALUES(HeftelseSjekket), HeftelseSjekket),
@@ -1278,6 +1299,7 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                         "Ikke oppgitt",
                         oppdatert_str,
                         sistsett_str,
+                        autodb_sist_endret_str,
                         ad["URL"],
                         ny_pris_int,
                         ad.get("ImageURL", ""),
@@ -1341,6 +1363,7 @@ async def main() -> None:
 
     ensure_opprettet_column()
     ensure_selger_columns()
+    ensure_autodb_sist_endret_column()
 
     alle_aktive_ads = []
 
