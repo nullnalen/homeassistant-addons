@@ -700,7 +700,7 @@ def get_filter_options():
     """Hent unike verdier for filterpanelet."""
     conn = get_db()
     if not conn:
-        return {"modeller": [], "typer": [], "girkasser": []}
+        return {"modeller": [], "typer": [], "girkasser": [], "merker": []}
     try:
         cur = conn.cursor()
         cur.execute("SELECT DISTINCT Modell FROM bobil WHERE Modell IS NOT NULL ORDER BY Modell DESC")
@@ -709,9 +709,11 @@ def get_filter_options():
         typer = [r[0] for r in cur.fetchall()]
         cur.execute("SELECT DISTINCT Girkasse FROM bobil WHERE Girkasse IS NOT NULL AND Girkasse != 'Ikke oppgitt' ORDER BY Girkasse")
         girkasser = [r[0] for r in cur.fetchall()]
-        return {"modeller": modeller, "typer": typer, "girkasser": girkasser}
+        cur.execute("SELECT Merke, COUNT(*) as n FROM bobil WHERE Merke IS NOT NULL AND (Solgt=0 OR Solgt IS NULL) GROUP BY Merke ORDER BY n DESC, Merke")
+        merker = [r[0] for r in cur.fetchall()]
+        return {"modeller": modeller, "typer": typer, "girkasser": girkasser, "merker": merker}
     except Exception:
-        return {"modeller": [], "typer": [], "girkasser": []}
+        return {"modeller": [], "typer": [], "girkasser": [], "merker": []}
     finally:
         conn.close()
 
@@ -773,6 +775,11 @@ def get_detaljer(page=1, per_page=50, filters=None):
             if filters.get("sengelayout"):
                 where_parts.append("b.Sengelayout = %s")
                 params.append(filters["sengelayout"])
+            merker_valgt = [m for m in filters.get("merker", []) if m]
+            if merker_valgt:
+                placeholders = ",".join(["%s"] * len(merker_valgt))
+                where_parts.append(f"b.Merke IN ({placeholders})")
+                params.extend(merker_valgt)
 
         where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
 
@@ -1167,6 +1174,24 @@ TEMPLATE = """
             font-size: 0.83rem;
             color: var(--label-sec);
             cursor: pointer;
+        }
+        .filter-group-merker { min-width: 160px; }
+        .merke-cb-list {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            padding: 4px 0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .merke-cb-label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.83rem;
+            color: var(--label-sec);
+            cursor: pointer;
+            white-space: nowrap;
         }
 
         /* ── Search ── */
@@ -1618,6 +1643,44 @@ TEMPLATE = """
 """
 
 
+def _eu_kontroll_html(frist_str: str, sist_str: str) -> str:
+    """Returner HTML for EU-kontroll-raden med fremheving basert på gjenstående tid."""
+    now = datetime.now().date()
+    frist_html = frist_str or "—"
+    sist_html = sist_str or "—"
+    stil = ""
+    merknad = ""
+    if frist_str:
+        try:
+            frist = datetime.strptime(frist_str[:10], "%Y-%m-%d").date()
+            mnd = (frist.year - now.year) * 12 + (frist.month - now.month)
+            if mnd < 0:
+                stil = "color:#c0392b;font-weight:bold"
+                merknad = " &#x26A0; Utløpt!"
+            elif mnd < 3:
+                stil = "color:#c0392b;font-weight:bold"
+                merknad = f" &#x26A0; Om {mnd} mnd"
+            elif mnd < 12:
+                stil = "color:#e67e22;font-weight:600"
+                merknad = f" — om {mnd} mnd"
+            else:
+                ar = mnd // 12
+                rest = mnd % 12
+                stil = "color:#27ae60"
+                merknad = f" — om {ar} år" if rest == 0 else f" — om ca. {ar} år {rest} mnd"
+            frist_html = f'<span style="{stil}">{frist_str}{merknad}</span>'
+        except (ValueError, TypeError):
+            pass
+    if sist_str:
+        try:
+            sist = datetime.strptime(sist_str[:10], "%Y-%m-%d").date()
+            mnd_siden = (now.year - sist.year) * 12 + (now.month - sist.month)
+            sist_html = f"{sist_str} (for {mnd_siden} mnd siden)"
+        except (ValueError, TypeError):
+            pass
+    return frist_html, sist_html
+
+
 _HEFTELSE_RISIKO_TYPER = {
     "rettsstiftelsestype.utp": "high",   # Utleggspant (namsfogd/tvang)
     "rettsstiftelsestype.sap": "medium", # Salgspant (vanlig bilfinansiering)
@@ -2060,6 +2123,7 @@ def view_detaljer():
         "max_lengde": request.args.get("max_lengde", ""),
         "min_tilhengervekt": request.args.get("min_tilhengervekt", ""),
         "sengelayout": request.args.get("sengelayout", ""),
+        "merker": request.args.getlist("merker"),
     }
     rows, total = get_detaljer(page, per_page, filters)
 
@@ -2073,7 +2137,11 @@ def view_detaljer():
     def filter_qs():
         parts = []
         for k, v in filters.items():
-            if v:
+            if k == "merker":
+                for m in v:
+                    if m:
+                        parts.append(f"merker={m}")
+            elif v:
                 parts.append(f"{k}={v}")
         return "&".join(parts)
 
@@ -2091,6 +2159,12 @@ def view_detaljer():
     senge_options = "".join(
         f'<option value="{s}" {"selected" if senge_valg == s else ""}>{s}</option>'
         for s in ["senkeseng", "køyer", "alkove", "enkelsenger", "queenbed", "dobbeltseng"]
+    )
+    merker_valgt = set(filters.get("merker", []))
+    merke_checkboxes = "".join(
+        f'<label class="merke-cb-label"><input type="checkbox" name="merker" value="{esc(m)}"'
+        f'{"checked" if m in merker_valgt else ""}> {esc(m)}</label>'
+        for m in filter_opts["merker"]
     )
 
     html = f"""
@@ -2133,6 +2207,10 @@ def view_detaljer():
                 <option value="">Alle</option>
                 {senge_options}
             </select>
+        </div>
+        <div class="filter-group filter-group-merker">
+            <label>Merke</label>
+            <div class="merke-cb-list">{merke_checkboxes}</div>
         </div>
         <div class="filter-group">
             <label>Type bobil</label>
@@ -2319,6 +2397,10 @@ def view_annonse(finnkode):
         def kw(val): return f"{round(val)} kW / {round(val * 1.36)} hk" if val else "—"
         def liter(val): return f"{val / 1000:.1f} L" if val else "—"
 
+        eu_frist_html, eu_sist_html = _eu_kontroll_html(
+            ad.get("SvvEuKontrollfrist") or "", ad.get("SvvEuSistGodkjent") or ""
+        )
+
         svv_block = ""
         if har_svv:
             svv_block = f"""
@@ -2333,8 +2415,8 @@ def view_annonse(finnkode):
             <div><span class="lbl">Årsmodell (SVV):</span> {vs('SvvAarsmodell')}</div>
             <div><span class="lbl">1. gang reg. Norge:</span> {vs('SvvForstegangNorge')}</div>
             <div><span class="lbl">Registreringsstatus:</span> {vs('SvvRegistreringsstatus')}</div>
-            <div><span class="lbl">EU-kontroll frist:</span> {vs('SvvEuKontrollfrist')}</div>
-            <div><span class="lbl">EU-kontroll sist:</span> {vs('SvvEuSistGodkjent')}</div>
+            <div><span class="lbl">EU-kontroll frist:</span> {eu_frist_html}</div>
+            <div><span class="lbl">EU-kontroll sist:</span> {eu_sist_html}</div>
             <div><span class="lbl">Farge:</span> {vs('SvvFarge')}</div>
             <div><span class="lbl">Karosseritype:</span> {vs('SvvKarosseritype')}</div>
             <div><span class="lbl">Antall dører:</span> {vs('SvvAntallDorer')}</div>
