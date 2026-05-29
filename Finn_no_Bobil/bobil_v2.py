@@ -233,6 +233,10 @@ def extract_info_from_json(json_data: dict) -> list[dict]:
             regno = regno_raw.strip().upper().replace(" ", "")
             chassis = (ad.get("chassis_number", "") or "").strip().upper()
 
+            org_id = ad.get("org_id")
+            dealer_seg = ad.get("dealer_segment", "") or ""
+            selger_type = "Privat" if dealer_seg.lower() == "privat" else ("Forhandler" if org_id else "")
+
             extracted_data.append({
                 "Finnkode": finnkode,
                 "Annonsenavn": ad.get("heading"),
@@ -246,6 +250,9 @@ def extract_info_from_json(json_data: dict) -> list[dict]:
                 "Detaljer": {},
                 "Kjennemerke": regno,
                 "Understellsnummer": chassis,
+                "SelgerNavn": None,
+                "SelgerType": selger_type or None,
+                "SelgerOrgId": str(org_id) if org_id else None,
             })
         return extracted_data
     except Exception as e:
@@ -365,6 +372,7 @@ _FELT_NAVN = [
     "SvvEuroKlasse", "SvvSitteplasser", "SvvKjoretoytype",
     "Sengelayout", "VendbareForerstoler",
     "Heftelser", "HeftelseSjekket", "HeftelserDetaljer",
+    "SelgerNavn", "SelgerType", "SelgerOrgId",
 ]
 
 _SVV_COLS = [
@@ -491,6 +499,9 @@ def _build_nye_verdier(ad: dict) -> list:
         ad.get("Heftelser"),
         ad.get("HeftelseSjekket"),
         ad.get("HeftelserDetaljer"),
+        ad.get("SelgerNavn"),
+        ad.get("SelgerType"),
+        ad.get("SelgerOrgId"),
     ]
 
 
@@ -547,14 +558,15 @@ class BobilRepository:
 
     def upsert(self, ad: dict, nye_verdier: list) -> None:
         finnkode = ad["Finnkode"]
-        placeholders = ", ".join(["%s"] * (20 + len(_SVV_COLS)))
+        placeholders = ", ".join(["%s"] * (23 + len(_SVV_COLS)))
         fn = _FELT_NAVN
         query = f"""
             INSERT INTO bobil (
                 Finnkode, Annonsenavn, Modell, Kilometerstand, Girkasse, Beskrivelse,
                 Nyttelast, Typebobil, Oppdatert, URL, Pris, ImageURL, Lokasjon,
                 Kjennemerke, {", ".join(_SVV_COLS)},
-                Sengelayout, VendbareForerstoler, Heftelser, HeftelseSjekket, HeftelserDetaljer, Kilde
+                Sengelayout, VendbareForerstoler, Heftelser, HeftelseSjekket, HeftelserDetaljer,
+                SelgerNavn, SelgerType, SelgerOrgId, Kilde
             ) VALUES ({placeholders})
             ON DUPLICATE KEY UPDATE
                 Annonsenavn = VALUES(Annonsenavn),
@@ -576,6 +588,9 @@ class BobilRepository:
                 Heftelser = IF(VALUES(Heftelser) IS NOT NULL, VALUES(Heftelser), Heftelser),
                 HeftelseSjekket = IF(VALUES(HeftelseSjekket) IS NOT NULL, VALUES(HeftelseSjekket), HeftelseSjekket),
                 HeftelserDetaljer = IF(VALUES(HeftelserDetaljer) IS NOT NULL, VALUES(HeftelserDetaljer), HeftelserDetaljer),
+                SelgerNavn = IF(VALUES(SelgerNavn) IS NOT NULL, VALUES(SelgerNavn), SelgerNavn),
+                SelgerType = IF(VALUES(SelgerType) IS NOT NULL, VALUES(SelgerType), SelgerType),
+                SelgerOrgId = IF(VALUES(SelgerOrgId) IS NOT NULL, VALUES(SelgerOrgId), SelgerOrgId),
                 Kilde = IF(Kilde = 'autodb', 'finn+autodb', IF(Kilde IS NULL, 'finn', Kilde))
         """
         data = (
@@ -599,6 +614,9 @@ class BobilRepository:
             nye_verdier[fn.index("Heftelser")],
             nye_verdier[fn.index("HeftelseSjekket")],
             nye_verdier[fn.index("HeftelserDetaljer")],
+            nye_verdier[fn.index("SelgerNavn")],
+            nye_verdier[fn.index("SelgerType")],
+            nye_verdier[fn.index("SelgerOrgId")],
             "finn",
         )
         try:
@@ -741,6 +759,29 @@ def ensure_opprettet_column() -> None:
         except Exception as e:
             if "Duplicate column" not in str(e) and "1060" not in str(e):
                 logger.error("Feil ved ALTER TABLE Opprettet: %s", e)
+    finally:
+        conn.close()
+
+
+def ensure_selger_columns() -> None:
+    """Legg til SelgerNavn, SelgerType, SelgerOrgId i bobil-tabellen hvis de ikke finnes."""
+    conn = connect_to_database()
+    if not conn:
+        return
+    try:
+        cursor = conn.cursor()
+        for col, typedef in [
+            ("SelgerNavn", "VARCHAR(200) NULL"),
+            ("SelgerType", "VARCHAR(50) NULL"),
+            ("SelgerOrgId", "VARCHAR(50) NULL"),
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE bobil ADD COLUMN {col} {typedef}")
+                logger.info("La til kolonne %s i bobil-tabellen.", col)
+            except Exception as e:
+                if "Duplicate column" not in str(e) and "1060" not in str(e):
+                    logger.error("Feil ved ALTER TABLE %s: %s", col, e)
+        conn.commit()
     finally:
         conn.close()
 
@@ -1049,6 +1090,19 @@ def parse_autodb_ad(list_ad: dict, detail: dict | None) -> dict:
     main_img = list_ad.get("mainImageId")
     img_url = f"https://www.autodb.no/assets/img/items/{main_img}.jpg" if main_img else ""
 
+    selger_navn = (list_ad.get("sellerName") or "").strip() or None
+    selger_type_raw = (list_ad.get("sellertype") or "").strip()
+    er_privat = list_ad.get("isPrivate", None)
+    if selger_type_raw:
+        selger_type = selger_type_raw
+    elif er_privat is True:
+        selger_type = "Privat"
+    elif er_privat is False:
+        selger_type = "Forhandler"
+    else:
+        selger_type = None
+    selger_org_id = str(list_ad.get("customerid")) if list_ad.get("customerid") else None
+
     return {
         "AutodbId": aditemid,
         "Finnkode": None,
@@ -1070,6 +1124,9 @@ def parse_autodb_ad(list_ad: dict, detail: dict | None) -> dict:
             "Type bobil": "Ikke oppgitt",
         },
         "Kilde": "autodb",
+        "SelgerNavn": selger_navn,
+        "SelgerType": selger_type,
+        "SelgerOrgId": selger_org_id,
     }
 
 
@@ -1177,7 +1234,7 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
             svv = ad.get("VegvesenData") or {}
             svv_data = _build_svv_data_tuple(svv)
             tekst_nlp = ad.get("Annonsenavn", "") or ""
-            placeholders_a = ", ".join(["%s"] * (22 + len(_SVV_COLS)))
+            placeholders_a = ", ".join(["%s"] * (25 + len(_SVV_COLS)))
 
             if not dry_run:
                 try:
@@ -1188,7 +1245,7 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                             Oppdatert, SistSett, URL, Pris, ImageURL, Lokasjon, Kjennemerke,
                             {", ".join(_SVV_COLS)},
                             Sengelayout, VendbareForerstoler, Heftelser, HeftelseSjekket,
-                            HeftelserDetaljer, Kilde
+                            HeftelserDetaljer, SelgerNavn, SelgerType, SelgerOrgId, Kilde
                         ) VALUES ({placeholders_a})
                         ON DUPLICATE KEY UPDATE
                             Annonsenavn = VALUES(Annonsenavn),
@@ -1205,6 +1262,9 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                             Heftelser = IF(VALUES(Heftelser) IS NOT NULL, VALUES(Heftelser), Heftelser),
                             HeftelseSjekket = IF(VALUES(HeftelseSjekket) IS NOT NULL, VALUES(HeftelseSjekket), HeftelseSjekket),
                             HeftelserDetaljer = IF(VALUES(HeftelserDetaljer) IS NOT NULL, VALUES(HeftelserDetaljer), HeftelserDetaljer),
+                            SelgerNavn = IF(VALUES(SelgerNavn) IS NOT NULL, VALUES(SelgerNavn), SelgerNavn),
+                            SelgerType = IF(VALUES(SelgerType) IS NOT NULL, VALUES(SelgerType), SelgerType),
+                            SelgerOrgId = IF(VALUES(SelgerOrgId) IS NOT NULL, VALUES(SelgerOrgId), SelgerOrgId),
                             Kilde = VALUES(Kilde)
                     """, (
                         surrogate_finnkode,
@@ -1229,6 +1289,9 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                         ad.get("Heftelser"),
                         ad.get("HeftelseSjekket"),
                         ad.get("HeftelserDetaljer"),
+                        ad.get("SelgerNavn"),
+                        ad.get("SelgerType"),
+                        ad.get("SelgerOrgId"),
                         "autodb",
                     ))
                     PriceLog(cursor).record_ignore(surrogate_finnkode, ny_pris_int)
@@ -1277,6 +1340,7 @@ async def main() -> None:
     logger.info("Søke-URL: %s", LISTINGS_PAGE_URL)
 
     ensure_opprettet_column()
+    ensure_selger_columns()
 
     alle_aktive_ads = []
 

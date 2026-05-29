@@ -1442,6 +1442,14 @@ TEMPLATE = """
         .heft-item-krav        { font-size: 0.82em; color: var(--label); margin-top: 2px; }
         .heft-item-salgspant   { font-size: 0.82em; color: #155724; background: rgba(40,167,69,0.1); border-radius: 4px; padding: 3px 6px; margin-top: 4px; }
         .salgspant-hint        { font-size: 0.78em; color: #155724; background: rgba(40,167,69,0.12); border-radius: 4px; padding: 1px 5px; margin-left: 4px; white-space: nowrap; }
+        .selger-privat         { font-size: 0.78em; background: rgba(120,120,128,0.12); color: var(--label-sec); border-radius: 4px; padding: 1px 6px; }
+        .selger-forhandler     { font-size: 0.78em; background: rgba(10,132,255,0.1); color: var(--blue); border-radius: 4px; padding: 1px 6px; }
+        .salgspris-box         { background: rgba(10,132,255,0.06); border: 1px solid rgba(10,132,255,0.2); border-radius: var(--radius-sm); padding: 10px 14px; margin-top: 8px; }
+        .salgspris-row         { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 4px; }
+        .salgspris-item        { display: flex; flex-direction: column; }
+        .salgspris-label       { font-size: 0.75em; color: var(--label-sec); text-transform: uppercase; letter-spacing: 0.04em; }
+        .salgspris-value       { font-size: 1.05em; font-weight: 600; color: var(--label); }
+        .salgspris-note        { font-size: 0.75em; color: var(--label-sec); margin-top: 6px; }
 
         /* ── Prisfall indikator ── */
         .prisfall-cell { white-space: nowrap; }
@@ -1747,6 +1755,72 @@ def _heftelse_html(antall, sjekket_dato, detaljer_json=None) -> str:
             f'</div>'
         )
     return "\n".join(lines)
+
+
+_RABATT_PER_MODELLAAR = {
+    # Fra analyse av 78 solgte biler med prishistorikk
+    2019: 0.093,
+    2018: 0.093,
+    2017: 0.055,
+    2016: 0.055,
+    2015: 0.055,
+}
+_RABATT_SNITT = 0.059
+_RABATT_AGGRESSIV = 0.10
+
+
+def beregn_forventet_salgspris(pris: int | None, modell: int | None) -> dict | None:
+    """Returner estimert salgsintervall basert på kalibrerte rabattsatser."""
+    if not pris or pris < 10000:
+        return None
+    ar = int(modell) if modell else None
+    if ar:
+        snitt_rabatt = _RABATT_PER_MODELLAAR.get(ar, _RABATT_SNITT)
+    else:
+        snitt_rabatt = _RABATT_SNITT
+    forsiktig = round(pris * (1 - snitt_rabatt / 2) / 1000) * 1000
+    realistisk = round(pris * (1 - snitt_rabatt) / 1000) * 1000
+    aggressivt = round(pris * (1 - _RABATT_AGGRESSIV) / 1000) * 1000
+    return {
+        "forsiktig": forsiktig,
+        "realistisk": realistisk,
+        "aggressivt": aggressivt,
+        "snitt_rabatt_pct": round(snitt_rabatt * 100, 1),
+        "ar_kalibrert": ar in _RABATT_PER_MODELLAAR if ar else False,
+    }
+
+
+def _selger_html(ad: dict) -> str:
+    """Formater selger-info for detaljside."""
+    kilde = ad.get("Kilde") or "finn"
+    navn = ad.get("SelgerNavn") or ""
+    stype = ad.get("SelgerType") or ""
+    org_id = ad.get("SelgerOrgId") or ""
+
+    if not navn and not stype and not org_id:
+        return "—"
+
+    er_privat = stype.lower() == "privat"
+    type_badge = (
+        '<span class="selger-privat">Privat</span>' if er_privat
+        else '<span class="selger-forhandler">Forhandler</span>' if stype
+        else ""
+    )
+
+    if navn:
+        if kilde == "autodb" and org_id:
+            lenke = f'<a href="https://www.autodb.no/forhandler/{org_id}" target="_blank" rel="noopener">{esc(navn)}</a>'
+        elif kilde in ("finn", "finn+autodb") and org_id and not er_privat:
+            lenke = f'<a href="https://www.finn.no/shops/{org_id}" target="_blank" rel="noopener">{esc(navn) or "Finn-forhandler"}</a>'
+        else:
+            lenke = esc(navn)
+        return f'{lenke} {type_badge}'.strip()
+
+    if not er_privat and org_id and kilde in ("finn", "finn+autodb"):
+        lenke = f'<a href="https://www.finn.no/shops/{org_id}" target="_blank" rel="noopener">Se forhandler på Finn</a>'
+        return f'{lenke} {type_badge}'.strip()
+
+    return type_badge or "—"
 
 
 def _kilde_badge(kilde):
@@ -2350,8 +2424,38 @@ def view_annonse(finnkode):
             }});
         }}
         </script>
+        """
+        selger_html = _selger_html(ad)
+        salgspris_est = beregn_forventet_salgspris(pris, ad.get("Modell"))
+        if salgspris_est:
+            kalibrert_note = (
+                f"Kalibrert mot {salgspris_est['snitt_rabatt_pct']}% snittrabatt for {ad.get('Modell')}-modeller"
+                if salgspris_est["ar_kalibrert"]
+                else f"Snittrabatt alle årsmodeller: {salgspris_est['snitt_rabatt_pct']}%"
+            )
+            sp_f = f"~{salgspris_est['forsiktig']:,} kr".replace(",", " ")
+            sp_r = f"~{salgspris_est['realistisk']:,} kr".replace(",", " ")
+            sp_a = f"~{salgspris_est['aggressivt']:,} kr".replace(",", " ")
+            salgspris_block = (
+                '<div class="salgspris-box">'
+                '<span class="lbl">Estimert salgspris</span>'
+                '<div class="salgspris-row">'
+                f'<div class="salgspris-item"><span class="salgspris-label">Forsiktig bud</span><span class="salgspris-value">{sp_f}</span></div>'
+                f'<div class="salgspris-item"><span class="salgspris-label">Realistisk landing</span><span class="salgspris-value">{sp_r}</span></div>'
+                f'<div class="salgspris-item"><span class="salgspris-label">Aggressivt åpningsbud</span><span class="salgspris-value">{sp_a}</span></div>'
+                '</div>'
+                f'<div class="salgspris-note">{esc(kalibrert_note)} · Basert på 78 historiske salg</div>'
+                '</div>'
+            )
+        else:
+            salgspris_block = ""
+
+        id_label = "AutodbId" if kilde == "autodb" else "Finnkode"
+        id_value = esc(ad.get("AutodbId") if kilde == "autodb" else finnkode)
+        vendbare = "Ja" if ad.get("VendbareForerstoler") == 1 else ("Nei" if ad.get("VendbareForerstoler") == 0 else "—")
+        html += f"""
         <div class="info-grid">
-            <div><span class="lbl">{"AutodbId" if kilde == "autodb" else "Finnkode"}:</span> <a href="{esc(ad_url)}" target="_blank">{esc(ad.get("AutodbId") if kilde == "autodb" else finnkode)}</a></div>
+            <div><span class="lbl">{id_label}:</span> <a href="{esc(ad_url)}" target="_blank">{id_value}</a></div>
             <div><span class="lbl">Modell:</span> {esc(ad.get('Modell')) or '—'}</div>
             <div><span class="lbl">Pris:</span> {esc(format_price(pris))}</div>
             <div><span class="lbl">Km:</span> {esc(ad.get('Kilometerstand')) or '—'}</div>
@@ -2363,9 +2467,11 @@ def view_annonse(finnkode):
             <div><span class="lbl">Lokasjon:</span> {esc(lokasjon) or '—'}</div>
             <div><span class="lbl">Sist sett:</span> <span class="{esc(alder_cls)}">{esc(alder_txt)}</span></div>
             <div><span class="lbl">Sengelayout:</span> {esc(ad.get('Sengelayout')) or '—'}</div>
-            <div><span class="lbl">Vendbare forseter:</span> {"Ja" if ad.get('VendbareForerstoler') == 1 else ("Nei" if ad.get('VendbareForerstoler') == 0 else "—")}</div>
+            <div><span class="lbl">Vendbare forseter:</span> {vendbare}</div>
+            <div><span class="lbl">Selger:</span> {selger_html}</div>
             <div><span class="lbl">Heftelser (Brreg):</span> {_heftelse_html(ad.get('Heftelser'), ad.get('HeftelseSjekket'), ad.get('HeftelserDetaljer'))}</div>
         </div>
+        {salgspris_block}
         {svv_block}
         <div class="beskrivelse">
             {esc(ad.get('Beskrivelse', ''))}
@@ -2568,7 +2674,7 @@ def view_mine_biler():
             </td>
             <td>
                 <button class="btn btn-sm btn-danger"
-                        onclick="fjernFavoritt({esc(finnkode)}, this)">✕</button>
+                        onclick="fjernFavoritt({esc(finnkode)}, this)">&#x2715;</button>
             </td>
         </tr>
         """
