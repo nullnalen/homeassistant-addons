@@ -852,15 +852,23 @@ async def _verifiser_stale_ads(
     async def sjekk(finnkode, autodb_id):
         async with semaphore:
             await asyncio.sleep(0.5)
-            if autodb_id and finnkode < 0:
-                er_solgt = await _autodb_er_solgt(session, autodb_id)
-            else:
-                er_solgt = await _finn_er_solgt(session, finnkode)
+            try:
+                er_autodb = bool(autodb_id) and (finnkode is None or int(finnkode) < 0)
+                if er_autodb:
+                    er_solgt = await _autodb_er_solgt(session, autodb_id)
+                elif finnkode is not None:
+                    er_solgt = await _finn_er_solgt(session, finnkode)
+                else:
+                    logger.warning("Ukjent annonse uten finnkode/autodb_id — hopper over")
+                    return
+            except Exception as e:
+                logger.warning("Feil ved verifisering av %s/%s: %s", finnkode, autodb_id, e)
+                return
             if er_solgt:
-                logger.info("Bekreftet solgt/inaktiv: Finnkode %s", finnkode)
+                logger.info("Bekreftet solgt/inaktiv: Finnkode %s / AutodbId %s", finnkode, autodb_id)
                 bekreftede.append((finnkode, autodb_id))
             else:
-                logger.info("Ikke bekreftet solgt — beholder: Finnkode %s", finnkode)
+                logger.info("Ikke bekreftet solgt — beholder: Finnkode %s / AutodbId %s", finnkode, autodb_id)
 
     await asyncio.gather(*(sjekk(fk, aid) for fk, aid in stale_rows))
     return bekreftede
@@ -1123,7 +1131,7 @@ def parse_autodb_ad(list_ad: dict, detail: dict | None) -> dict:
 
     return {
         "AutodbId": aditemid,
-        "Finnkode": None,
+        "Finnkode": -int(aditemid) if aditemid else None,
         "Annonsenavn": title,
         "Pris": pris,
         "Modell": yearmodel,
