@@ -1430,8 +1430,8 @@ async def main() -> None:
             update_database_autodb(autodb_ads, existing_kjennemerker, dry_run=DRY_RUN)
             alle_aktive_ads.extend(autodb_ads)
 
-    if alle_aktive_ads:
-        await mark_removed_ads(alle_aktive_ads, session=session, dry_run=DRY_RUN)
+        if alle_aktive_ads:
+            await mark_removed_ads(alle_aktive_ads, session=session, dry_run=DRY_RUN)
 
     logger.info("Avslutter script...")
 

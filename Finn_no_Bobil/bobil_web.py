@@ -358,6 +358,32 @@ def ensure_db_columns():
                     logger.error("Feil ved opprettelse av indeks %s: %s", idx_name, e)
         conn.commit()
 
+        # SolgtDato: legg til kolonne og bakfyll fra prisendringer om nødvendig
+        try:
+            cur.execute("ALTER TABLE bobil ADD COLUMN SolgtDato DATETIME NULL")
+            logger.info("La til kolonne SolgtDato i bobil-tabellen.")
+            conn.commit()
+        except mysql.connector.Error as e:
+            if e.errno != 1060:
+                logger.error("Feil ved ALTER TABLE SolgtDato: %s", e)
+        try:
+            cur.execute("""
+                UPDATE bobil b
+                JOIN (
+                    SELECT Finnkode, MAX(Tidspunkt) AS SolgtTidspunkt
+                    FROM prisendringer
+                    WHERE Pris = 'Solgt/Fjernet'
+                    GROUP BY Finnkode
+                ) p ON b.Finnkode = p.Finnkode
+                SET b.SolgtDato = p.SolgtTidspunkt
+                WHERE b.SolgtDato IS NULL
+            """)
+            if cur.rowcount > 0:
+                logger.info("Bakfylte SolgtDato for %d annonser.", cur.rowcount)
+            conn.commit()
+        except Exception as e:
+            logger.error("Feil ved bakfylling av SolgtDato: %s", e)
+
         # bruker_data: favoritter og notater per annonse
         try:
             cur.execute("""
@@ -653,27 +679,41 @@ def get_liggetid_statistikk():
     try:
         cur = conn.cursor(dictionary=True)
 
-        # Felles CTE: beregn liggetid for alle solgte med både Oppdatert og SolgtDato
+        # Felles CTE: beregn liggetid for solgte annonser.
+        # SolgtDato brukes primært; fallback til MAX(prisendringer.Tidspunkt) for eldre rader.
         liggetid_cte = """
-            WITH liggetid AS (
+            WITH solgt_dato AS (
+                SELECT Finnkode, MAX(Tidspunkt) AS SolgtTidspunkt
+                FROM prisendringer
+                WHERE Pris = 'Solgt/Fjernet'
+                GROUP BY Finnkode
+            ),
+            liggetid AS (
                 SELECT
                     b.Finnkode,
                     b.SvvMerke,
                     b.Typebobil,
                     CAST(REGEXP_REPLACE(b.Pris, '[^0-9]', '') AS UNSIGNED) AS PrisNum,
-                    DATEDIFF(b.SolgtDato, COALESCE(
-                        STR_TO_DATE(b.Oppdatert, '%%d. %%m. %%Y %%H:%%i'),
-                        STR_TO_DATE(LEFT(b.Oppdatert, 16), '%%Y-%%m-%%d %%H:%%i')
-                    )) AS Liggetid
+                    DATEDIFF(
+                        COALESCE(b.SolgtDato, sd.SolgtTidspunkt),
+                        COALESCE(
+                            STR_TO_DATE(b.Oppdatert, '%%d. %%m. %%Y %%H:%%i'),
+                            STR_TO_DATE(LEFT(b.Oppdatert, 16), '%%Y-%%m-%%d %%H:%%i')
+                        )
+                    ) AS Liggetid
                 FROM bobil b
+                LEFT JOIN solgt_dato sd ON b.Finnkode = sd.Finnkode
                 WHERE b.Solgt = 1
-                  AND b.SolgtDato IS NOT NULL
+                  AND COALESCE(b.SolgtDato, sd.SolgtTidspunkt) IS NOT NULL
                   AND b.Oppdatert IS NOT NULL
                   AND b.Oppdatert NOT IN ('', 'Ukjent')
-                  AND DATEDIFF(b.SolgtDato, COALESCE(
-                      STR_TO_DATE(b.Oppdatert, '%%d. %%m. %%Y %%H:%%i'),
-                      STR_TO_DATE(LEFT(b.Oppdatert, 16), '%%Y-%%m-%%d %%H:%%i')
-                  )) BETWEEN 1 AND 730
+                  AND DATEDIFF(
+                      COALESCE(b.SolgtDato, sd.SolgtTidspunkt),
+                      COALESCE(
+                          STR_TO_DATE(b.Oppdatert, '%%d. %%m. %%Y %%H:%%i'),
+                          STR_TO_DATE(LEFT(b.Oppdatert, 16), '%%Y-%%m-%%d %%H:%%i')
+                      )
+                  ) BETWEEN 1 AND 730
             )
         """
 
@@ -796,21 +836,31 @@ def get_liggetid_for_annonse(finnkode: int) -> dict | None:
         )
 
         liggetid_base = """
-            SELECT DATEDIFF(b.SolgtDato, COALESCE(
-                       STR_TO_DATE(b.Oppdatert, '%%d. %%m. %%Y %%H:%%i'),
-                       STR_TO_DATE(LEFT(b.Oppdatert, 16), '%%Y-%%m-%%d %%H:%%i')
-                   )) AS Liggetid,
+            SELECT DATEDIFF(
+                       COALESCE(b.SolgtDato, sd.SolgtTidspunkt),
+                       COALESCE(
+                           STR_TO_DATE(b.Oppdatert, '%%d. %%m. %%Y %%H:%%i'),
+                           STR_TO_DATE(LEFT(b.Oppdatert, 16), '%%Y-%%m-%%d %%H:%%i')
+                       )
+                   ) AS Liggetid,
                    CAST(REGEXP_REPLACE(b.Pris, '[^0-9]', '') AS UNSIGNED) AS PrisNum,
                    b.SvvMerke, b.Typebobil
             FROM bobil b
+            LEFT JOIN (
+                SELECT Finnkode, MAX(Tidspunkt) AS SolgtTidspunkt
+                FROM prisendringer WHERE Pris = 'Solgt/Fjernet' GROUP BY Finnkode
+            ) sd ON b.Finnkode = sd.Finnkode
             WHERE b.Solgt = 1
-              AND b.SolgtDato IS NOT NULL
+              AND COALESCE(b.SolgtDato, sd.SolgtTidspunkt) IS NOT NULL
               AND b.Oppdatert IS NOT NULL
               AND b.Oppdatert NOT IN ('', 'Ukjent')
-              AND DATEDIFF(b.SolgtDato, COALESCE(
+              AND DATEDIFF(
+                  COALESCE(b.SolgtDato, sd.SolgtTidspunkt),
+                  COALESCE(
                       STR_TO_DATE(b.Oppdatert, '%%d. %%m. %%Y %%H:%%i'),
                       STR_TO_DATE(LEFT(b.Oppdatert, 16), '%%Y-%%m-%%d %%H:%%i')
-                  )) BETWEEN 1 AND 730
+                  )
+              ) BETWEEN 1 AND 730
         """
 
         result = {}
