@@ -3265,6 +3265,23 @@ def api_dbdiag():
             {"fk": r[0], "solgt_dato": str(r[1]), "publisert_dato": str(r[2]), "liggetid": r[3], "kilde": r[4]}
             for r in cur.fetchall()
         ]
+        # Tidsspenn og omfang i prisendringer-tabellen
+        cur.execute("""
+            SELECT
+                MIN(Tidspunkt) AS eldste,
+                MAX(Tidspunkt) AS nyeste,
+                COUNT(*) AS totalt_rader,
+                COUNT(DISTINCT Finnkode) AS unike_annonser,
+                SUM(CASE WHEN Pris = 'Solgt/Fjernet' THEN 1 ELSE 0 END) AS solgt_rader,
+                SUM(CASE WHEN Pris REGEXP '^[0-9]+$' THEN 1 ELSE 0 END) AS pris_rader
+            FROM prisendringer
+        """)
+        r = cur.fetchone()
+        results["prisendringer_meta"] = {
+            "eldste": str(r[0]), "nyeste": str(r[1]),
+            "totalt_rader": r[2], "unike_annonser": r[3],
+            "solgt_rader": r[4], "pris_rader": r[5]
+        }
         return jsonify(results)
     except Exception as e:
         return jsonify({"error": str(e)})
