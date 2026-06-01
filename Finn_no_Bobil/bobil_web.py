@@ -645,6 +645,226 @@ def get_prisutvikling():
         conn.close()
 
 
+def get_liggetid_statistikk():
+    """Aggreger median liggetid (dager) for solgte annonser per merke, type og prisklasse."""
+    conn = get_db()
+    if not conn:
+        return {"per_merke": [], "per_type": [], "per_prisklasse": [], "totalt": None}
+    try:
+        cur = conn.cursor(dictionary=True)
+
+        # Felles CTE: beregn liggetid for alle solgte med både Oppdatert og SolgtDato
+        liggetid_cte = """
+            WITH liggetid AS (
+                SELECT
+                    b.Finnkode,
+                    b.SvvMerke,
+                    b.Typebobil,
+                    CAST(REGEXP_REPLACE(b.Pris, '[^0-9]', '') AS UNSIGNED) AS PrisNum,
+                    DATEDIFF(b.SolgtDato, COALESCE(
+                        STR_TO_DATE(b.Oppdatert, '%%d. %%m. %%Y %%H:%%i'),
+                        STR_TO_DATE(LEFT(b.Oppdatert, 16), '%%Y-%%m-%%d %%H:%%i')
+                    )) AS Liggetid
+                FROM bobil b
+                WHERE b.Solgt = 1
+                  AND b.SolgtDato IS NOT NULL
+                  AND b.Oppdatert IS NOT NULL
+                  AND b.Oppdatert NOT IN ('', 'Ukjent')
+                  AND DATEDIFF(b.SolgtDato, COALESCE(
+                      STR_TO_DATE(b.Oppdatert, '%%d. %%m. %%Y %%H:%%i'),
+                      STR_TO_DATE(LEFT(b.Oppdatert, 16), '%%Y-%%m-%%d %%H:%%i')
+                  )) BETWEEN 1 AND 730
+            )
+        """
+
+        # MySQL-kompatibel median via rownumber-trick
+        median_merke_sql = liggetid_cte + """
+            SELECT SvvMerke AS Gruppe,
+                   COUNT(*) AS Antall,
+                   ROUND(AVG(Liggetid)) AS SnittDager,
+                   CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(
+                       GROUP_CONCAT(Liggetid ORDER BY Liggetid SEPARATOR ','),
+                       ',', FLOOR((COUNT(*)+1)/2)
+                   ), ',', -1) AS UNSIGNED) AS MedianDager
+            FROM liggetid
+            WHERE SvvMerke IS NOT NULL AND SvvMerke != ''
+            GROUP BY SvvMerke
+            HAVING Antall >= 2
+            ORDER BY MedianDager ASC
+        """
+        cur.execute(median_merke_sql)
+        per_merke = cur.fetchall()
+
+        cur.execute(liggetid_cte + """
+            SELECT Typebobil AS Gruppe,
+                   COUNT(*) AS Antall,
+                   ROUND(AVG(Liggetid)) AS SnittDager,
+                   CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(
+                       GROUP_CONCAT(Liggetid ORDER BY Liggetid SEPARATOR ','),
+                       ',', FLOOR((COUNT(*)+1)/2)
+                   ), ',', -1) AS UNSIGNED) AS MedianDager
+            FROM liggetid
+            WHERE Typebobil IS NOT NULL AND Typebobil NOT IN ('', 'Ikke oppgitt')
+            GROUP BY Typebobil
+            HAVING Antall >= 2
+            ORDER BY MedianDager ASC
+        """)
+        per_type = cur.fetchall()
+
+        cur.execute(liggetid_cte + """
+            SELECT
+                CASE
+                    WHEN PrisNum < 200000  THEN 'Under 200k'
+                    WHEN PrisNum < 300000  THEN '200–300k'
+                    WHEN PrisNum < 400000  THEN '300–400k'
+                    WHEN PrisNum < 500000  THEN '400–500k'
+                    WHEN PrisNum < 700000  THEN '500–700k'
+                    WHEN PrisNum < 1000000 THEN '700k–1M'
+                    ELSE 'Over 1M'
+                END AS Gruppe,
+                CASE
+                    WHEN PrisNum < 200000  THEN 1
+                    WHEN PrisNum < 300000  THEN 2
+                    WHEN PrisNum < 400000  THEN 3
+                    WHEN PrisNum < 500000  THEN 4
+                    WHEN PrisNum < 700000  THEN 5
+                    WHEN PrisNum < 1000000 THEN 6
+                    ELSE 7
+                END AS SortKey,
+                COUNT(*) AS Antall,
+                ROUND(AVG(Liggetid)) AS SnittDager,
+                CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(
+                    GROUP_CONCAT(Liggetid ORDER BY Liggetid SEPARATOR ','),
+                    ',', FLOOR((COUNT(*)+1)/2)
+                ), ',', -1) AS UNSIGNED) AS MedianDager
+            FROM liggetid
+            WHERE PrisNum > 0
+            GROUP BY Gruppe, SortKey
+            HAVING Antall >= 2
+            ORDER BY SortKey
+        """)
+        per_prisklasse = cur.fetchall()
+
+        # Totalt antall solgte med liggetid-data
+        cur.execute(liggetid_cte + """
+            SELECT COUNT(*) AS Antall, ROUND(AVG(Liggetid)) AS SnittDager
+            FROM liggetid
+        """)
+        totalt = cur.fetchone()
+
+        return {
+            "per_merke": per_merke,
+            "per_type": per_type,
+            "per_prisklasse": per_prisklasse,
+            "totalt": totalt,
+        }
+    except Exception as e:
+        logger.error("Feil i get_liggetid_statistikk: %s\n%s", e, traceback.format_exc())
+        return {"per_merke": [], "per_type": [], "per_prisklasse": [], "totalt": None}
+    finally:
+        conn.close()
+
+
+def get_liggetid_for_annonse(finnkode: int) -> dict | None:
+    """Returner median liggetid for annonser i samme segment som gitt finnkode."""
+    conn = get_db()
+    if not conn:
+        return None
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            "SELECT SvvMerke, Typebobil, CAST(REGEXP_REPLACE(Pris, '[^0-9]', '') AS UNSIGNED) AS PrisNum "
+            "FROM bobil WHERE Finnkode = %s",
+            (finnkode,)
+        )
+        ad = cur.fetchone()
+        if not ad:
+            return None
+
+        merke = ad.get("SvvMerke")
+        typebobil = ad.get("Typebobil")
+        pris = ad.get("PrisNum") or 0
+
+        prisklasse_cond = (
+            "PrisNum < 200000" if pris < 200000 else
+            "PrisNum < 300000" if pris < 300000 else
+            "PrisNum < 400000" if pris < 400000 else
+            "PrisNum < 500000" if pris < 500000 else
+            "PrisNum < 700000" if pris < 700000 else
+            "PrisNum < 1000000" if pris < 1000000 else
+            "PrisNum >= 1000000"
+        )
+
+        liggetid_base = """
+            SELECT DATEDIFF(b.SolgtDato, COALESCE(
+                       STR_TO_DATE(b.Oppdatert, '%%d. %%m. %%Y %%H:%%i'),
+                       STR_TO_DATE(LEFT(b.Oppdatert, 16), '%%Y-%%m-%%d %%H:%%i')
+                   )) AS Liggetid,
+                   CAST(REGEXP_REPLACE(b.Pris, '[^0-9]', '') AS UNSIGNED) AS PrisNum,
+                   b.SvvMerke, b.Typebobil
+            FROM bobil b
+            WHERE b.Solgt = 1
+              AND b.SolgtDato IS NOT NULL
+              AND b.Oppdatert IS NOT NULL
+              AND b.Oppdatert NOT IN ('', 'Ukjent')
+              AND DATEDIFF(b.SolgtDato, COALESCE(
+                      STR_TO_DATE(b.Oppdatert, '%%d. %%m. %%Y %%H:%%i'),
+                      STR_TO_DATE(LEFT(b.Oppdatert, 16), '%%Y-%%m-%%d %%H:%%i')
+                  )) BETWEEN 1 AND 730
+        """
+
+        result = {}
+
+        # Snitt for samme merke
+        if merke:
+            cur.execute(
+                f"SELECT COUNT(*) AS Antall, ROUND(AVG(Liggetid)) AS SnittDager "
+                f"FROM ({liggetid_base}) AS t WHERE SvvMerke = %s",
+                (merke,)
+            )
+            row = cur.fetchone()
+            if row and row["Antall"] >= 2:
+                result["merke"] = {"navn": merke, **row}
+
+        # Snitt for samme type
+        if typebobil and typebobil not in ("", "Ikke oppgitt"):
+            cur.execute(
+                f"SELECT COUNT(*) AS Antall, ROUND(AVG(Liggetid)) AS SnittDager "
+                f"FROM ({liggetid_base}) AS t WHERE Typebobil = %s",
+                (typebobil,)
+            )
+            row = cur.fetchone()
+            if row and row["Antall"] >= 2:
+                result["type"] = {"navn": typebobil, **row}
+
+        # Snitt for samme prisklasse
+        if pris > 0:
+            cur.execute(
+                f"SELECT COUNT(*) AS Antall, ROUND(AVG(Liggetid)) AS SnittDager "
+                f"FROM ({liggetid_base}) AS t WHERE {prisklasse_cond}"
+            )
+            row = cur.fetchone()
+            if row and row["Antall"] >= 2:
+                result["prisklasse"] = {"navn": _prisklasse_navn(pris), **row}
+
+        return result if result else None
+    except Exception as e:
+        logger.error("Feil i get_liggetid_for_annonse: %s\n%s", e, traceback.format_exc())
+        return None
+    finally:
+        conn.close()
+
+
+def _prisklasse_navn(pris: int) -> str:
+    if pris < 200000:  return "under 200k"
+    if pris < 300000:  return "200–300k"
+    if pris < 400000:  return "300–400k"
+    if pris < 500000:  return "400–500k"
+    if pris < 700000:  return "500–700k"
+    if pris < 1000000: return "700k–1M"
+    return "over 1M"
+
+
 def get_sokresultater(keywords_str):
     """View 4: Nøkkelord-søk i beskrivelse og annonsenavn."""
     if not keywords_str or not keywords_str.strip():
@@ -1256,6 +1476,26 @@ TEMPLATE = """
             font-size: 0.9rem;
         }
 
+        /* ── Statistikk-panel ── */
+        .stat-header { margin-bottom: 24px; }
+        .stat-header h2 { margin-bottom: 6px; }
+        .stat-ingress { color: var(--label-pri); margin-bottom: 4px; }
+        .stat-note { color: var(--label-ter); font-size: 0.82rem; font-style: italic; }
+        .stat-section { margin-bottom: 32px; }
+        .stat-section h3 { font-size: 1rem; font-weight: 600; margin-bottom: 8px; color: var(--label-sec); }
+        .stat-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+        .stat-table th, .stat-table td { padding: 6px 10px; border-bottom: 1px solid var(--sep); text-align: left; }
+        .stat-table th { font-weight: 600; color: var(--label-sec); }
+        .stat-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+        .stat-empty { padding: 48px 20px; text-align: center; }
+        .liggetid-hint { font-size: 0.8rem; color: var(--label-ter); margin-top: 4px; }
+        .liggetid-hint strong { color: var(--label-sec); }
+        .liggetid-box { background: var(--card-bg); border: 1px solid var(--sep); border-radius: 10px; padding: 12px 16px; margin: 12px 0; }
+        .liggetid-box .lbl { display: block; font-size: 0.78rem; font-weight: 600; color: var(--label-ter); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+        .liggetid-list { margin: 0 0 6px 0; padding-left: 18px; font-size: 0.88rem; color: var(--label-pri); }
+        .liggetid-list li { margin-bottom: 2px; }
+        .liggetid-note { font-size: 0.78rem; color: var(--label-ter); }
+
         /* ── Truncate / nowrap ── */
         .truncate {
             max-width: 280px;
@@ -1590,6 +1830,7 @@ TEMPLATE = """
             <a href="{{ bp }}prisutvikling" class="tab {{ 'active' if active_tab == 'prisutvikling' }}">Prisutvikling</a>
             <a href="{{ bp }}sok" class="tab {{ 'active' if active_tab == 'sok' }}">Søk</a>
             <a href="{{ bp }}detaljer" class="tab {{ 'active' if active_tab == 'detaljer' }}">Detaljert</a>
+            <a href="{{ bp }}statistikk" class="tab {{ 'active' if active_tab == 'statistikk' }}">Markedsdata</a>
             <a href="{{ bp }}mine-biler" class="tab tab-star {{ 'active' if active_tab == 'mine-biler' }}">★ Mine biler</a>
         </nav>
 
@@ -1853,6 +2094,32 @@ def beregn_forventet_salgspris(pris: int | None, modell: int | None) -> dict | N
     }
 
 
+def _liggetid_html(data: dict | None) -> str:
+    """Render markedssammenligning-blokk for annonsedetalj."""
+    if not data:
+        return ""
+    linjer = []
+    if "merke" in data:
+        d = data["merke"]
+        linjer.append(f"<strong>{esc(d['navn'])}</strong>: snitt {d['SnittDager']} dager ({d['Antall']} solgte)")
+    if "type" in data:
+        d = data["type"]
+        linjer.append(f"Type <strong>{esc(d['navn'])}</strong>: snitt {d['SnittDager']} dager ({d['Antall']} solgte)")
+    if "prisklasse" in data:
+        d = data["prisklasse"]
+        linjer.append(f"Prisklasse <strong>{esc(d['navn'])}</strong>: snitt {d['SnittDager']} dager ({d['Antall']} solgte)")
+    if not linjer:
+        return ""
+    items = "".join(f"<li>{l}</li>" for l in linjer)
+    return f"""
+    <div class="liggetid-box">
+        <span class="lbl">Liggetid — sammenlignbare biler</span>
+        <ul class="liggetid-list">{items}</ul>
+        <div class="liggetid-note">Basert på solgte annonser vi har sporet. <a href="../statistikk">Se full markedsstatistikk →</a></div>
+    </div>
+    """
+
+
 def _selger_html(ad: dict) -> str:
     """Formater selger-info for detaljside."""
     kilde = ad.get("Kilde") or "finn"
@@ -2044,6 +2311,70 @@ def view_prisutvikling():
         prev_modell = r["Modell"]
     html += "</tbody></table>"
     return render_page("prisutvikling", html)
+
+
+@app.route("/statistikk")
+def view_statistikk():
+    data = get_liggetid_statistikk()
+    totalt = data.get("totalt") or {}
+    per_merke = data.get("per_merke", [])
+    per_type = data.get("per_type", [])
+    per_prisklasse = data.get("per_prisklasse", [])
+
+    antall_totalt = totalt.get("Antall", 0)
+    snitt_totalt = totalt.get("SnittDager")
+
+    if antall_totalt == 0:
+        return render_page("statistikk", """
+            <div class="stat-empty">
+                <h2>Markedsdata — liggetid</h2>
+                <p class="no-data">Ikke nok data ennå. Statistikken bygges opp etter hvert som annonser blir solgt og fjernet fra markedet.</p>
+            </div>
+        """)
+
+    def _tabell(tittel, rader, gruppe_label):
+        if not rader:
+            return ""
+        rows_html = "".join(
+            f"<tr>"
+            f"<td>{esc(r['Gruppe'])}</td>"
+            f"<td class='num'>{r['MedianDager']}</td>"
+            f"<td class='num'>{r['SnittDager']}</td>"
+            f"<td class='num'>{r['Antall']}</td>"
+            f"</tr>"
+            for r in rader
+        )
+        return f"""
+        <div class="stat-section">
+            <h3>{tittel}</h3>
+            <table class="stat-table">
+                <thead><tr>
+                    <th class="sortable">{gruppe_label}</th>
+                    <th class="sortable" data-sort="number">Median dager</th>
+                    <th class="sortable" data-sort="number">Snitt dager</th>
+                    <th class="sortable" data-sort="number">Antall solgte</th>
+                </tr></thead>
+                <tbody>{rows_html}</tbody>
+            </table>
+        </div>
+        """
+
+    snitt_txt = f"{snitt_totalt} dager" if snitt_totalt else "—"
+    html = f"""
+    <div class="stat-header">
+        <h2>Markedsdata — liggetid</h2>
+        <p class="stat-ingress">
+            Basert på <strong>{antall_totalt}</strong> solgte annonser der vi har registrert
+            både publiseringsdato og salgsdato.
+            Gjennomsnittlig liggetid totalt: <strong>{snitt_txt}</strong>.
+        </p>
+        <p class="stat-note">Liggetid = antall dager fra annonsens publiseringsdato til den ble fjernet fra markedet.</p>
+    </div>
+    {_tabell("Per merke", per_merke, "Merke")}
+    {_tabell("Per bobil-type", per_type, "Type")}
+    {_tabell("Per prisklasse", per_prisklasse, "Prisklasse")}
+    """
+    return render_page("statistikk", html)
 
 
 @app.route("/sok")
@@ -2508,6 +2839,7 @@ def view_annonse(finnkode):
         </script>
         """
         selger_html = _selger_html(ad)
+        liggetid_data = get_liggetid_for_annonse(finnkode)
         salgspris_est = beregn_forventet_salgspris(pris, ad.get("Modell"))
         if salgspris_est:
             kalibrert_note = (
@@ -2554,6 +2886,7 @@ def view_annonse(finnkode):
             <div><span class="lbl">Heftelser (Brreg):</span> {_heftelse_html(ad.get('Heftelser'), ad.get('HeftelseSjekket'), ad.get('HeftelserDetaljer'))}</div>
         </div>
         {salgspris_block}
+        {_liggetid_html(liggetid_data)}
         {svv_block}
         <div class="beskrivelse">
             {esc(ad.get('Beskrivelse', ''))}

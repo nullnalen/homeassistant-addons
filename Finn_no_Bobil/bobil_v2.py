@@ -804,6 +804,39 @@ def ensure_autodb_sist_endret_column() -> None:
         conn.close()
 
 
+def ensure_solgt_dato_column() -> None:
+    """Legg til SolgtDato i bobil-tabellen og bakfyll fra prisendringer hvis mulig."""
+    conn = connect_to_database()
+    if not conn:
+        return
+    try:
+        cursor = conn.cursor()
+        try:
+            cursor.execute("ALTER TABLE bobil ADD COLUMN SolgtDato DATETIME NULL")
+            logger.info("La til kolonne SolgtDato i bobil-tabellen.")
+            conn.commit()
+        except Exception as e:
+            if "Duplicate column" not in str(e) and "1060" not in str(e):
+                logger.error("Feil ved ALTER TABLE SolgtDato: %s", e)
+                return
+        # Bakfyll SolgtDato fra prisendringer der Pris = 'Solgt/Fjernet'
+        cursor.execute("""
+            UPDATE bobil b
+            JOIN (
+                SELECT Finnkode, MAX(Tidspunkt) AS SolgtTidspunkt
+                FROM prisendringer
+                WHERE Pris = 'Solgt/Fjernet'
+                GROUP BY Finnkode
+            ) p ON b.Finnkode = p.Finnkode
+            SET b.SolgtDato = p.SolgtTidspunkt
+            WHERE b.SolgtDato IS NULL
+        """)
+        conn.commit()
+        logger.info("Bakfylte SolgtDato for eksisterende solgte annonser.")
+    finally:
+        conn.close()
+
+
 async def _finn_er_solgt(session: aiohttp.ClientSession, finnkode: int) -> bool:
     """Dobbeltsjekk: hent Finn-annonsen direkte og se etter solgt/inaktiv-markør i HTML."""
     url = f"https://www.finn.no/mobility/item/{finnkode}"
@@ -942,7 +975,10 @@ async def mark_removed_ads(
         for finnkode, _ in bekreftede:
             logger.info("[%s] Markerer Finnkode %s som Solgt/Fjernet.", mode, finnkode)
             if not dry_run:
-                cursor.execute("UPDATE bobil SET Solgt = 1 WHERE Finnkode = %s", (finnkode,))
+                cursor.execute(
+                    "UPDATE bobil SET Solgt = 1, SolgtDato = %s WHERE Finnkode = %s",
+                    (now, finnkode)
+                )
                 try:
                     cursor.execute(
                         "INSERT INTO prisendringer (Finnkode, Pris) VALUES (%s, %s)",
@@ -1372,6 +1408,7 @@ async def main() -> None:
     ensure_opprettet_column()
     ensure_selger_columns()
     ensure_autodb_sist_endret_column()
+    ensure_solgt_dato_column()
 
     alle_aktive_ads = []
 
