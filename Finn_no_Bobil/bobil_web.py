@@ -3209,7 +3209,10 @@ def api_dbdiag():
             ON b.Finnkode = p.Finnkode WHERE b.Solgt=1
         """)
         results["solgte_med_prisrad"] = cur.fetchone()[0]
-        # Liggetid-distribusjon med ny logikk (forste_sett fra prisendringer)
+        # PublisertDato-dekning
+        cur.execute("SELECT COUNT(*) FROM bobil WHERE Solgt=1 AND PublisertDato IS NOT NULL")
+        results["solgte_med_publisert_dato"] = cur.fetchone()[0]
+        # Liggetid-distribusjon basert på b.PublisertDato
         cur.execute("""
             SELECT
                 SUM(CASE WHEN liggetid < 0 THEN 1 ELSE 0 END) AS negativ,
@@ -3219,17 +3222,18 @@ def api_dbdiag():
                 SUM(CASE WHEN liggetid > 730 THEN 1 ELSE 0 END) AS over_730,
                 COUNT(*) AS totalt
             FROM (
-                SELECT DATEDIFF(COALESCE(b.SolgtDato, sd.SolgtTidspunkt), fs.ErstSett) AS liggetid
+                SELECT DATEDIFF(
+                    COALESCE(b.SolgtDato, sd.SolgtTidspunkt),
+                    b.PublisertDato
+                ) AS liggetid
                 FROM bobil b
                 LEFT JOIN (
                     SELECT Finnkode, MAX(Tidspunkt) AS SolgtTidspunkt
                     FROM prisendringer WHERE Pris='Solgt/Fjernet' GROUP BY Finnkode
                 ) sd ON b.Finnkode = sd.Finnkode
-                JOIN (
-                    SELECT Finnkode, MIN(Tidspunkt) AS ErstSett
-                    FROM prisendringer WHERE Pris REGEXP '^[0-9]+$' GROUP BY Finnkode
-                ) fs ON b.Finnkode = fs.Finnkode
-                WHERE b.Solgt=1 AND COALESCE(b.SolgtDato, sd.SolgtTidspunkt) IS NOT NULL
+                WHERE b.Solgt=1
+                  AND b.PublisertDato IS NOT NULL
+                  AND COALESCE(b.SolgtDato, sd.SolgtTidspunkt) IS NOT NULL
             ) t
         """)
         r = cur.fetchone()
@@ -3237,24 +3241,24 @@ def api_dbdiag():
             "negativ": r[0], "null_dager": r[1], "en_til_30": r[2],
             "trettien_til_730": r[3], "over_730": r[4], "totalt": r[5]
         }
-        # 5 eksempler med liggetid-detaljer
+        # 5 eksempler inkl. negative (for å diagnostisere problemet)
         cur.execute("""
-            SELECT b.Finnkode, b.SolgtDato, fs.ErstSett,
-                   DATEDIFF(COALESCE(b.SolgtDato, sd.SolgtTidspunkt), fs.ErstSett) AS liggetid
+            SELECT b.Finnkode, b.SolgtDato, b.PublisertDato,
+                   DATEDIFF(COALESCE(b.SolgtDato, sd.SolgtTidspunkt), b.PublisertDato) AS liggetid,
+                   b.Kilde
             FROM bobil b
             LEFT JOIN (
                 SELECT Finnkode, MAX(Tidspunkt) AS SolgtTidspunkt
                 FROM prisendringer WHERE Pris='Solgt/Fjernet' GROUP BY Finnkode
             ) sd ON b.Finnkode = sd.Finnkode
-            JOIN (
-                SELECT Finnkode, MIN(Tidspunkt) AS ErstSett
-                FROM prisendringer WHERE Pris REGEXP '^[0-9]+$' GROUP BY Finnkode
-            ) fs ON b.Finnkode = fs.Finnkode
-            WHERE b.Solgt=1 AND COALESCE(b.SolgtDato, sd.SolgtTidspunkt) IS NOT NULL
+            WHERE b.Solgt=1
+              AND b.PublisertDato IS NOT NULL
+              AND COALESCE(b.SolgtDato, sd.SolgtTidspunkt) IS NOT NULL
+            ORDER BY liggetid ASC
             LIMIT 10
         """)
         results["eksempler"] = [
-            {"fk": r[0], "solgt_dato": str(r[1]), "erst_sett": str(r[2]), "liggetid": r[3]}
+            {"fk": r[0], "solgt_dato": str(r[1]), "publisert_dato": str(r[2]), "liggetid": r[3], "kilde": r[4]}
             for r in cur.fetchall()
         ]
         return jsonify(results)
