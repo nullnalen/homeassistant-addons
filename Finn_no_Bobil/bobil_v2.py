@@ -856,20 +856,6 @@ def ensure_publisert_dato_column() -> None:
         except Exception as e:
             if "Duplicate column" not in str(e) and "1060" not in str(e):
                 logger.error("Feil ved ALTER TABLE PublisertDato: %s", e)
-        # Bakfyll fra eldste prisrad (uten SolgtFjernet-rader)
-        cursor.execute("""
-            UPDATE bobil b
-            JOIN (
-                SELECT Finnkode, MIN(Tidspunkt) AS ErstSett
-                FROM prisendringer
-                WHERE Pris REGEXP '^[0-9]+$'
-                GROUP BY Finnkode
-            ) p ON b.Finnkode = p.Finnkode
-            SET b.PublisertDato = p.ErstSett
-            WHERE b.PublisertDato IS NULL
-        """)
-        conn.commit()
-        logger.info("Bakfylte PublisertDato for eksisterende annonser.")
     finally:
         conn.close()
 

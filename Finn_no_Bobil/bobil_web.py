@@ -391,23 +391,27 @@ def ensure_db_columns():
         except mysql.connector.Error as e:
             if e.errno != 1060:
                 logger.error("Feil ved ALTER TABLE PublisertDato: %s", e)
+        # Nullstill feilaktig bakfylte PublisertDato — alle rader med nøyaktig samme sekund
+        # er satt av en maskin-bakfylling, ikke fra kildedata
         try:
             cur.execute("""
-                UPDATE bobil b
-                JOIN (
-                    SELECT Finnkode, MIN(Tidspunkt) AS ErstSett
-                    FROM prisendringer
-                    WHERE Pris REGEXP '^[0-9]+$'
-                    GROUP BY Finnkode
-                ) p ON b.Finnkode = p.Finnkode
-                SET b.PublisertDato = p.ErstSett
-                WHERE b.PublisertDato IS NULL
+                UPDATE bobil SET PublisertDato = NULL
+                WHERE PublisertDato IS NOT NULL
+                  AND PublisertDato = (
+                      SELECT ts FROM (
+                          SELECT PublisertDato AS ts FROM bobil
+                          WHERE PublisertDato IS NOT NULL
+                          GROUP BY PublisertDato
+                          HAVING COUNT(*) > 50
+                          LIMIT 1
+                      ) x
+                  )
             """)
             if cur.rowcount > 0:
-                logger.info("Bakfylte PublisertDato for %d annonser.", cur.rowcount)
+                logger.info("Nullstilte %d feilaktig bakfylte PublisertDato-verdier.", cur.rowcount)
             conn.commit()
         except Exception as e:
-            logger.error("Feil ved bakfylling av PublisertDato: %s", e)
+            logger.error("Feil ved nullstilling av PublisertDato: %s", e)
 
         # bruker_data: favoritter og notater per annonse
         try:
