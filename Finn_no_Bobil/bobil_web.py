@@ -3187,16 +3187,61 @@ def api_dbdiag():
         results["har_solgt_dato"] = cur.fetchone()[0]
         cur.execute("SELECT COUNT(DISTINCT Finnkode) FROM prisendringer WHERE Pris='Solgt/Fjernet'")
         results["prisendringer_solgt"] = cur.fetchone()[0]
-        cur.execute("SELECT Finnkode, LEFT(Oppdatert,25), SolgtDato FROM bobil WHERE Solgt=1 AND SolgtDato IS NOT NULL LIMIT 5")
-        results["eksempler"] = [{"fk": r[0], "oppdatert": str(r[1]), "solgt_dato": str(r[2])} for r in cur.fetchall()]
+        # Hvor mange solgte har minst én prisrad i prisendringer?
         cur.execute("""
-            SELECT COUNT(*) FROM bobil b WHERE b.Solgt=1 AND b.SolgtDato IS NOT NULL
-            AND DATEDIFF(b.SolgtDato, COALESCE(
-                STR_TO_DATE(b.Oppdatert, '%d. %m. %Y %H:%i'),
-                STR_TO_DATE(LEFT(b.Oppdatert,16), '%Y-%m-%d %H:%i')
-            )) BETWEEN 1 AND 730
+            SELECT COUNT(*) FROM bobil b
+            JOIN (SELECT DISTINCT Finnkode FROM prisendringer WHERE Pris REGEXP '^[0-9]+$') p
+            ON b.Finnkode = p.Finnkode WHERE b.Solgt=1
         """)
-        results["liggetid_gyldig"] = cur.fetchone()[0]
+        results["solgte_med_prisrad"] = cur.fetchone()[0]
+        # Liggetid-distribusjon med ny logikk (forste_sett fra prisendringer)
+        cur.execute("""
+            SELECT
+                SUM(CASE WHEN liggetid < 0 THEN 1 ELSE 0 END) AS negativ,
+                SUM(CASE WHEN liggetid = 0 THEN 1 ELSE 0 END) AS null_dager,
+                SUM(CASE WHEN liggetid BETWEEN 1 AND 30 THEN 1 ELSE 0 END) AS en_til_30,
+                SUM(CASE WHEN liggetid BETWEEN 31 AND 730 THEN 1 ELSE 0 END) AS trettien_til_730,
+                SUM(CASE WHEN liggetid > 730 THEN 1 ELSE 0 END) AS over_730,
+                COUNT(*) AS totalt
+            FROM (
+                SELECT DATEDIFF(COALESCE(b.SolgtDato, sd.SolgtTidspunkt), fs.ErstSett) AS liggetid
+                FROM bobil b
+                LEFT JOIN (
+                    SELECT Finnkode, MAX(Tidspunkt) AS SolgtTidspunkt
+                    FROM prisendringer WHERE Pris='Solgt/Fjernet' GROUP BY Finnkode
+                ) sd ON b.Finnkode = sd.Finnkode
+                JOIN (
+                    SELECT Finnkode, MIN(Tidspunkt) AS ErstSett
+                    FROM prisendringer WHERE Pris REGEXP '^[0-9]+$' GROUP BY Finnkode
+                ) fs ON b.Finnkode = fs.Finnkode
+                WHERE b.Solgt=1 AND COALESCE(b.SolgtDato, sd.SolgtTidspunkt) IS NOT NULL
+            ) t
+        """)
+        r = cur.fetchone()
+        results["liggetid_dist"] = {
+            "negativ": r[0], "null_dager": r[1], "en_til_30": r[2],
+            "trettien_til_730": r[3], "over_730": r[4], "totalt": r[5]
+        }
+        # 5 eksempler med liggetid-detaljer
+        cur.execute("""
+            SELECT b.Finnkode, b.SolgtDato, fs.ErstSett,
+                   DATEDIFF(COALESCE(b.SolgtDato, sd.SolgtTidspunkt), fs.ErstSett) AS liggetid
+            FROM bobil b
+            LEFT JOIN (
+                SELECT Finnkode, MAX(Tidspunkt) AS SolgtTidspunkt
+                FROM prisendringer WHERE Pris='Solgt/Fjernet' GROUP BY Finnkode
+            ) sd ON b.Finnkode = sd.Finnkode
+            JOIN (
+                SELECT Finnkode, MIN(Tidspunkt) AS ErstSett
+                FROM prisendringer WHERE Pris REGEXP '^[0-9]+$' GROUP BY Finnkode
+            ) fs ON b.Finnkode = fs.Finnkode
+            WHERE b.Solgt=1 AND COALESCE(b.SolgtDato, sd.SolgtTidspunkt) IS NOT NULL
+            LIMIT 10
+        """)
+        results["eksempler"] = [
+            {"fk": r[0], "solgt_dato": str(r[1]), "erst_sett": str(r[2]), "liggetid": r[3]}
+            for r in cur.fetchall()
+        ]
         return jsonify(results)
     except Exception as e:
         return jsonify({"error": str(e)})
