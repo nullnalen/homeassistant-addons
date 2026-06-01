@@ -3177,6 +3177,37 @@ def view_mine_biler():
     return render_page("mine-biler", html)
 
 
+@app.route("/api/dbdiag")
+def api_dbdiag():
+    conn = get_db()
+    if not conn:
+        return jsonify({"error": "no db"})
+    try:
+        cur = conn.cursor()
+        results = {}
+        cur.execute("SELECT COUNT(*) FROM bobil WHERE Solgt=1")
+        results["solgt_totalt"] = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM bobil WHERE Solgt=1 AND SolgtDato IS NOT NULL")
+        results["har_solgt_dato"] = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(DISTINCT Finnkode) FROM prisendringer WHERE Pris='Solgt/Fjernet'")
+        results["prisendringer_solgt"] = cur.fetchone()[0]
+        cur.execute("SELECT Finnkode, LEFT(Oppdatert,25), SolgtDato FROM bobil WHERE Solgt=1 AND SolgtDato IS NOT NULL LIMIT 5")
+        results["eksempler"] = [{"fk": r[0], "oppdatert": str(r[1]), "solgt_dato": str(r[2])} for r in cur.fetchall()]
+        cur.execute("""
+            SELECT COUNT(*) FROM bobil b WHERE b.Solgt=1 AND b.SolgtDato IS NOT NULL
+            AND DATEDIFF(b.SolgtDato, COALESCE(
+                STR_TO_DATE(b.Oppdatert, '%d. %m. %Y %H:%i'),
+                STR_TO_DATE(LEFT(b.Oppdatert,16), '%Y-%m-%d %H:%i')
+            )) BETWEEN 1 AND 730
+        """)
+        results["liggetid_gyldig"] = cur.fetchone()[0]
+        return jsonify(results)
+    except Exception as e:
+        return jsonify({"error": str(e)})
+    finally:
+        conn.close()
+
+
 @app.route("/api/status")
 def api_status():
     return jsonify({
