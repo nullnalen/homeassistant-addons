@@ -384,6 +384,31 @@ def ensure_db_columns():
         except Exception as e:
             logger.error("Feil ved bakfylling av SolgtDato: %s", e)
 
+        # PublisertDato: faktisk publiseringsdato fra Finn/autodb — settes ved INSERT, aldri overskreves
+        try:
+            cur.execute("ALTER TABLE bobil ADD COLUMN PublisertDato DATETIME NULL")
+            conn.commit()
+        except mysql.connector.Error as e:
+            if e.errno != 1060:
+                logger.error("Feil ved ALTER TABLE PublisertDato: %s", e)
+        try:
+            cur.execute("""
+                UPDATE bobil b
+                JOIN (
+                    SELECT Finnkode, MIN(Tidspunkt) AS ErstSett
+                    FROM prisendringer
+                    WHERE Pris REGEXP '^[0-9]+$'
+                    GROUP BY Finnkode
+                ) p ON b.Finnkode = p.Finnkode
+                SET b.PublisertDato = p.ErstSett
+                WHERE b.PublisertDato IS NULL
+            """)
+            if cur.rowcount > 0:
+                logger.info("Bakfylte PublisertDato for %d annonser.", cur.rowcount)
+            conn.commit()
+        except Exception as e:
+            logger.error("Feil ved bakfylling av PublisertDato: %s", e)
+
         # bruker_data: favoritter og notater per annonse
         try:
             cur.execute("""
@@ -680,19 +705,12 @@ def get_liggetid_statistikk():
         cur = conn.cursor(dictionary=True)
 
         # Felles CTE: beregn liggetid for solgte annonser.
-        # Bruker MIN(prisendringer.Tidspunkt) som "første sett"-dato — mer pålitelig enn
-        # Oppdatert-kolonnen som overskrives ved hver scrape-kjøring.
+        # Bruker b.PublisertDato — satt fra Finn/autodb API ved første INSERT, aldri overskreves.
         liggetid_cte = """
             WITH solgt_dato AS (
                 SELECT Finnkode, MAX(Tidspunkt) AS SolgtTidspunkt
                 FROM prisendringer
                 WHERE Pris = 'Solgt/Fjernet'
-                GROUP BY Finnkode
-            ),
-            forste_sett AS (
-                SELECT Finnkode, MIN(Tidspunkt) AS ErstSett
-                FROM prisendringer
-                WHERE Pris REGEXP '^[0-9]+$'
                 GROUP BY Finnkode
             ),
             liggetid AS (
@@ -703,16 +721,16 @@ def get_liggetid_statistikk():
                     CAST(REGEXP_REPLACE(b.Pris, '[^0-9]', '') AS UNSIGNED) AS PrisNum,
                     DATEDIFF(
                         COALESCE(b.SolgtDato, sd.SolgtTidspunkt),
-                        fs.ErstSett
+                        b.PublisertDato
                     ) AS Liggetid
                 FROM bobil b
                 LEFT JOIN solgt_dato sd ON b.Finnkode = sd.Finnkode
-                JOIN forste_sett fs ON b.Finnkode = fs.Finnkode
                 WHERE b.Solgt = 1
                   AND COALESCE(b.SolgtDato, sd.SolgtTidspunkt) IS NOT NULL
+                  AND b.PublisertDato IS NOT NULL
                   AND DATEDIFF(
                       COALESCE(b.SolgtDato, sd.SolgtTidspunkt),
-                      fs.ErstSett
+                      b.PublisertDato
                   ) BETWEEN 0 AND 730
             )
         """
@@ -838,7 +856,7 @@ def get_liggetid_for_annonse(finnkode: int) -> dict | None:
         liggetid_base = """
             SELECT DATEDIFF(
                        COALESCE(b.SolgtDato, sd.SolgtTidspunkt),
-                       fs.ErstSett
+                       b.PublisertDato
                    ) AS Liggetid,
                    CAST(REGEXP_REPLACE(b.Pris, '[^0-9]', '') AS UNSIGNED) AS PrisNum,
                    b.SvvMerke, b.Typebobil
@@ -847,15 +865,12 @@ def get_liggetid_for_annonse(finnkode: int) -> dict | None:
                 SELECT Finnkode, MAX(Tidspunkt) AS SolgtTidspunkt
                 FROM prisendringer WHERE Pris = 'Solgt/Fjernet' GROUP BY Finnkode
             ) sd ON b.Finnkode = sd.Finnkode
-            JOIN (
-                SELECT Finnkode, MIN(Tidspunkt) AS ErstSett
-                FROM prisendringer WHERE Pris REGEXP '^[0-9]+$' GROUP BY Finnkode
-            ) fs ON b.Finnkode = fs.Finnkode
             WHERE b.Solgt = 1
               AND COALESCE(b.SolgtDato, sd.SolgtTidspunkt) IS NOT NULL
+              AND b.PublisertDato IS NOT NULL
               AND DATEDIFF(
                   COALESCE(b.SolgtDato, sd.SolgtTidspunkt),
-                  fs.ErstSett
+                  b.PublisertDato
               ) BETWEEN 0 AND 730
         """
 

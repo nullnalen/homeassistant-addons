@@ -237,6 +237,7 @@ def extract_info_from_json(json_data: dict) -> list[dict]:
             dealer_seg = ad.get("dealer_segment", "") or ""
             selger_type = "Privat" if dealer_seg.lower() == "privat" else ("Forhandler" if org_id else "")
 
+            publisert_dato = datetime.fromtimestamp(timestamp / 1000) if timestamp else None
             extracted_data.append({
                 "Finnkode": finnkode,
                 "Annonsenavn": ad.get("heading"),
@@ -244,6 +245,7 @@ def extract_info_from_json(json_data: dict) -> list[dict]:
                 "Modell": ad.get("year"),
                 "Kilometerstand": ad.get("mileage"),
                 "Oppdatert": formatted_date,
+                "PublisertDato": publisert_dato,
                 "URL": url,
                 "ImageURL": image_url,
                 "Lokasjon": location,
@@ -359,7 +361,7 @@ def format_kilometerstand(km: str) -> str:
 
 _FELT_NAVN = [
     "Annonsenavn", "Modell", "Kilometerstand", "Girkasse", "Beskrivelse",
-    "Nyttelast", "Typebobil", "Oppdatert", "URL", "Pris", "ImageURL", "Lokasjon",
+    "Nyttelast", "Typebobil", "Oppdatert", "PublisertDato", "URL", "Pris", "ImageURL", "Lokasjon",
     "Kjennemerke", "SvvMerke", "SvvHandelsbetegnelse", "SvvTypebetegnelse",
     "SvvAarsmodell", "SvvForstegangNorge", "SvvRegistreringsstatus",
     "SvvEuKontrollfrist", "SvvEuSistGodkjent",
@@ -457,6 +459,7 @@ def _build_nye_verdier(ad: dict) -> list:
         ad["Detaljer"].get("Nyttelast", "Ikke oppgitt"),
         ad["Detaljer"].get("Type bobil", "Ikke oppgitt"),
         ad["Oppdatert"],
+        ad.get("PublisertDato"),
         ad["URL"],
         ny_pris_int,
         ad.get("ImageURL", ""),
@@ -558,12 +561,12 @@ class BobilRepository:
 
     def upsert(self, ad: dict, nye_verdier: list) -> None:
         finnkode = ad["Finnkode"]
-        placeholders = ", ".join(["%s"] * (23 + len(_SVV_COLS)))
+        placeholders = ", ".join(["%s"] * (24 + len(_SVV_COLS)))
         fn = _FELT_NAVN
         query = f"""
             INSERT INTO bobil (
                 Finnkode, Annonsenavn, Modell, Kilometerstand, Girkasse, Beskrivelse,
-                Nyttelast, Typebobil, Oppdatert, URL, Pris, ImageURL, Lokasjon,
+                Nyttelast, Typebobil, Oppdatert, PublisertDato, URL, Pris, ImageURL, Lokasjon,
                 Kjennemerke, {", ".join(_SVV_COLS)},
                 Sengelayout, VendbareForerstoler, Heftelser, HeftelseSjekket, HeftelserDetaljer,
                 SelgerNavn, SelgerType, SelgerOrgId, Kilde
@@ -577,6 +580,7 @@ class BobilRepository:
                 Nyttelast = VALUES(Nyttelast),
                 Typebobil = VALUES(Typebobil),
                 Oppdatert = VALUES(Oppdatert),
+                PublisertDato = IF(PublisertDato IS NULL AND VALUES(PublisertDato) IS NOT NULL, VALUES(PublisertDato), PublisertDato),
                 URL = VALUES(URL),
                 Pris = VALUES(Pris),
                 ImageURL = VALUES(ImageURL),
@@ -603,6 +607,7 @@ class BobilRepository:
             nye_verdier[fn.index("Nyttelast")],
             nye_verdier[fn.index("Typebobil")],
             nye_verdier[fn.index("Oppdatert")],
+            nye_verdier[fn.index("PublisertDato")],
             nye_verdier[fn.index("URL")],
             nye_verdier[fn.index("Pris")],
             nye_verdier[fn.index("ImageURL")],
@@ -833,6 +838,38 @@ def ensure_solgt_dato_column() -> None:
         """)
         conn.commit()
         logger.info("Bakfylte SolgtDato for eksisterende solgte annonser.")
+    finally:
+        conn.close()
+
+
+def ensure_publisert_dato_column() -> None:
+    """Legg til PublisertDato i bobil og bakfyll fra MIN(prisendringer.Tidspunkt)."""
+    conn = connect_to_database()
+    if not conn:
+        return
+    try:
+        cursor = conn.cursor()
+        try:
+            cursor.execute("ALTER TABLE bobil ADD COLUMN PublisertDato DATETIME NULL")
+            logger.info("La til kolonne PublisertDato i bobil-tabellen.")
+            conn.commit()
+        except Exception as e:
+            if "Duplicate column" not in str(e) and "1060" not in str(e):
+                logger.error("Feil ved ALTER TABLE PublisertDato: %s", e)
+        # Bakfyll fra eldste prisrad (uten SolgtFjernet-rader)
+        cursor.execute("""
+            UPDATE bobil b
+            JOIN (
+                SELECT Finnkode, MIN(Tidspunkt) AS ErstSett
+                FROM prisendringer
+                WHERE Pris REGEXP '^[0-9]+$'
+                GROUP BY Finnkode
+            ) p ON b.Finnkode = p.Finnkode
+            SET b.PublisertDato = p.ErstSett
+            WHERE b.PublisertDato IS NULL
+        """)
+        conn.commit()
+        logger.info("Bakfylte PublisertDato for eksisterende annonser.")
     finally:
         conn.close()
 
@@ -1173,6 +1210,7 @@ def parse_autodb_ad(list_ad: dict, detail: dict | None) -> dict:
         "Modell": yearmodel,
         "Kilometerstand": km,
         "Oppdatert": list_ad.get("timePublished") or list_ad.get("timeModified") or "",
+        "PublisertDato": list_ad.get("timePublished") or None,
         "SistSett": list_ad.get("timeModified") or "",
         "AutodbSistEndret": list_ad.get("timeModified") or "",
         "URL": f"https://www.autodb.no/view/{aditemid}",
@@ -1297,8 +1335,16 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
             svv = ad.get("VegvesenData") or {}
             svv_data = _build_svv_data_tuple(svv)
             tekst_nlp = ad.get("Annonsenavn", "") or ""
-            placeholders_a = ", ".join(["%s"] * (26 + len(_SVV_COLS)))
+            placeholders_a = ", ".join(["%s"] * (27 + len(_SVV_COLS)))
             autodb_sist_endret_str = _iso_to_str(ad.get("AutodbSistEndret")) if ad.get("AutodbSistEndret") else None
+            publisert_dato_str = _iso_to_str(ad.get("PublisertDato")) if ad.get("PublisertDato") else None
+            # Konverter tilbake til datetime for PublisertDato-kolonnen
+            publisert_dato_dt = None
+            if publisert_dato_str and publisert_dato_str != "Ukjent":
+                try:
+                    publisert_dato_dt = datetime.strptime(publisert_dato_str, DATE_FORMAT)
+                except Exception:
+                    pass
 
             if not dry_run:
                 try:
@@ -1306,7 +1352,7 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                         INSERT INTO bobil (
                             Finnkode, AutodbId, Annonsenavn, Modell, Kilometerstand,
                             Girkasse, Beskrivelse, Nyttelast, Typebobil,
-                            Oppdatert, SistSett, AutodbSistEndret, URL, Pris, ImageURL, Lokasjon, Kjennemerke,
+                            Oppdatert, PublisertDato, SistSett, AutodbSistEndret, URL, Pris, ImageURL, Lokasjon, Kjennemerke,
                             {", ".join(_SVV_COLS)},
                             Sengelayout, VendbareForerstoler, Heftelser, HeftelseSjekket,
                             HeftelserDetaljer, SelgerNavn, SelgerType, SelgerOrgId, Kilde
@@ -1321,6 +1367,7 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                             Lokasjon = VALUES(Lokasjon),
                             Kjennemerke = VALUES(Kjennemerke),
                             Oppdatert = IF(VALUES(Oppdatert) < Oppdatert, VALUES(Oppdatert), Oppdatert),
+                            PublisertDato = IF(PublisertDato IS NULL AND VALUES(PublisertDato) IS NOT NULL, VALUES(PublisertDato), PublisertDato),
                             SistSett = VALUES(SistSett),
                             AutodbSistEndret = IF(VALUES(AutodbSistEndret) IS NOT NULL AND (AutodbSistEndret IS NULL OR VALUES(AutodbSistEndret) > AutodbSistEndret), VALUES(AutodbSistEndret), AutodbSistEndret),
                             {_SVV_UPSERT_CLAUSE},
@@ -1342,6 +1389,7 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                         "Ikke oppgitt",
                         "Ikke oppgitt",
                         oppdatert_str,
+                        publisert_dato_dt,
                         sistsett_str,
                         autodb_sist_endret_str,
                         ad["URL"],
@@ -1409,6 +1457,7 @@ async def main() -> None:
     ensure_selger_columns()
     ensure_autodb_sist_endret_column()
     ensure_solgt_dato_column()
+    ensure_publisert_dato_column()
 
     alle_aktive_ads = []
 
