@@ -3906,8 +3906,10 @@ def trigger_scrape():
     return redirect(request.referrer or "annonser")
 
 
-@app.route("/api/favoritt/<int:finnkode>", methods=["POST"])
+@app.route("/api/favoritt/<finnkode>", methods=["POST"])
 def api_toggle_favoritt(finnkode):
+    try: finnkode = int(finnkode)
+    except (TypeError, ValueError): return jsonify({"ok": False}), 400
     """Toggle favoritt-status for en annonse."""
     conn = get_db()
     if not conn:
@@ -3930,10 +3932,13 @@ def api_toggle_favoritt(finnkode):
         conn.close()
 
 
-@app.route("/api/notat/<int:finnkode>", methods=["POST"])
+@app.route("/api/notat/<finnkode>", methods=["POST"])
 def api_lagre_notat(finnkode):
     """Lagre notat for en annonse."""
-    notat = request.json.get("notat", "") if request.is_json else request.form.get("notat", "")
+    try: finnkode = int(finnkode)
+    except (TypeError, ValueError): return jsonify({"ok": False}), 400
+    notat = request.get_json(force=True, silent=True) or {}
+    notat = notat.get("notat", "") if isinstance(notat, dict) else request.form.get("notat", "")
     conn = get_db()
     if not conn:
         return jsonify({"ok": False}), 500
@@ -3953,8 +3958,10 @@ def api_lagre_notat(finnkode):
         conn.close()
 
 
-@app.route("/api/prisvarsel/<int:finnkode>", methods=["POST"])
+@app.route("/api/prisvarsel/<finnkode>", methods=["POST"])
 def api_sett_prisvarsel(finnkode):
+    try: finnkode = int(finnkode)
+    except (TypeError, ValueError): return jsonify({"ok": False}), 400
     """Lagre eller slett prisvarselgrense for en favoritt."""
     try:
         data = request.get_json(force=True, silent=True) or {}
@@ -3982,8 +3989,10 @@ def api_sett_prisvarsel(finnkode):
         conn.close()
 
 
-@app.route("/api/score_justering/<int:finnkode>", methods=["POST"])
+@app.route("/api/score_justering/<finnkode>", methods=["POST"])
 def api_sett_score_justering(finnkode):
+    try: finnkode = int(finnkode)
+    except (TypeError, ValueError): return jsonify({"ok": False}), 400
     """Lagre manuell scorejustering (-30 til +30) for en annonse."""
     try:
         data = request.get_json(force=True, silent=True) or {}
