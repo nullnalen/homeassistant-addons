@@ -3793,8 +3793,8 @@ def view_annonse(finnkode):
                     <div><span class="lbl">Lokasjon:</span> {esc(lokasjon) or '—'}</div>
                     <div><span class="lbl">Sist sett:</span> <span class="{esc(alder_cls)}">{esc(alder_txt)}</span></div>
                     <div><span class="lbl">Selger:</span> {selger_html}</div>
-                    <div><span class="lbl">Heftelser:</span> {_heftelse_html(ad.get('Heftelser'), ad.get('HeftelseSjekket'), ad.get('HeftelserDetaljer'))}{'&nbsp;<a class="heft-ekstern-link" href="https://losoreregisteret.no/registeringsrett/motorvogn/' + kjennemerke.replace(' ', '') + '" target="_blank" rel="noopener">Sjekk ↗</a>' if kjennemerke else ''}</div>
-                    {'<div><span class="lbl">Kjennemerke:</span> <a href="https://www.vegvesen.no/kjoretoy/kjop-og-salg/kjoretoyopplysninger/?registreringsnummer=' + kjennemerke.replace(' ', '') + '" target="_blank" rel="noopener">' + esc(kjennemerke) + ' ↗</a></div>' if kjennemerke else ''}
+                    <div><span class="lbl">Heftelser:</span> {_heftelse_html(ad.get('Heftelser'), ad.get('HeftelseSjekket'), ad.get('HeftelserDetaljer'))}{'&nbsp;<a class="heft-ekstern-link" href="https://rettsstiftelser.brreg.no/nb/oppslag/motorvogn/' + kjennemerke.replace(' ', '') + '" target="_blank" rel="noopener">Sjekk brreg ↗</a>' if kjennemerke else ''}</div>
+                    {'<div><span class="lbl">Kjennemerke:</span> <a href="https://www.vegvesen.no/kjoretoy/kjop-og-salg/kjoretoyopplysninger/sjekk-kjoretoyopplysninger/?registreringsnummer=' + kjennemerke.replace(' ', '') + '" target="_blank" rel="noopener">' + esc(kjennemerke) + ' ↗</a></div>' if kjennemerke else ''}
                     <div><span class="lbl">{id_label}:</span> <a href="{esc(ad_url)}" target="_blank">{id_value}</a></div>
                 </div>
                 <div class="hero-lenker">{ext_links_html}</div>
@@ -3956,12 +3956,13 @@ def api_lagre_notat(finnkode):
 @app.route("/api/prisvarsel/<int:finnkode>", methods=["POST"])
 def api_sett_prisvarsel(finnkode):
     """Lagre eller slett prisvarselgrense for en favoritt."""
-    grense = request.json.get("grense") if request.is_json else None
-    if grense is not None:
-        try:
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        grense = data.get("grense")
+        if grense is not None:
             grense = int(grense)
-        except (TypeError, ValueError):
-            grense = None
+    except (TypeError, ValueError):
+        grense = None
     conn = get_db()
     if not conn:
         return jsonify({"ok": False}), 500
@@ -3984,9 +3985,9 @@ def api_sett_prisvarsel(finnkode):
 @app.route("/api/score_justering/<int:finnkode>", methods=["POST"])
 def api_sett_score_justering(finnkode):
     """Lagre manuell scorejustering (-30 til +30) for en annonse."""
-    justering = request.json.get("justering", 0) if request.is_json else 0
     try:
-        justering = max(-30, min(30, int(justering)))
+        data = request.get_json(force=True, silent=True) or {}
+        justering = max(-30, min(30, int(data.get("justering", 0))))
     except (TypeError, ValueError):
         justering = 0
     conn = get_db()
