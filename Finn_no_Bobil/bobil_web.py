@@ -441,6 +441,21 @@ def ensure_db_columns():
             if e.errno != 1060:
                 logger.error("Feil ved ALTER TABLE ScoreJustering: %s", e)
 
+        # Bakfyll ImageURL for autodb-rader som mangler bilde
+        try:
+            cur.execute("""
+                UPDATE bobil
+                SET ImageURL = CONCAT('https://www.autodb.no/assets/img/items/', AutodbId, '.jpg')
+                WHERE Kilde = 'autodb'
+                  AND AutodbId IS NOT NULL
+                  AND (ImageURL IS NULL OR ImageURL = '')
+            """)
+            if cur.rowcount > 0:
+                logger.info("Bakfylte ImageURL for %d autodb-rader.", cur.rowcount)
+            conn.commit()
+        except Exception as e:
+            logger.error("Feil ved bakfylling av autodb ImageURL: %s", e)
+
     except Exception as e:
         logger.error("Feil i ensure_db_columns: %s", e)
     finally:
