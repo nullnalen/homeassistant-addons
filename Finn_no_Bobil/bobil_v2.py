@@ -213,13 +213,11 @@ def extract_info_from_json(json_data: dict) -> list[dict]:
                 continue
             timestamp = ad.get("timestamp")
             formatted_date = datetime.fromtimestamp(timestamp / 1000).strftime(DATE_FORMAT) if timestamp else "Ukjent"
-            # Hent bilde-URL fra API (første bilde)
-            images = ad.get("images", [])
+            # Hent bilde-URL fra API — Finn.no returnerer "image" (entall, dict)
             image_url = ""
-            if images:
-                img = images[0] if isinstance(images[0], dict) else {}
-                image_url = img.get("url", img.get("uri", ""))
-                # Finn.no bruker ofte path-baserte URLs
+            img = ad.get("image") or {}
+            if isinstance(img, dict):
+                image_url = img.get("url", "")
                 if image_url and not image_url.startswith("http"):
                     image_url = f"https://images.finncdn.no/dynamic/480x360c/{image_url}"
 
