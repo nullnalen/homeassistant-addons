@@ -3314,26 +3314,23 @@ def view_annonse(finnkode):
 
         <!-- ── Tabs ── -->
         <div class="ad-tabs">
-            <button class="ad-tab active" data-tab="oversikt">Oversikt</button>
+            <button class="ad-tab active" data-tab="marked">Marked &amp; pris</button>
+            <button class="ad-tab" data-tab="oversikt">Oversikt</button>
             <button class="ad-tab" data-tab="vegvesen">Vegvesen</button>
-            <button class="ad-tab" data-tab="marked">Marked</button>
-            <button class="ad-tab" data-tab="prishistorikk">Prishistorikk</button>
         </div>
 
-        <div class="ad-tab-panel" data-panel="oversikt">
+        <div class="ad-tab-panel" data-panel="marked">
+            {salgspris_block}
+            {_liggetid_html(liggetid_data)}
+            {pris_chart_html}
+            {pris_tabell_html}
+        </div>
+        <div class="ad-tab-panel" data-panel="oversikt" hidden>
             {_merke_html(ad)}
             <div class="beskrivelse">{esc(ad.get('Beskrivelse', ''))}</div>
         </div>
         <div class="ad-tab-panel" data-panel="vegvesen" hidden>
             {svv_block if svv_block else '<p class="note-secondary">Ingen Vegvesen-data tilgjengelig.</p>'}
-        </div>
-        <div class="ad-tab-panel" data-panel="marked" hidden>
-            {salgspris_block}
-            {_liggetid_html(liggetid_data)}
-        </div>
-        <div class="ad-tab-panel" data-panel="prishistorikk" hidden>
-            {pris_chart_html}
-            {pris_tabell_html}
         </div>
 
         <script>
