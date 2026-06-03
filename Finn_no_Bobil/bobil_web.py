@@ -426,6 +426,13 @@ def ensure_db_columns():
             conn.commit()
         except Exception as e:
             logger.error("Feil ved oppretting av bruker_data: %s", e)
+        try:
+            cur.execute("ALTER TABLE bruker_data ADD COLUMN PrisVarsel INT NULL")
+            conn.commit()
+            logger.info("La til kolonne PrisVarsel i bruker_data.")
+        except mysql.connector.Error as e:
+            if e.errno != 1060:
+                logger.error("Feil ved ALTER TABLE PrisVarsel: %s", e)
 
     except Exception as e:
         logger.error("Feil i ensure_db_columns: %s", e)
@@ -440,11 +447,11 @@ def get_bruker_data(finnkode: int) -> dict:
         return {"favoritt": False, "notat": ""}
     try:
         cur = conn.cursor(dictionary=True)
-        cur.execute("SELECT Favoritt, Notat FROM bruker_data WHERE Finnkode = %s", (finnkode,))
+        cur.execute("SELECT Favoritt, Notat, PrisVarsel FROM bruker_data WHERE Finnkode = %s", (finnkode,))
         row = cur.fetchone()
         if row:
-            return {"favoritt": bool(row["Favoritt"]), "notat": row["Notat"] or ""}
-        return {"favoritt": False, "notat": ""}
+            return {"favoritt": bool(row["Favoritt"]), "notat": row["Notat"] or "", "prisvarsel": row["PrisVarsel"]}
+        return {"favoritt": False, "notat": "", "prisvarsel": None}
     except Exception:
         return {"favoritt": False, "notat": ""}
     finally:
@@ -463,7 +470,7 @@ def get_alle_favoritter() -> list[dict]:
                    b.Lokasjon, b.ImageURL, b.SvvNyttelast, b.SvvLengde,
                    b.SvvTilhengervektMedBrems, b.SvvEuKontrollfrist,
                    b.Sengelayout, b.Heftelser, b.HeftelserDetaljer, b.Solgt,
-                   u.Favoritt, u.Notat, u.Oppdatert AS BrukerOppdatert,
+                   u.Favoritt, u.Notat, u.PrisVarsel, u.Oppdatert AS BrukerOppdatert,
                    MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris,
                    MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris
             FROM bruker_data u
@@ -474,7 +481,7 @@ def get_alle_favoritter() -> list[dict]:
                      b.Lokasjon, b.ImageURL, b.SvvNyttelast, b.SvvLengde,
                      b.SvvTilhengervektMedBrems, b.SvvEuKontrollfrist,
                      b.Sengelayout, b.Heftelser, b.HeftelserDetaljer, b.Solgt,
-                     u.Favoritt, u.Notat, u.Oppdatert
+                     u.Favoritt, u.Notat, u.PrisVarsel, u.Oppdatert
             ORDER BY u.Oppdatert DESC
         """)
         rows = cur.fetchall()
@@ -1879,10 +1886,26 @@ TEMPLATE = """
         /* ── Price colors ── */
         .price-down { color: var(--green); }
         .price-up   { color: var(--red); }
-        .score      { font-weight: 700; display: inline-block; min-width: 2.2em; text-align: center; border-radius: 4px; padding: 1px 5px; }
+        .score      { font-weight: 700; display: inline-block; min-width: 2.2em; text-align: center; border-radius: 4px; padding: 1px 5px; position: relative; cursor: help; }
         .score-high { background: #d4edda; color: #155724; }
         .score-mid  { background: #fff3cd; color: #856404; }
         .score-low  { background: #f8d7da; color: #721c24; }
+        .score[data-tooltip]:hover::after {
+            content: attr(data-tooltip);
+            position: absolute; left: 50%; transform: translateX(-50%);
+            top: calc(100% + 6px); white-space: pre-line; text-align: left;
+            background: var(--card-bg); color: var(--label); border: 1px solid var(--sep);
+            border-radius: 6px; padding: 8px 10px; font-size: 0.78rem; font-weight: 400;
+            width: 220px; z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+            pointer-events: none;
+        }
+        /* Prisvarsel */
+        .prisvarsel-celle { white-space: nowrap; }
+        .prisvarsel-utloest { color: var(--red); font-weight: 700; font-size: 0.85rem; }
+        .prisvarsel-satt { color: var(--label-sec); font-size: 0.85rem; }
+        .prisvarsel-rediger { cursor: pointer; opacity: 0.4; font-size: 0.8rem; margin-left: 4px; }
+        .prisvarsel-rediger:hover { opacity: 1; }
+        .prisvarsel-input { width: 90px; font-size: 0.82rem; padding: 2px 5px; border-radius: 4px; border: 1px solid var(--sep); background: var(--card-bg); color: var(--label); }
 
         /* ── Age colors ── */
         .age-fresh   { color: var(--green); }
@@ -2931,6 +2954,46 @@ def render_page(active_tab, content_html, base_path=""):
     )
 
 
+def _score_tooltip(r: dict) -> str:
+    """Bygg forklarende tooltip-tekst for kjøpsscore."""
+    now = datetime.now()
+    lines = []
+
+    eu_frist = r.get("SvvEuKontrollfrist") or ""
+    try:
+        if eu_frist:
+            mnd = max(0, (datetime.strptime(eu_frist[:10], "%Y-%m-%d") - now).days // 30)
+            lines.append(f"EU-frist: {mnd} mnd igjen")
+    except (ValueError, TypeError):
+        pass
+
+    nyttelast = r.get("SvvNyttelast") or 0
+    if nyttelast:
+        lines.append(f"Nyttelast: {nyttelast} kg")
+
+    km = parse_km(r.get("Kilometerstand"))
+    try:
+        aar = int(r.get("SvvAarsmodell") or r.get("Modell") or 0)
+    except (TypeError, ValueError):
+        aar = 0
+    if km and aar and aar > 2000:
+        km_aar = km / max(1, now.year - aar)
+        lines.append(f"Km/år: {int(km_aar):,}".replace(",", " "))
+
+    pris = parse_price(r.get("Pris"))
+    hoyeste = r.get("HoyestePris")
+    if pris and hoyeste and hoyeste > pris:
+        pst = int((hoyeste - pris) / hoyeste * 100)
+        lines.append(f"Prisfall: {pst}%")
+
+    merke = r.get("SvvMerke") or (r.get("Annonsenavn", "") or "").split()[0] if r.get("Annonsenavn") else ""
+    risiko = FORUM_RISIKO.get(merke)
+    if risiko is not None:
+        lines.append(f"Merkerisiko: -{risiko}p")
+
+    return "\n".join(lines) if lines else "Kjøpsscore 0–100"
+
+
 @app.route("/")
 def index():
     return redirect("annonser")
@@ -2966,9 +3029,10 @@ def view_annonser():
         score = r.get("KjopsScore", 0)
         score_cls = "score-high" if score >= 70 else ("score-mid" if score >= 40 else "score-low")
         nyttelast = f"{r['SvvNyttelast']} kg" if r.get('SvvNyttelast') else '—'
+        score_tooltip = _score_tooltip(r)
         html += f"""
             <tr>
-                <td><span class="score {score_cls}">{score}</span></td>
+                <td><span class="score {score_cls}" data-tooltip="{esc(score_tooltip)}">{score}</span></td>
                 <td class="truncate"><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Annonsenavn'])}</a>{ny_badge}{_kilde_badge(r.get('Kilde'))}</td>
                 <td>{esc(r['Modell'])}</td>
                 <td>{esc(r['NaaverendePris'])}</td>
@@ -3759,6 +3823,34 @@ def api_lagre_notat(finnkode):
         conn.close()
 
 
+@app.route("/api/prisvarsel/<int:finnkode>", methods=["POST"])
+def api_sett_prisvarsel(finnkode):
+    """Lagre eller slett prisvarselgrense for en favoritt."""
+    grense = request.json.get("grense") if request.is_json else None
+    if grense is not None:
+        try:
+            grense = int(grense)
+        except (TypeError, ValueError):
+            grense = None
+    conn = get_db()
+    if not conn:
+        return jsonify({"ok": False}), 500
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute("SELECT Finnkode FROM bruker_data WHERE Finnkode = %s", (finnkode,))
+        if cur.fetchone():
+            cur.execute("UPDATE bruker_data SET PrisVarsel = %s WHERE Finnkode = %s", (grense, finnkode))
+        else:
+            cur.execute("INSERT INTO bruker_data (Finnkode, PrisVarsel) VALUES (%s, %s)", (finnkode, grense))
+        conn.commit()
+        return jsonify({"ok": True, "grense": grense})
+    except Exception as e:
+        logger.error("Feil i api_sett_prisvarsel: %s", e)
+        return jsonify({"ok": False}), 500
+    finally:
+        conn.close()
+
+
 @app.route("/mine-biler")
 def view_mine_biler():
     rows = get_alle_favoritter()
@@ -3776,6 +3868,7 @@ def view_mine_biler():
     html += '<th class="sortable">Seng</th>'
     html += '<th class="sortable">EU-frist</th>'
     html += '<th class="sortable">Heftelser</th>'
+    html += '<th>Prisvarsel</th>'
     html += '<th>Lenke</th>'
     html += '<th>Notat</th>'
     html += '<th></th>'
@@ -3791,6 +3884,16 @@ def view_mine_biler():
         notat_tekst = esc(r.get("Notat") or "")
         finnkode = r["Finnkode"]
 
+        prisvarsel = r.get("PrisVarsel")
+        naaverende_pris = parse_price(r.get("Pris"))
+        utloest = prisvarsel and naaverende_pris and naaverende_pris <= prisvarsel
+        prisvarsel_badge = (
+            f'<span class="prisvarsel-utloest" title="Pris er under varselterskelen!">🔔 {format_price(prisvarsel)}</span>'
+            if utloest else
+            (f'<span class="prisvarsel-satt">{format_price(prisvarsel)}</span>' if prisvarsel else "")
+        )
+        prisvarsel_verdi = str(prisvarsel) if prisvarsel else ""
+
         html += f"""
         <tr>
             <td class="thumb-cell">{thumb}</td>
@@ -3804,6 +3907,17 @@ def view_mine_biler():
             <td>{esc(r.get('Sengelayout')) or '—'}</td>
             <td>{eu_frist}</td>
             <td>{_heftelse_badge(r.get('Heftelser'), r.get('HeftelserDetaljer'))}</td>
+            <td class="prisvarsel-celle">
+                {prisvarsel_badge}
+                <span class="prisvarsel-rediger" onclick="togglePrisvarsel({esc(finnkode)})" title="Sett prisvarsel">✎</span>
+                <div id="prisvarsel-form-{esc(finnkode)}" style="display:none; margin-top:4px;">
+                    <input id="prisvarsel-txt-{esc(finnkode)}" type="number" step="1000"
+                           class="prisvarsel-input" value="{esc(prisvarsel_verdi)}"
+                           placeholder="Kr-grense">
+                    <button class="btn btn-sm mt-4" onclick="lagrePrisvarsel({esc(finnkode)})">OK</button>
+                    <button class="btn btn-sm" onclick="slettPrisvarsel({esc(finnkode)})">Slett</button>
+                </div>
+            </td>
             <td class="nowrap">{_kilde_lenker(r)}</td>
             <td>
                 <span class="notat-vis" data-fk="{esc(finnkode)}"
@@ -3849,6 +3963,30 @@ def view_mine_biler():
         fetch('api/favoritt/' + fk, {method: 'POST'})
             .then(r => r.json())
             .then(d => { if (d.ok && !d.favoritt) btn.closest('tr').remove(); });
+    }
+    function togglePrisvarsel(fk) {
+        const form = document.getElementById('prisvarsel-form-' + fk);
+        form.style.display = form.style.display === 'none' ? 'block' : 'none';
+    }
+    function lagrePrisvarsel(fk) {
+        const val = document.getElementById('prisvarsel-txt-' + fk).value;
+        const grense = val ? parseInt(val) : null;
+        fetch('api/prisvarsel/' + fk, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({grense: grense})
+        }).then(r => r.json()).then(d => {
+            if (d.ok) location.reload();
+        });
+    }
+    function slettPrisvarsel(fk) {
+        fetch('api/prisvarsel/' + fk, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({grense: null})
+        }).then(r => r.json()).then(d => {
+            if (d.ok) location.reload();
+        });
     }
     </script>
     """
