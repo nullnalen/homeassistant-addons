@@ -3312,11 +3312,14 @@ def view_annonse(finnkode):
             </div>
         </details>
 
+        <!-- ── Beskrivelse fra annonsen ── -->
+        {f'<div class="beskrivelse">{esc(ad.get("Beskrivelse", ""))}</div>' if ad.get("Beskrivelse") else ""}
+
         <!-- ── Tabs ── -->
         <div class="ad-tabs">
             <button class="ad-tab active" data-tab="marked">Marked &amp; pris</button>
-            <button class="ad-tab" data-tab="oversikt">Oversikt</button>
             <button class="ad-tab" data-tab="vegvesen">Vegvesen</button>
+            <button class="ad-tab" data-tab="merke">Merkebeskrivelse</button>
         </div>
 
         <div class="ad-tab-panel" data-panel="marked">
@@ -3325,12 +3328,11 @@ def view_annonse(finnkode):
             {pris_chart_html}
             {pris_tabell_html}
         </div>
-        <div class="ad-tab-panel" data-panel="oversikt" hidden>
-            {_merke_html(ad)}
-            <div class="beskrivelse">{esc(ad.get('Beskrivelse', ''))}</div>
-        </div>
         <div class="ad-tab-panel" data-panel="vegvesen" hidden>
             {svv_block if svv_block else '<p class="note-secondary">Ingen Vegvesen-data tilgjengelig.</p>'}
+        </div>
+        <div class="ad-tab-panel" data-panel="merke" hidden>
+            {_merke_html(ad)}
         </div>
 
         <script>
