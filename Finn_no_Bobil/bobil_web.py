@@ -2517,32 +2517,49 @@ TEMPLATE = """
         </div>
     </div>
     <script>
+        function _applySort(table, idx, dir) {
+            const tbody = table.querySelector('tbody');
+            const ths = Array.from(table.querySelectorAll('th'));
+            const type = ths[idx]?.dataset.sort || 'string';
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            ths.forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
+            ths[idx]?.classList.add(dir === 1 ? 'sort-asc' : 'sort-desc');
+            rows.sort((a, b) => {
+                const aCell = a.children[idx];
+                const bCell = b.children[idx];
+                let aVal = aCell?.textContent.trim() || '';
+                let bVal = bCell?.textContent.trim() || '';
+                if (type === 'number') {
+                    const aNum = parseFloat(aCell?.dataset.sortValue ?? aVal.replace(/[^\\d.-]/g, '')) || 0;
+                    const bNum = parseFloat(bCell?.dataset.sortValue ?? bVal.replace(/[^\\d.-]/g, '')) || 0;
+                    return (aNum - bNum) * dir;
+                }
+                return aVal.localeCompare(bVal, 'no') * dir;
+            });
+            rows.forEach(row => tbody.appendChild(row));
+        }
+
+        const _sortKey = 'tblSort:' + location.pathname;
+
         document.querySelectorAll('th.sortable').forEach(th => {
             th.addEventListener('click', () => {
                 const table = th.closest('table');
-                const tbody = table.querySelector('tbody');
                 const idx = Array.from(th.parentNode.children).indexOf(th);
-                const type = th.dataset.sort || 'string';
-                const rows = Array.from(tbody.querySelectorAll('tr'));
                 const isAsc = th.classList.contains('sort-asc');
-                table.querySelectorAll('th').forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
-                th.classList.add(isAsc ? 'sort-desc' : 'sort-asc');
                 const dir = isAsc ? -1 : 1;
-                rows.sort((a, b) => {
-                    const aCell = a.children[idx];
-                    const bCell = b.children[idx];
-                    let aVal = aCell?.textContent.trim() || '';
-                    let bVal = bCell?.textContent.trim() || '';
-                    if (type === 'number') {
-                        const aNum = parseFloat(aCell?.dataset.sortValue ?? aVal.replace(/[^\\d.-]/g, '')) || 0;
-                        const bNum = parseFloat(bCell?.dataset.sortValue ?? bVal.replace(/[^\\d.-]/g, '')) || 0;
-                        return (aNum - bNum) * dir;
-                    }
-                    return aVal.localeCompare(bVal, 'no') * dir;
-                });
-                rows.forEach(row => tbody.appendChild(row));
+                _applySort(table, idx, dir);
+                try { sessionStorage.setItem(_sortKey, JSON.stringify({idx, dir})); } catch(e) {}
             });
         });
+
+        // Gjenopprett sortering fra sessionStorage ved sidelast
+        try {
+            const saved = JSON.parse(sessionStorage.getItem(_sortKey));
+            if (saved) {
+                const table = document.querySelector('table');
+                if (table) _applySort(table, saved.idx, saved.dir);
+            }
+        } catch(e) {}
     </script>
 </body>
 </html>
