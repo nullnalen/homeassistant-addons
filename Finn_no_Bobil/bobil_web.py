@@ -2334,6 +2334,7 @@ TEMPLATE = """
         .heft-warn  { background: rgba(255,159,10,0.15); color: var(--orange); }
         .heft-high  { background: rgba(255,69,58,0.18);  color: var(--red);    }
         .heft-none  { color: var(--label-ter); font-size: 0.8rem; }
+        .heft-ekstern-link { font-size: 0.78rem; color: var(--label-ter); opacity: 0.7; white-space: nowrap; }
 
         /* ── Heftelse detail items ── */
         .heft-item { margin-bottom: 10px; padding: 10px 12px; border-radius: var(--radius-sm); border-left: 3px solid; }
@@ -3613,7 +3614,7 @@ def view_annonse(finnkode):
                     <div><span class="lbl">Lokasjon:</span> {esc(lokasjon) or '—'}</div>
                     <div><span class="lbl">Sist sett:</span> <span class="{esc(alder_cls)}">{esc(alder_txt)}</span></div>
                     <div><span class="lbl">Selger:</span> {selger_html}</div>
-                    <div><span class="lbl">Heftelser:</span> {_heftelse_html(ad.get('Heftelser'), ad.get('HeftelseSjekket'), ad.get('HeftelserDetaljer'))}</div>
+                    <div><span class="lbl">Heftelser:</span> {_heftelse_html(ad.get('Heftelser'), ad.get('HeftelseSjekket'), ad.get('HeftelserDetaljer'))}{'&nbsp;<a class="heft-ekstern-link" href="https://losoreregisteret.no/registeringsrett/motorvogn/' + kjennemerke.replace(' ', '') + '" target="_blank" rel="noopener">Sjekk hos Løsøreregisteret ↗</a>' if kjennemerke else ''}</div>
                     <div><span class="lbl">{id_label}:</span> <a href="{esc(ad_url)}" target="_blank">{id_value}</a></div>
                 </div>
                 <div class="hero-lenker">{ext_links_html}</div>
