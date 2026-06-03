@@ -568,6 +568,227 @@ FORUM_RISIKO = {
     'Hymer': 20, 'Adria': 20,
 }
 
+# Kuratert merke-database. Nøkler matcher SvvMerke eller ledende ord i Annonsenavn (case-insensitive).
+# segment: budget / mid / premium / luxury
+MERKE_INFO = {
+    "hymer": {
+        "visningsnavn": "Hymer",
+        "segment": "luxury",
+        "segment_label": "Luksus",
+        "opprinnelse": "🇩🇪 Tyskland",
+        "kortbeskrivelse": "Tysklands mest prestisjefylte bobil-merke. Høy build quality, lang levetid og god verdiholding.",
+        "styrker": ["Solid konstruksjon og høy kvalitet", "God verdiholding over tid", "Stort reservedelsnettverk"],
+        "svakheter": ["Høy innkjøpspris", "Dyre verkstedkostnader", "Tung (ofte over 3500 kg på større modeller)"],
+        "kjente_problemer": ["Eldre B-klasse (pre-2006): fukt rundt vinduer og takluker", "Rustangrep på ramme på modeller fra tidlig 2000-tall"],
+        "typiske_kjopere": "Erfarne bobil-eiere som vil ha det beste og beholder bilen lenge.",
+    },
+    "bürstner": {
+        "visningsnavn": "Bürstner",
+        "segment": "premium",
+        "segment_label": "Premium",
+        "opprinnelse": "🇩🇪 Tyskland",
+        "kortbeskrivelse": "Solid tysk premium-merke med elegant interiør og god pålitelighet. Populær i Norge.",
+        "styrker": ["Gjennomtenkte planløsninger", "God interiørkvalitet", "Ryddig el-opplegg"],
+        "svakheter": ["Noe høyere pris enn mellomsjiktet", "Begrenset norsk forhandlernettverk"],
+        "kjente_problemer": ["Eldre modeller (pre-2010): kondensasjon i dobbelglass", "Fiat-chassis deles med mange andre — Fiat-spesifikke feil gjelder også her"],
+        "typiske_kjopere": "Par eller familier som vil ha tysk kvalitet uten å betale Hymer-priser.",
+    },
+    "adria": {
+        "visningsnavn": "Adria",
+        "segment": "mid",
+        "segment_label": "Mellomsjikt",
+        "opprinnelse": "🇸🇮 Slovenia",
+        "kortbeskrivelse": "Slovenisk merke med god pris/kvalitet-ratio. Solide konstruksjoner, men interiøret er noe enklere enn tyske konkurrenter.",
+        "styrker": ["Konkurransedyktig pris", "God nyttelast på mange modeller", "Robust undervogn"],
+        "svakheter": ["Interiørmaterialer under tyske konkurrenter", "Lavere verdiholding"],
+        "kjente_problemer": ["Fuktproblemer i takoverganger på eldre modeller", "Gardinoppheng og småting i kabinen kan løsne"],
+        "typiske_kjopere": "Kjøpere som vil ha mye bobil for pengene og ikke er opptatt av merket.",
+    },
+    "knaus": {
+        "visningsnavn": "Knaus",
+        "segment": "mid",
+        "segment_label": "Mellomsjikt",
+        "opprinnelse": "🇩🇪 Tyskland",
+        "kortbeskrivelse": "Stor tysk produsent med bredt sortiment. God allrounder — ikke like eksklusiv som Hymer, men solid.",
+        "styrker": ["Bredt modelltilbud", "God service i Norge", "Fornuftig pris for tysk kvalitet"],
+        "svakheter": ["Standardisert og litt anonymt design", "Varierende kvalitetskontroll avhengig av produksjonsår"],
+        "kjente_problemer": ["Sky Wave-serien (pre-2015): tettingsproblemer rundt takboks", "Noen eldre Sport & Fun-modeller: vannpumpekrets kan gi trøbbel"],
+        "typiske_kjopere": "Førstegangskjøpere og de som vil ha tysk merke til midtpris.",
+    },
+    "dethleffs": {
+        "visningsnavn": "Dethleffs",
+        "segment": "mid",
+        "segment_label": "Mellomsjikt",
+        "opprinnelse": "🇩🇪 Tyskland",
+        "kortbeskrivelse": "Tradisjonsrikt tysk merke (grunnlagt 1931). Praktiske løsninger og god plass til prisen.",
+        "styrker": ["Lang tradisjon og god merkelojalitet", "Romslige planløsninger", "Stabil verdiholding"],
+        "svakheter": ["Design oppfattes av noen som konservativt", "Noe tung for klassen"],
+        "kjente_problemer": ["Eldre Advantage-serie: fukt rundt bakdør rapportert", "Laminerte vegger kan bulke ved større støt"],
+        "typiske_kjopere": "Praktisk orienterte kjøpere, gjerne pensjonister som setter pris på tradisjonsmerket.",
+    },
+    "roller team": {
+        "visningsnavn": "Roller Team",
+        "segment": "budget",
+        "segment_label": "Budsjett",
+        "opprinnelse": "🇮🇹 Italia",
+        "kortbeskrivelse": "Italiensk budsjettmerke på Fiat-chassis. Rimelig innkjøpspris, men enklere finish og lavere verdiholding.",
+        "styrker": ["Lav kjøpspris", "Enkle å reparere (Fiat-deler tilgjengelig overalt)", "Ofte god nyttelast for størrelsen"],
+        "svakheter": ["Lavere build quality enn tyske konkurrenter", "Rask verdifall", "Tynn isolasjon — dårligere for kald-sesong bruk"],
+        "kjente_problemer": ["Fukt i bakkant på eldre modeller", "Billig plast i kantine og bad som misfarges over tid", "Varmeovnen (Truma/Alde) ikke alltid tilstrekkelig i lavtemperatur"],
+        "typiske_kjopere": "Sesongbrukere som vil prøve bobilliv uten stor investering, eller de som setter budsjett foran merke.",
+    },
+    "sunlight": {
+        "visningsnavn": "Sunlight",
+        "segment": "budget",
+        "segment_label": "Budsjett",
+        "opprinnelse": "🇩🇪 Tyskland",
+        "kortbeskrivelse": "Tysk budsjettmerke (søsterselskap av Dethleffs). Enkel og grei bobil til lav pris.",
+        "styrker": ["Lav pris", "Produsert i Tyskland", "Enkle og ryddige planløsninger"],
+        "svakheter": ["Enklere materialer enn premium-søsteren Dethleffs", "Lavere verdiholding"],
+        "kjente_problemer": ["Van 60-serien: noen rapporter om lekkasje rundt sidevindu", "Generisk tysk budsjett-problematikk: gardinbox og ventilasjonsluke-pakninger"],
+        "typiske_kjopere": "Budsjettbevisste kjøpere som vil ha tysk opprinnelse til lavest mulig pris.",
+    },
+    "carado": {
+        "visningsnavn": "Carado",
+        "segment": "budget",
+        "segment_label": "Budsjett",
+        "opprinnelse": "🇩🇪 Tyskland",
+        "kortbeskrivelse": "Tysk budsjettmerke i Erwin Hymer Group. Enkle bobiler med ok kvalitet for prisen.",
+        "styrker": ["God verdi for pengene", "Del av Hymer-konsernet — deler og service tilgjengelig", "Ryddig el-opplegg"],
+        "svakheter": ["Ikke samme kvalitet som Hymer-søsteren", "Begrenset tilpasning"],
+        "kjente_problemer": ["T-serien (2010–2016): vinduspakning rundt frontvindu kan tørke ut"],
+        "typiske_kjopere": "Prissensitive kjøpere som vil ha tysk opprinnelse og Hymer-konsernets reservedelsdekning.",
+    },
+    "pilote": {
+        "visningsnavn": "Pilote",
+        "segment": "mid",
+        "segment_label": "Mellomsjikt",
+        "opprinnelse": "🇫🇷 Frankrike",
+        "kortbeskrivelse": "Fransk merke kjent for kreative planløsninger og godt med plass. Noe ukjent i Norge.",
+        "styrker": ["Originale og romslige planløsninger", "God isolasjon på nyere modeller", "Konkurransedyktig pris"],
+        "svakheter": ["Sjeldent merke i Norge — begrenset norsk verkstedkompetanse", "Lav verdiholding sammenlignet med tyske merker"],
+        "kjente_problemer": ["Eldre modeller: takventilasjon kan lekke ved mye regn", "Franske interiørelementer av vekslende holdbarhet"],
+        "typiske_kjopere": "Kjøpere som prioriterer plass og originale løsninger over merkelojalitet.",
+    },
+    "rapido": {
+        "visningsnavn": "Rapido",
+        "segment": "premium",
+        "segment_label": "Premium",
+        "opprinnelse": "🇫🇷 Frankrike",
+        "kortbeskrivelse": "Høykvalitets fransk merke. God build quality og nøye gjennomtenkte detaljer — undervurdert i Norge.",
+        "styrker": ["Solid konstruksjon", "Gjennomtenkte detaljer og godt håndverk", "God isolasjon"],
+        "svakheter": ["Sjeldent i Norge — begrenset verkstednettverk", "Lav kjennskap betyr lav annenhåndsverdi"],
+        "kjente_problemer": ["Begrenset norsk erfaring — lite forumdata fra norske eiere"],
+        "typiske_kjopere": "Erfarne bobil-entusiaster som har sett seg lei av de vanlige merkene.",
+    },
+    "chausson": {
+        "visningsnavn": "Chausson",
+        "segment": "mid",
+        "segment_label": "Mellomsjikt",
+        "opprinnelse": "🇫🇷 Frankrike",
+        "kortbeskrivelse": "Stor fransk produsent med brede og romslige bobiler. Kjent for Flash-serien med god bredde.",
+        "styrker": ["Romslig for pengene", "God nyttelast på mange modeller", "Rimelig innkjøpspris"],
+        "svakheter": ["Fransk finish — noe plastpreget interiør", "Lav verdiholding"],
+        "kjente_problemer": ["Flash-serien pre-2014: lekkasje rundt sidevindu ved sterk regn", "Takklima (Dometic) kan gi problemer på eldre modeller"],
+        "typiske_kjopere": "Familier som vil ha romslig bobil uten å betale tysk premium-pris.",
+    },
+    "laika": {
+        "visningsnavn": "Laika",
+        "segment": "premium",
+        "segment_label": "Premium",
+        "opprinnelse": "🇮🇹 Italia",
+        "kortbeskrivelse": "Italiensk premium-merke (del av Erwin Hymer Group). Stilrent design og god kvalitet.",
+        "styrker": ["Estetisk design", "God material- og byggkvalitet", "Del av Hymer-konsernet"],
+        "svakheter": ["Høy pris", "Sjeldent i Norge — begrenset norsk service"],
+        "kjente_problemer": ["Begrenset norsk forumdata — generell Hymer-konsern-chassis-problematikk gjelder"],
+        "typiske_kjopere": "Design-bevisste kjøpere som vil ha noe annet enn tyske alternativene.",
+    },
+    "carthago": {
+        "visningsnavn": "Carthago",
+        "segment": "luxury",
+        "segment_label": "Luksus",
+        "opprinnelse": "🇩🇪 Tyskland",
+        "kortbeskrivelse": "Tysk luksusmerke med fokus på design og presisjon. Blant de aller beste, og priset deretter.",
+        "styrker": ["Eksepsjonell build quality", "Eksklusivt design", "Svært god verdiholding"],
+        "svakheter": ["Meget høy pris", "Tunge konstruksjoner — krevende å holde under 3500 kg"],
+        "kjente_problemer": ["Svært få kjente generelle problemer — høy kvalitetskontroll"],
+        "typiske_kjopere": "Kjøpere som vil ha det absolutt beste og har budsjett til det.",
+    },
+    "rimor": {
+        "visningsnavn": "Rimor",
+        "segment": "budget",
+        "segment_label": "Budsjett",
+        "opprinnelse": "🇮🇹 Italia",
+        "kortbeskrivelse": "Italiensk budsjettmerke (del av Erwin Hymer Group). God plass til prisen, men enklere finish.",
+        "styrker": ["Romslig for pengene", "Del av Hymer-konsernet — reservedeler OK", "God nyttelast"],
+        "svakheter": ["Lavere finish-nivå enn tyske søstermerker", "Rask verdifall"],
+        "kjente_problemer": ["Eldre modeller: fukt i bakkant og rundt takluker", "Billig plast i bad som misfarges"],
+        "typiske_kjopere": "Budsjettbevisste kjøpere som vil ha stor bobil til lav pris.",
+    },
+    "challenger": {
+        "visningsnavn": "Challenger",
+        "segment": "mid",
+        "segment_label": "Mellomsjikt",
+        "opprinnelse": "🇫🇷 Frankrike",
+        "kortbeskrivelse": "Fransk merke med gode planløsninger. Del av Trigano-gruppen — stort produksjonsvolum.",
+        "styrker": ["God planløsning", "Fornuftig pris", "Romslig for klassen"],
+        "svakheter": ["Finishen er ikke på nivå med tyske konkurrenter", "Trigano-gruppen produserer mange merker på samme linje — varierende QC"],
+        "kjente_problemer": ["Genesis-serien: noen rapporter om vanninntrengning bak lyktene", "Franske interiørelementer av varierende holdbarhet"],
+        "typiske_kjopere": "Kjøpere som vil ha mye bobil for pengene og ikke er opptatt av merkeimage.",
+    },
+    "weinsberg": {
+        "visningsnavn": "Weinsberg",
+        "segment": "budget",
+        "segment_label": "Budsjett",
+        "opprinnelse": "🇩🇪 Tyskland",
+        "kortbeskrivelse": "Knaus-konsernets budsjettmerke. Fornuftig kvalitet til lavere pris enn søstermerket.",
+        "styrker": ["Tysk produksjon", "Del av Knaus-konsernet — god reservedelsdekning", "Enkle og ryddige planløsninger"],
+        "svakheter": ["Enklere interiør enn Knaus", "Lavere verdiholding"],
+        "kjente_problemer": ["CaraSuite-serien: noen rapporter om at skyvedør kan sette seg over tid"],
+        "typiske_kjopere": "Budsjettbevisste kjøpere som vil ha tysk opprinnelse og Knaus-konsernets service.",
+    },
+    "malibu": {
+        "visningsnavn": "Malibu",
+        "segment": "premium",
+        "segment_label": "Premium",
+        "opprinnelse": "🇩🇪 Tyskland",
+        "kortbeskrivelse": "Spesialist på Van-klassen (campervan-stil). Høy kvalitet og innovative løsninger i kompakt format.",
+        "styrker": ["Fremragende kompaktdesign", "Høy kvalitet for størrelsen", "Innovativt layout i Van-klassen"],
+        "svakheter": ["Begrenset til Van-segmentet — ingen fullintegrerte", "Høy pris for størrelsen"],
+        "kjente_problemer": ["Begrenset norsk forumdata — relativt nytt i Norge"],
+        "typiske_kjopere": "Par uten barn som prioriterer kjøredynamikk og kompakt format.",
+    },
+    "frankia": {
+        "visningsnavn": "Frankia",
+        "segment": "luxury",
+        "segment_label": "Luksus",
+        "opprinnelse": "🇩🇪 Tyskland",
+        "kortbeskrivelse": "Tysk luksusmake med fokus på firesesongsbruk og norsk-tilpasset isolasjon. Svært populær i Skandinavia.",
+        "styrker": ["Fremragende vinteregenskaper og isolasjon", "Høy build quality", "Spesielt tilpasset nordisk klima"],
+        "svakheter": ["Høy pris", "Tunge konstruksjoner"],
+        "kjente_problemer": ["Eldre A-klasse (pre-2005): noen rustproblemer på aluminiumsramme ved veisalt"],
+        "typiske_kjopere": "Skandinaviske helårsbobil-eiere som vil bruke bilen om vinteren.",
+    },
+    "niesmann bischoff": {
+        "visningsnavn": "Niesmann+Bischoff",
+        "segment": "luxury",
+        "segment_label": "Luksus",
+        "opprinnelse": "🇩🇪 Tyskland",
+        "kortbeskrivelse": "Eksklusivt tysk luksusmerke. Håndverksmessig finish på høyeste nivå — priset tilsvarende.",
+        "styrker": ["Topp build quality", "Eksklusiv finish", "Lang levetid"],
+        "svakheter": ["Meget høy pris", "Sjeldent i Norge — begrenset service"],
+        "kjente_problemer": ["Svært få kjente generelle problemer"],
+        "typiske_kjopere": "Svært erfarne bobil-eiere med høyt budsjett.",
+    },
+}
+
+_SEGMENT_FARGE = {
+    "budget": ("var(--yellow, #f5c518)", "#000"),
+    "mid": ("var(--blue, #0A84FF)", "#fff"),
+    "premium": ("var(--purple, #BF5AF2)", "#fff"),
+    "luxury": ("var(--gold, #FFD700)", "#000"),
+}
+
 
 def beregn_kjopsscore(r: dict, now: datetime) -> int:
     """
@@ -1561,6 +1782,54 @@ TEMPLATE = """
         .liggetid-list li { margin-bottom: 2px; }
         .liggetid-note { font-size: 0.78rem; color: var(--label-ter); }
 
+        /* ── Hero: to-kolonne bilde + nøkkeldata ── */
+        .hero-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 12px 0 16px; align-items: start; }
+        @media (max-width: 700px) { .hero-layout { grid-template-columns: 1fr; } }
+        .hero-bilde img { width: 100%; border-radius: 8px; display: block; max-height: 280px; object-fit: cover; }
+        .hero-bilde-placeholder { height: 160px; background: var(--card-bg); border: 1px solid var(--sep); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: var(--label-ter); font-size: 0.85rem; }
+        .hero-pris { font-size: 1.6rem; font-weight: 800; color: var(--label); margin-bottom: 10px; }
+        .hero-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; font-size: 0.85rem; margin-bottom: 10px; }
+        .hero-lenker { margin-top: 8px; }
+
+        /* ── Kollapsbart notat ── */
+        .notat-details { background: var(--card-bg); border: 1px solid var(--sep); border-radius: 8px; margin: 8px 0; }
+        .notat-summary { padding: 8px 14px; cursor: pointer; font-size: 0.85rem; font-weight: 600; color: var(--label-sec); list-style: none; user-select: none; }
+        .notat-summary::-webkit-details-marker { display: none; }
+        .notat-summary::before { content: '▶ '; font-size: 0.65rem; }
+        .notat-details[open] .notat-summary::before { content: '▼ '; }
+        .notat-har-innhold > summary { color: var(--label); }
+        .notat-body { padding: 0 14px 12px; }
+
+        /* ── Tabs ── */
+        .ad-tabs { display: flex; gap: 4px; margin: 16px 0 0; border-bottom: 1px solid var(--sep); }
+        .ad-tab { background: none; border: none; border-bottom: 2px solid transparent; padding: 7px 14px; font-size: 0.85rem; font-weight: 600; color: var(--label-sec); cursor: pointer; margin-bottom: -1px; border-radius: 4px 4px 0 0; }
+        .ad-tab:hover { color: var(--label); }
+        .ad-tab.active { color: var(--label); border-bottom-color: var(--blue, #0A84FF); }
+        .ad-tab-panel { padding: 14px 0; }
+
+        /* ── SVV-grupper ── */
+        .svv-gruppe { margin-bottom: 16px; }
+        .svv-gruppe-tittel { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--label-ter); margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid var(--sep); }
+        .svv-gruppe-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px 16px; font-size: 0.85rem; }
+
+        /* ── Merke-kort ── */
+        .merke-card { background: var(--card-bg); border: 1px solid var(--sep); border-radius: 10px; padding: 14px 16px; margin: 12px 0; }
+        .merke-card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+        .merke-navn { font-size: 1rem; font-weight: 700; color: var(--label); }
+        .merke-opprinnelse { font-size: 0.82rem; color: var(--label-sec); }
+        .merke-segment-pill { font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 20px; letter-spacing: 0.04em; text-transform: uppercase; }
+        .merke-beskrivelse { font-size: 0.88rem; color: var(--label-sec); margin: 0 0 10px 0; }
+        .merke-detaljer { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 10px; }
+        @media (max-width: 600px) { .merke-detaljer { grid-template-columns: 1fr; } }
+        .merke-kolonne { font-size: 0.82rem; }
+        .merke-kolonne ul { margin: 4px 0 0 0; padding-left: 16px; color: var(--label-sec); }
+        .merke-kolonne li { margin-bottom: 2px; }
+        .merke-kolonne-tittel { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+        .merke-ok { color: #30d158; }
+        .merke-advarsel { color: #ff9f0a; }
+        .merke-problem { color: #ff453a; }
+        .merke-kjoper { font-size: 0.80rem; color: var(--label-ter); border-top: 1px solid var(--sep); padding-top: 8px; margin-top: 4px; }
+
         /* ── Truncate / nowrap ── */
         .truncate {
             max-width: 280px;
@@ -2185,6 +2454,55 @@ def _liggetid_html(data: dict | None) -> str:
     """
 
 
+def _merke_html(ad: dict) -> str:
+    """Render merke-karakteristikk-blokk for detaljside."""
+    # Slå opp merke: prøv SvvMerke, så første ord i Annonsenavn
+    svv_merke = (ad.get("SvvMerke") or "").strip().lower()
+    annonsenavn = (ad.get("Annonsenavn") or "").strip().lower()
+    forste_ord = annonsenavn.split()[0] if annonsenavn else ""
+
+    info = MERKE_INFO.get(svv_merke) or MERKE_INFO.get(forste_ord)
+    if not info:
+        # Prøv to-ords merkenavn (f.eks. "roller team", "niesmann bischoff")
+        to_ord = " ".join(annonsenavn.split()[:2]) if annonsenavn else ""
+        info = MERKE_INFO.get(to_ord)
+    if not info:
+        return ""
+
+    segment = info["segment"]
+    seg_bg, seg_fg = _SEGMENT_FARGE.get(segment, ("#888", "#fff"))
+
+    styrker_html = "".join(f"<li>{esc(s)}</li>" for s in info["styrker"])
+    svakheter_html = "".join(f"<li>{esc(s)}</li>" for s in info["svakheter"])
+    problemer_html = "".join(f"<li>{esc(p)}</li>" for p in info["kjente_problemer"])
+
+    return f"""
+    <div class="merke-card">
+        <div class="merke-card-header">
+            <span class="merke-navn">{esc(info['visningsnavn'])}</span>
+            <span class="merke-opprinnelse">{esc(info['opprinnelse'])}</span>
+            <span class="merke-segment-pill" style="background:{seg_bg};color:{seg_fg}">{esc(info['segment_label'])}</span>
+        </div>
+        <p class="merke-beskrivelse">{esc(info['kortbeskrivelse'])}</p>
+        <div class="merke-detaljer">
+            <div class="merke-kolonne">
+                <div class="merke-kolonne-tittel merke-ok">✓ Styrker</div>
+                <ul>{styrker_html}</ul>
+            </div>
+            <div class="merke-kolonne">
+                <div class="merke-kolonne-tittel merke-advarsel">✗ Svakheter</div>
+                <ul>{svakheter_html}</ul>
+            </div>
+            <div class="merke-kolonne">
+                <div class="merke-kolonne-tittel merke-problem">⚠ Kjente problemer</div>
+                <ul>{problemer_html}</ul>
+            </div>
+        </div>
+        <div class="merke-kjoper"><em>Typiske kjøpere:</em> {esc(info['typiske_kjopere'])}</div>
+    </div>
+    """
+
+
 def _selger_html(ad: dict) -> str:
     """Formater selger-info for detaljside."""
     kilde = ad.get("Kilde") or "finn"
@@ -2797,112 +3115,68 @@ def view_annonse(finnkode):
             ad.get("SvvEuKontrollfrist") or "", ad.get("SvvEuSistGodkjent") or ""
         )
 
+        # SVV-data i kategoriserte grupper
         svv_block = ""
         if har_svv:
             svv_block = f"""
-        <h3 class="section-heading">Kjøretøydata fra Statens vegvesen</h3>
-        <div class="svv-panel">
-        <div class="svv-grid">
-            <div><span class="lbl">Kjennemerke:</span> <strong>{esc(kjennemerke) or '—'}</strong></div>
-            <div><span class="lbl">Kjøretøytype:</span> {vs('SvvKjoretoytype')}</div>
-            <div><span class="lbl">Merke (SVV):</span> {vs('SvvMerke')}</div>
-            <div><span class="lbl">Handelsbetegnelse:</span> {vs('SvvHandelsbetegnelse')}</div>
-            <div><span class="lbl">Typebetegnelse:</span> {vs('SvvTypebetegnelse')}</div>
-            <div><span class="lbl">Årsmodell (SVV):</span> {vs('SvvAarsmodell')}</div>
-            <div><span class="lbl">1. gang reg. Norge:</span> {vs('SvvForstegangNorge')}</div>
-            <div><span class="lbl">Registreringsstatus:</span> {vs('SvvRegistreringsstatus')}</div>
-            <div><span class="lbl">EU-kontroll frist:</span> {eu_frist_html}</div>
-            <div><span class="lbl">EU-kontroll sist:</span> {eu_sist_html}</div>
-            <div><span class="lbl">Farge:</span> {vs('SvvFarge')}</div>
-            <div><span class="lbl">Karosseritype:</span> {vs('SvvKarosseritype')}</div>
-            <div><span class="lbl">Antall dører:</span> {vs('SvvAntallDorer')}</div>
-            <div><span class="lbl">Drivstoff (SVV):</span> {vs('SvvDrivstoff')}</div>
-            <div><span class="lbl">Motorvolum:</span> {liter(v('SvvMotorvolum'))}</div>
-            <div><span class="lbl">Motoreffekt:</span> {kw(v('SvvMotoreffekt'))}</div>
-            <div><span class="lbl">Antall sylindre:</span> {vs('SvvAntallSylindre')}</div>
-            <div><span class="lbl">Girkasse (SVV):</span> {vs('SvvGirkassetype')}</div>
-            <div><span class="lbl">Antall gir:</span> {vs('SvvAntallGir')}</div>
-            <div><span class="lbl">Maks hastighet:</span> {"—" if not v('SvvMaksHastighet') else f"{v('SvvMaksHastighet')} km/t"}</div>
-            <div><span class="lbl">Elektrisk/hybrid:</span> {"Ja" if v('SvvElektrisk') else "—"}</div>
-            <div><span class="lbl">Euro-klasse:</span> {vs('SvvEuroKlasse')}</div>
-            <div><span class="lbl">Lengde (SVV):</span> {cm(v('SvvLengde'))}</div>
-            <div><span class="lbl">Bredde (SVV):</span> {cm(v('SvvBredde'))}</div>
-            <div><span class="lbl">Høyde (SVV):</span> {cm(v('SvvHoyde'))}</div>
-            <div><span class="lbl">Egenvekt:</span> {kg(v('SvvEgenvekt'))}</div>
-            <div><span class="lbl">Nyttelast (SVV):</span> {kg(v('SvvNyttelast'))}</div>
-            <div><span class="lbl">Teknisk tillatt totalvekt:</span> {kg(v('SvvTotalvekt'))}</div>
-            <div><span class="lbl">Tillatt totalvekt:</span> {kg(v('SvvTillattTotalvekt'))}</div>
-            <div><span class="lbl">Tilhengervekt m/brems:</span> {kg(v('SvvTilhengervektMedBrems'))}</div>
-            <div><span class="lbl">Tilhengervekt u/brems:</span> {kg(v('SvvTilhengervektUtenBrems'))}</div>
-            <div><span class="lbl">Vertikal koplingslast:</span> {kg(v('SvvVertikalKoplingslast'))}</div>
-            <div><span class="lbl">Sitteplasser (SVV):</span> {vs('SvvSitteplasser')}</div>
-        </div>
-        </div>
-        """
+            <div class="svv-gruppe">
+                <div class="svv-gruppe-tittel">Identitet</div>
+                <div class="svv-gruppe-grid">
+                    <div><span class="lbl">Kjennemerke:</span> <strong>{esc(kjennemerke) or '—'}</strong></div>
+                    <div><span class="lbl">Merke (SVV):</span> {vs('SvvMerke')}</div>
+                    <div><span class="lbl">Handelsbetegnelse:</span> {vs('SvvHandelsbetegnelse')}</div>
+                    <div><span class="lbl">Typebetegnelse:</span> {vs('SvvTypebetegnelse')}</div>
+                    <div><span class="lbl">Årsmodell (SVV):</span> {vs('SvvAarsmodell')}</div>
+                    <div><span class="lbl">1. gang reg. Norge:</span> {vs('SvvForstegangNorge')}</div>
+                    <div><span class="lbl">Farge:</span> {vs('SvvFarge')}</div>
+                    <div><span class="lbl">Sitteplasser:</span> {vs('SvvSitteplasser')}</div>
+                </div>
+            </div>
+            <div class="svv-gruppe">
+                <div class="svv-gruppe-tittel">Status &amp; kontroll</div>
+                <div class="svv-gruppe-grid">
+                    <div><span class="lbl">Registreringsstatus:</span> {vs('SvvRegistreringsstatus')}</div>
+                    <div><span class="lbl">EU-kontroll frist:</span> {eu_frist_html}</div>
+                    <div><span class="lbl">EU-kontroll sist:</span> {eu_sist_html}</div>
+                    <div><span class="lbl">Euro-klasse:</span> {vs('SvvEuroKlasse')}</div>
+                    <div><span class="lbl">Elektrisk/hybrid:</span> {"Ja" if v('SvvElektrisk') else "—"}</div>
+                </div>
+            </div>
+            <div class="svv-gruppe">
+                <div class="svv-gruppe-tittel">Motor &amp; ytelse</div>
+                <div class="svv-gruppe-grid">
+                    <div><span class="lbl">Drivstoff:</span> {vs('SvvDrivstoff')}</div>
+                    <div><span class="lbl">Motorvolum:</span> {liter(v('SvvMotorvolum'))}</div>
+                    <div><span class="lbl">Motoreffekt:</span> {kw(v('SvvMotoreffekt'))}</div>
+                    <div><span class="lbl">Antall sylindre:</span> {vs('SvvAntallSylindre')}</div>
+                    <div><span class="lbl">Girkasse:</span> {vs('SvvGirkassetype')}</div>
+                    <div><span class="lbl">Antall gir:</span> {vs('SvvAntallGir')}</div>
+                    <div><span class="lbl">Maks hastighet:</span> {"—" if not v('SvvMaksHastighet') else f"{v('SvvMaksHastighet')} km/t"}</div>
+                </div>
+            </div>
+            <div class="svv-gruppe">
+                <div class="svv-gruppe-tittel">Mål &amp; vekt</div>
+                <div class="svv-gruppe-grid">
+                    <div><span class="lbl">Lengde:</span> {cm(v('SvvLengde'))}</div>
+                    <div><span class="lbl">Bredde:</span> {cm(v('SvvBredde'))}</div>
+                    <div><span class="lbl">Høyde:</span> {cm(v('SvvHoyde'))}</div>
+                    <div><span class="lbl">Egenvekt:</span> {kg(v('SvvEgenvekt'))}</div>
+                    <div><span class="lbl">Nyttelast (SVV):</span> {kg(v('SvvNyttelast'))}</div>
+                    <div><span class="lbl">Tillatt totalvekt:</span> {kg(v('SvvTillattTotalvekt'))}</div>
+                    <div><span class="lbl">Teknisk tillatt totalvekt:</span> {kg(v('SvvTotalvekt'))}</div>
+                    <div><span class="lbl">Tilhengervekt m/brems:</span> {kg(v('SvvTilhengervektMedBrems'))}</div>
+                    <div><span class="lbl">Tilhengervekt u/brems:</span> {kg(v('SvvTilhengervektUtenBrems'))}</div>
+                    <div><span class="lbl">Vertikal koplingslast:</span> {kg(v('SvvVertikalKoplingslast'))}</div>
+                </div>
+            </div>"""
         elif kjennemerke:
-            svv_block = f"""
-        <div class="kjennemerke-hint">
-            Kjennemerke: <strong>{esc(kjennemerke)}</strong> — ingen Vegvesen-data hentet ennå.
-        </div>
-        """
+            svv_block = f'<p class="kjennemerke-hint">Kjennemerke: <strong>{esc(kjennemerke)}</strong> — ingen Vegvesen-data hentet ennå.</p>'
 
         kilde = ad.get("Kilde") or "finn"
         autodb_id = ad.get("AutodbId")
-
         stjerne = "⭐" if er_favoritt else "☆"
         stjerne_title = "Fjern fra favoritter" if er_favoritt else "Legg til i favoritter"
-
         ext_links_html = _kilde_lenker(ad)
-
-        html = f"""
-        <div class="detail-nav">
-            <a href="javascript:history.back()">&larr; Tilbake</a>
-            <a href="../mine-biler">⭐ Mine biler</a>
-        </div>
-        <h2 class="detail-title">
-            {esc(ad.get('Annonsenavn', finnkode))}
-            {_kilde_badge(kilde)}
-            <button id="fav-btn" class="fav-btn" onclick="toggleFavoritt({esc(finnkode)})"
-                    title="{esc(stjerne_title)}">{stjerne}</button>
-        </h2>
-        <div class="ext-links">{ext_links_html}</div>
-        {img_html}
-        <div class="notat-section">
-            <div class="notat-label">Notat</div>
-            <textarea id="notat-felt" class="notat-textarea" rows="3"
-                      placeholder="Skriv ditt notat om denne bilen her...">{notat_verdi}</textarea>
-            <div class="notat-save-row">
-                <button class="btn btn-sm" onclick="lagreNotat({esc(finnkode)})">Lagre notat</button>
-                <span id="notat-status" class="notat-status"></span>
-            </div>
-        </div>
-        <script>
-        const _apiBase = '{esc(bp)}';
-        function toggleFavoritt(fk) {{
-            fetch(_apiBase + 'api/favoritt/' + fk, {{method: 'POST'}})
-                .then(r => r.json())
-                .then(d => {{
-                    if (d.ok) {{
-                        const btn = document.getElementById('fav-btn');
-                        btn.textContent = d.favoritt ? '⭐' : '☆';
-                        btn.title = d.favoritt ? 'Fjern fra favoritter' : 'Legg til i favoritter';
-                    }}
-                }});
-        }}
-        function lagreNotat(fk) {{
-            const txt = document.getElementById('notat-felt').value;
-            fetch(_apiBase + 'api/notat/' + fk, {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{notat: txt}})
-            }}).then(r => r.json()).then(d => {{
-                const s = document.getElementById('notat-status');
-                s.textContent = d.ok ? 'Lagret ✓' : 'Feil ved lagring';
-                setTimeout(() => s.textContent = '', 3000);
-            }});
-        }}
-        </script>
-        """
         selger_html = _selger_html(ad)
         liggetid_data = get_liggetid_for_annonse(finnkode)
         salgspris_est = beregn_forventet_salgspris(pris, ad.get("Modell"))
@@ -2932,38 +3206,12 @@ def view_annonse(finnkode):
         id_label = "AutodbId" if kilde == "autodb" else "Finnkode"
         id_value = esc(ad.get("AutodbId") if kilde == "autodb" else finnkode)
         vendbare = "Ja" if ad.get("VendbareForerstoler") == 1 else ("Nei" if ad.get("VendbareForerstoler") == 0 else "—")
-        html += f"""
-        <div class="info-grid">
-            <div><span class="lbl">{id_label}:</span> <a href="{esc(ad_url)}" target="_blank">{id_value}</a></div>
-            <div><span class="lbl">Modell:</span> {esc(ad.get('Modell')) or '—'}</div>
-            <div><span class="lbl">Pris:</span> {esc(format_price(pris))}</div>
-            <div><span class="lbl">Km:</span> {esc(ad.get('Kilometerstand')) or '—'}</div>
-            <div><span class="lbl">Type:</span> {esc(ad.get('Typebobil')) or '—'}</div>
-            <div><span class="lbl">Girkasse:</span> {esc(ad.get('Girkasse')) or '—'}</div>
-            <div><span class="lbl">Nyttelast (annonse):</span> {esc(ad.get('Nyttelast')) or '—'}</div>
-            <div><span class="lbl">Nyttelast (SVV):</span> {kg(v('SvvNyttelast'))}</div>
-            <div><span class="lbl">Tilhengervekt m/brems:</span> {kg(v('SvvTilhengervektMedBrems'))}</div>
-            <div><span class="lbl">Lokasjon:</span> {esc(lokasjon) or '—'}</div>
-            <div><span class="lbl">Sist sett:</span> <span class="{esc(alder_cls)}">{esc(alder_txt)}</span></div>
-            <div><span class="lbl">Sengelayout:</span> {esc(ad.get('Sengelayout')) or '—'}</div>
-            <div><span class="lbl">Vendbare forseter:</span> {vendbare}</div>
-            <div><span class="lbl">Selger:</span> {selger_html}</div>
-            <div><span class="lbl">Heftelser (Brreg):</span> {_heftelse_html(ad.get('Heftelser'), ad.get('HeftelseSjekket'), ad.get('HeftelserDetaljer'))}</div>
-        </div>
-        {salgspris_block}
-        {_liggetid_html(liggetid_data)}
-        {svv_block}
-        <div class="beskrivelse">
-            {esc(ad.get('Beskrivelse', ''))}
-        </div>
-        """
+        notat_har_innhold = "notat-har-innhold" if notat_verdi.strip() else ""
 
+        # Bygg prishistorikk-innhold ferdig for tab
         if chart_data and len(chart_data) > 1:
-            html += f"""
-            <h3 class="section-heading">Prishistorikk</h3>
-            <div class="chart-container">
-                <canvas id="prisChart"></canvas>
-            </div>
+            pris_chart_html = f"""
+            <div class="chart-container"><canvas id="prisChart"></canvas></div>
             <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
             <script>
                 new Chart(document.getElementById('prisChart'), {{
@@ -2975,9 +3223,7 @@ def view_annonse(finnkode):
                             data: {json.dumps(chart_data)},
                             borderColor: '#0A84FF',
                             backgroundColor: 'rgba(10,132,255,0.1)',
-                            fill: true,
-                            tension: 0.3,
-                            pointRadius: 4,
+                            fill: true, tension: 0.3, pointRadius: 4,
                             pointBackgroundColor: '#0A84FF'
                         }}]
                     }},
@@ -2985,52 +3231,149 @@ def view_annonse(finnkode):
                         responsive: true,
                         plugins: {{
                             legend: {{ display: false }},
-                            tooltip: {{
-                                callbacks: {{
-                                    label: ctx => ctx.parsed.y.toLocaleString('no-NO') + ' kr'
-                                }}
-                            }}
+                            tooltip: {{ callbacks: {{ label: ctx => ctx.parsed.y.toLocaleString('no-NO') + ' kr' }} }}
                         }},
                         scales: {{
-                            y: {{
-                                ticks: {{
-                                    callback: v => (v/1000) + 'k',
-                                    color: 'rgba(235,235,245,0.6)'
-                                }},
-                                grid: {{ color: 'rgba(255,255,255,0.05)' }}
-                            }},
-                            x: {{
-                                ticks: {{ color: 'rgba(235,235,245,0.6)', maxRotation: 45 }},
-                                grid: {{ color: 'rgba(255,255,255,0.05)' }}
-                            }}
+                            y: {{ ticks: {{ callback: v => (v/1000) + 'k', color: 'rgba(235,235,245,0.6)' }}, grid: {{ color: 'rgba(255,255,255,0.05)' }} }},
+                            x: {{ ticks: {{ color: 'rgba(235,235,245,0.6)', maxRotation: 45 }}, grid: {{ color: 'rgba(255,255,255,0.05)' }} }}
                         }}
                     }}
                 }});
-            </script>
-            """
+            </script>"""
         elif prishistorikk:
-            html += '<p class="note-secondary">Kun ett datapunkt i prishistorikken.</p>'
+            pris_chart_html = '<p class="note-secondary">Kun ett datapunkt i prishistorikken.</p>'
         else:
-            html += '<p class="note-secondary">Ingen prishistorikk registrert.</p>'
+            pris_chart_html = '<p class="note-secondary">Ingen prishistorikk registrert.</p>'
 
-        # Prisendringer-tabell
+        pris_tabell_html = ""
+        # Prisendringer-tabell (for prishistorikk-tab)
         if prishistorikk:
-            html += """
+            pris_tabell_html = """
             <h3 class="section-heading">Prisendringer</h3>
             <table class="prishistorikk-tabell">
-                <thead><tr><th>Tidspunkt</th><th>Pris</th></tr></thead>
-                <tbody>
-            """
+                <thead><tr><th>Tidspunkt</th><th>Pris</th></tr></thead><tbody>"""
             for p in reversed(prishistorikk):
                 ts = p["Tidspunkt"]
-                if isinstance(ts, datetime):
-                    ts_str = ts.strftime("%d.%m.%Y %H:%M")
-                else:
-                    ts_str = str(ts)
+                ts_str = ts.strftime("%d.%m.%Y %H:%M") if isinstance(ts, datetime) else str(ts)
                 pval = parse_price(p["Pris"])
                 pris_str = format_price(pval) if pval else p["Pris"]
-                html += f"<tr><td>{esc(ts_str)}</td><td>{esc(pris_str)}</td></tr>"
-            html += "</tbody></table>"
+                pris_tabell_html += f"<tr><td>{esc(ts_str)}</td><td>{esc(pris_str)}</td></tr>"
+            pris_tabell_html += "</tbody></table>"
+
+        html = f"""
+        <div class="detail-nav">
+            <a href="javascript:history.back()">&larr; Tilbake</a>
+            <a href="../mine-biler">⭐ Mine biler</a>
+        </div>
+
+        <h2 class="detail-title">
+            {esc(ad.get('Annonsenavn', finnkode))}
+            {_kilde_badge(kilde)}
+            <button id="fav-btn" class="fav-btn" onclick="toggleFavoritt({esc(finnkode)})"
+                    title="{esc(stjerne_title)}">{stjerne}</button>
+        </h2>
+
+        <!-- ── To-kolonne hero ── -->
+        <div class="hero-layout">
+            <div class="hero-bilde">
+                {img_html if img_html else '<div class="hero-bilde-placeholder">Ingen bilde</div>'}
+            </div>
+            <div class="hero-info">
+                <div class="hero-pris">{esc(format_price(pris))}</div>
+                <div class="hero-grid">
+                    <div><span class="lbl">Modell:</span> {esc(ad.get('Modell')) or '—'}</div>
+                    <div><span class="lbl">Km:</span> {esc(ad.get('Kilometerstand')) or '—'}</div>
+                    <div><span class="lbl">Type:</span> {esc(ad.get('Typebobil')) or '—'}</div>
+                    <div><span class="lbl">Girkasse:</span> {esc(ad.get('Girkasse')) or '—'}</div>
+                    <div><span class="lbl">Nyttelast (SVV):</span> {kg(v('SvvNyttelast'))}</div>
+                    <div><span class="lbl">Tilhengervekt:</span> {kg(v('SvvTilhengervektMedBrems'))}</div>
+                    <div><span class="lbl">Sengelayout:</span> {esc(ad.get('Sengelayout')) or '—'}</div>
+                    <div><span class="lbl">Vendbare forseter:</span> {vendbare}</div>
+                    <div><span class="lbl">Lokasjon:</span> {esc(lokasjon) or '—'}</div>
+                    <div><span class="lbl">Sist sett:</span> <span class="{esc(alder_cls)}">{esc(alder_txt)}</span></div>
+                    <div><span class="lbl">Selger:</span> {selger_html}</div>
+                    <div><span class="lbl">Heftelser:</span> {_heftelse_html(ad.get('Heftelser'), ad.get('HeftelseSjekket'), ad.get('HeftelserDetaljer'))}</div>
+                    <div><span class="lbl">{id_label}:</span> <a href="{esc(ad_url)}" target="_blank">{id_value}</a></div>
+                </div>
+                <div class="hero-lenker">{ext_links_html}</div>
+            </div>
+        </div>
+
+        <!-- ── Kollapsbart notat ── -->
+        <details class="notat-details {notat_har_innhold}" id="notat-details">
+            <summary class="notat-summary">Notat{' ✎' if notat_verdi.strip() else ''}</summary>
+            <div class="notat-body">
+                <textarea id="notat-felt" class="notat-textarea" rows="3"
+                          placeholder="Skriv ditt notat om denne bilen her...">{notat_verdi}</textarea>
+                <div class="notat-save-row">
+                    <button class="btn btn-sm" onclick="lagreNotat({esc(finnkode)})">Lagre notat</button>
+                    <span id="notat-status" class="notat-status"></span>
+                </div>
+            </div>
+        </details>
+
+        <!-- ── Tabs ── -->
+        <div class="ad-tabs">
+            <button class="ad-tab active" data-tab="oversikt">Oversikt</button>
+            <button class="ad-tab" data-tab="vegvesen">Vegvesen</button>
+            <button class="ad-tab" data-tab="marked">Marked</button>
+            <button class="ad-tab" data-tab="prishistorikk">Prishistorikk</button>
+        </div>
+
+        <div class="ad-tab-panel" data-panel="oversikt">
+            {_merke_html(ad)}
+            <div class="beskrivelse">{esc(ad.get('Beskrivelse', ''))}</div>
+        </div>
+        <div class="ad-tab-panel" data-panel="vegvesen" hidden>
+            {svv_block if svv_block else '<p class="note-secondary">Ingen Vegvesen-data tilgjengelig.</p>'}
+        </div>
+        <div class="ad-tab-panel" data-panel="marked" hidden>
+            {salgspris_block}
+            {_liggetid_html(liggetid_data)}
+        </div>
+        <div class="ad-tab-panel" data-panel="prishistorikk" hidden>
+            {pris_chart_html}
+            {pris_tabell_html}
+        </div>
+
+        <script>
+        const _apiBase = '{esc(bp)}';
+        document.querySelectorAll('.ad-tab').forEach(btn => {{
+            btn.addEventListener('click', () => {{
+                document.querySelectorAll('.ad-tab').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.ad-tab-panel').forEach(p => p.hidden = true);
+                btn.classList.add('active');
+                document.querySelector('[data-panel="' + btn.dataset.tab + '"]').hidden = false;
+            }});
+        }});
+        function toggleFavoritt(fk) {{
+            fetch(_apiBase + 'api/favoritt/' + fk, {{method: 'POST'}})
+                .then(r => r.json())
+                .then(d => {{
+                    if (d.ok) {{
+                        const btn = document.getElementById('fav-btn');
+                        btn.textContent = d.favoritt ? '⭐' : '☆';
+                        btn.title = d.favoritt ? 'Fjern fra favoritter' : 'Legg til i favoritter';
+                    }}
+                }});
+        }}
+        function lagreNotat(fk) {{
+            const txt = document.getElementById('notat-felt').value;
+            fetch(_apiBase + 'api/notat/' + fk, {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{notat: txt}})
+            }}).then(r => r.json()).then(d => {{
+                const s = document.getElementById('notat-status');
+                s.textContent = d.ok ? 'Lagret ✓' : 'Feil ved lagring';
+                setTimeout(() => s.textContent = '', 3000);
+                if (d.ok && txt.trim()) {{
+                    document.querySelector('#notat-details summary').textContent = 'Notat ✎';
+                }}
+            }});
+        }}
+        </script>
+        """
 
         return render_page("detaljer", html, base_path=bp)
     except Exception as e:
