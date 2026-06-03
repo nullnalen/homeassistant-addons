@@ -433,6 +433,13 @@ def ensure_db_columns():
         except mysql.connector.Error as e:
             if e.errno != 1060:
                 logger.error("Feil ved ALTER TABLE PrisVarsel: %s", e)
+        try:
+            cur.execute("ALTER TABLE bruker_data ADD COLUMN ScoreJustering TINYINT DEFAULT 0")
+            conn.commit()
+            logger.info("La til kolonne ScoreJustering i bruker_data.")
+        except mysql.connector.Error as e:
+            if e.errno != 1060:
+                logger.error("Feil ved ALTER TABLE ScoreJustering: %s", e)
 
     except Exception as e:
         logger.error("Feil i ensure_db_columns: %s", e)
@@ -447,11 +454,11 @@ def get_bruker_data(finnkode: int) -> dict:
         return {"favoritt": False, "notat": ""}
     try:
         cur = conn.cursor(dictionary=True)
-        cur.execute("SELECT Favoritt, Notat, PrisVarsel FROM bruker_data WHERE Finnkode = %s", (finnkode,))
+        cur.execute("SELECT Favoritt, Notat, PrisVarsel, ScoreJustering FROM bruker_data WHERE Finnkode = %s", (finnkode,))
         row = cur.fetchone()
         if row:
-            return {"favoritt": bool(row["Favoritt"]), "notat": row["Notat"] or "", "prisvarsel": row["PrisVarsel"]}
-        return {"favoritt": False, "notat": "", "prisvarsel": None}
+            return {"favoritt": bool(row["Favoritt"]), "notat": row["Notat"] or "", "prisvarsel": row["PrisVarsel"], "score_justering": row["ScoreJustering"] or 0}
+        return {"favoritt": False, "notat": "", "prisvarsel": None, "score_justering": 0}
     except Exception:
         return {"favoritt": False, "notat": ""}
     finally:
@@ -470,7 +477,7 @@ def get_alle_favoritter() -> list[dict]:
                    b.Lokasjon, b.ImageURL, b.SvvNyttelast, b.SvvLengde,
                    b.SvvTilhengervektMedBrems, b.SvvEuKontrollfrist,
                    b.Sengelayout, b.Heftelser, b.HeftelserDetaljer, b.Solgt,
-                   u.Favoritt, u.Notat, u.PrisVarsel, u.Oppdatert AS BrukerOppdatert,
+                   u.Favoritt, u.Notat, u.PrisVarsel, u.ScoreJustering, u.Oppdatert AS BrukerOppdatert,
                    MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris,
                    MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris
             FROM bruker_data u
@@ -481,7 +488,7 @@ def get_alle_favoritter() -> list[dict]:
                      b.Lokasjon, b.ImageURL, b.SvvNyttelast, b.SvvLengde,
                      b.SvvTilhengervektMedBrems, b.SvvEuKontrollfrist,
                      b.Sengelayout, b.Heftelser, b.HeftelserDetaljer, b.Solgt,
-                     u.Favoritt, u.Notat, u.PrisVarsel, u.Oppdatert
+                     u.Favoritt, u.Notat, u.PrisVarsel, u.ScoreJustering, u.Oppdatert
             ORDER BY u.Oppdatert DESC
         """)
         rows = cur.fetchall()
@@ -542,6 +549,9 @@ def get_annonser():
             ORDER BY COALESCE(MAX(p.Tidspunkt), b.AutodbSistEndret, b.Opprettet) DESC
         """)
         rows = cur.fetchall()
+        # Hent scorejusteringer i én batch
+        cur.execute("SELECT Finnkode, ScoreJustering FROM bruker_data WHERE ScoreJustering != 0")
+        score_justeringer = {row["Finnkode"]: (row["ScoreJustering"] or 0) for row in cur.fetchall()}
         now = datetime.now()
         keywords = ["køye", "senkeseng", "familie", "vendbare seter", "kapteinstoler", "alkove"]
         for r in rows:
@@ -560,7 +570,9 @@ def get_annonser():
             r["Soketreff"] = ", ".join(kw for kw in keywords if kw in tekst)
             if not r.get("HoyestePris"):
                 r["HoyestePris"] = parse_price(r.get("Pris"))
-            r["KjopsScore"] = beregn_kjopsscore(r, now)
+            justering = score_justeringer.get(r["Finnkode"], 0)
+            r["ScoreJustering"] = justering
+            r["KjopsScore"] = min(100, max(0, beregn_kjopsscore(r, now) + justering))
         return rows
     except Exception as e:
         logger.error("Feil i get_annonser: %s\n%s", e, traceback.format_exc())
@@ -1656,6 +1668,54 @@ def get_detaljer(page=1, per_page=50, filters=None):
 # Scraper-integrasjon
 # ---------------------------------------------------------------------------
 
+def _send_ha_notify(melding: str, tittel: str = "Bobil prisvarsel"):
+    """Send HA persistent_notification via Supervisor API."""
+    try:
+        import urllib.request
+        token = os.getenv("SUPERVISOR_TOKEN", "")
+        if not token:
+            return
+        data = json.dumps({"message": melding, "title": tittel}).encode()
+        req = urllib.request.Request(
+            "http://supervisor/core/api/services/persistent_notification/create",
+            data=data,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=5)
+        logger.info("HA-varsel sendt: %s", tittel)
+    except Exception as e:
+        logger.warning("Kunne ikke sende HA-varsel: %s", e)
+
+
+def sjekk_prisvarsler():
+    """Sjekk om noen favoritter har passert prisvarsel-grensen og send HA-varsel."""
+    conn = get_db()
+    if not conn:
+        return
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute("""
+            SELECT b.Finnkode, b.Annonsenavn, b.Pris, u.PrisVarsel
+            FROM bruker_data u
+            JOIN bobil b ON u.Finnkode = b.Finnkode
+            WHERE u.Favoritt = 1 AND u.PrisVarsel IS NOT NULL
+              AND (b.Solgt = 0 OR b.Solgt IS NULL)
+        """)
+        treff = []
+        for row in cur.fetchall():
+            naaverende = parse_price(row["Pris"])
+            grense = row["PrisVarsel"]
+            if naaverende and grense and naaverende <= grense:
+                treff.append(f"• {row['Annonsenavn']}: {format_price(naaverende)} (grense: {format_price(grense)})")
+        if treff:
+            melding = "Følgende bobiler har nådd prisvarsel-grensen din:\n\n" + "\n".join(treff)
+            _send_ha_notify(melding)
+    except Exception as e:
+        logger.error("Feil i sjekk_prisvarsler: %s", e)
+    finally:
+        conn.close()
+
+
 def run_scraper_background():
     """Kjør scraperen i bakgrunnen."""
     if scraper_status["running"]:
@@ -1670,6 +1730,7 @@ def run_scraper_background():
         scraper_status["last_run"] = datetime.now()
         scraper_status["error"] = None
         logger.info("Scraping fullført.")
+        sjekk_prisvarsler()
     except Exception as e:
         scraper_status["error"] = str(e)
         logger.error("Scraper feilet: %s", e)
@@ -1899,6 +1960,14 @@ TEMPLATE = """
             width: 220px; z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,0.3);
             pointer-events: none;
         }
+        /* Score-justering */
+        .score-justering-badge { font-size: 0.68rem; font-weight: 700; padding: 1px 4px; border-radius: 3px; margin-left: 2px; vertical-align: middle; }
+        .score-justering-pos { background: rgba(48,209,88,0.2); color: #30d158; }
+        .score-justering-neg { background: rgba(255,69,58,0.2); color: #ff453a; }
+        .score-justering-kontroll { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; }
+        .score-adj-btn { background: var(--card-bg); border: 1px solid var(--sep); border-radius: 4px; color: var(--label); cursor: pointer; font-size: 0.9rem; width: 22px; height: 22px; padding: 0; line-height: 1; }
+        .score-adj-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .score-justering-vis { font-size: 0.78rem; color: var(--label-sec); min-width: 2em; text-align: center; }
         /* Prisvarsel */
         .prisvarsel-celle { white-space: nowrap; }
         .prisvarsel-utloest { color: var(--red); font-weight: 700; font-size: 0.85rem; }
@@ -3029,6 +3098,7 @@ def view_annonser():
         <thead>
             <tr>
                 <th class="sortable" data-sort="number">Score</th>
+                <th class="thumb-cell"></th>
                 <th class="sortable">Annonse</th>
                 <th class="sortable" data-sort="number">Modell</th>
                 <th class="sortable" data-sort="number">Pris</th>
@@ -3044,12 +3114,21 @@ def view_annonser():
     for r in rows:
         ny_badge = '<span class="new-badge">NY</span>' if r.get("ErNy") else ""
         score = r.get("KjopsScore", 0)
+        justering = r.get("ScoreJustering", 0)
         score_cls = "score-high" if score >= 70 else ("score-mid" if score >= 40 else "score-low")
         nyttelast = f"{r['SvvNyttelast']} kg" if r.get('SvvNyttelast') else '—'
         score_tooltip = _score_tooltip(r)
+        justering_badge = (
+            f'<span class="score-justering-badge score-justering-pos">+{justering}</span>' if justering > 0
+            else f'<span class="score-justering-badge score-justering-neg">{justering}</span>' if justering < 0
+            else ""
+        )
+        img_url = r.get("ImageURL", "") or ""
+        thumb = f'<img src="{esc(img_url)}" class="thumb" alt="">' if img_url else ""
         html += f"""
             <tr>
-                <td><span class="score {score_cls}" data-tooltip="{esc(score_tooltip)}">{score}</span></td>
+                <td><span class="score {score_cls}" data-tooltip="{esc(score_tooltip)}">{score}</span>{justering_badge}</td>
+                <td class="thumb-cell">{thumb}</td>
                 <td class="truncate"><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Annonsenavn'])}</a>{ny_badge}{_kilde_badge(r.get('Kilde'))}</td>
                 <td>{esc(r['Modell'])}</td>
                 <td>{esc(r['NaaverendePris'])}</td>
@@ -3503,6 +3582,7 @@ def view_annonse(finnkode):
         bruker = get_bruker_data(finnkode)
         er_favoritt = bruker["favoritt"]
         notat_verdi = esc(bruker["notat"])
+        score_justering = bruker.get("score_justering", 0)
 
         # Vegvesen-data
         def v(key): return ad.get(key)
@@ -3611,6 +3691,16 @@ def view_annonse(finnkode):
         vendbare = "Ja" if ad.get("VendbareForerstoler") == 1 else ("Nei" if ad.get("VendbareForerstoler") == 0 else "—")
         notat_har_innhold = "notat-har-innhold" if notat_verdi.strip() else ""
 
+        # KjøpsScore for detaljside
+        enrich_row_with_prices(ad)
+        if not ad.get("HoyestePris"):
+            ad["HoyestePris"] = pris
+        kjops_score_base = beregn_kjopsscore(ad, datetime.now())
+        kjops_score = min(100, max(0, kjops_score_base + score_justering))
+        score_cls = "score-high" if kjops_score >= 70 else ("score-mid" if kjops_score >= 40 else "score-low")
+        score_tooltip = _score_tooltip(ad)
+        justering_tekst = (f"+{score_justering}" if score_justering > 0 else str(score_justering)) if score_justering else "0"
+
         # Bygg prishistorikk-innhold ferdig for tab
         if chart_data and len(chart_data) > 1:
             pris_chart_html = f"""
@@ -3684,6 +3774,14 @@ def view_annonse(finnkode):
             <div class="hero-info">
                 <div class="hero-pris">{esc(format_price(pris))}</div>
                 <div class="hero-grid">
+                    <div><span class="lbl">KjøpsScore:</span>
+                        <span class="score {score_cls}" data-tooltip="{esc(score_tooltip)}">{kjops_score}</span>
+                        <span class="score-justering-kontroll">
+                            <button class="score-adj-btn" onclick="justerScore({esc(finnkode)}, -5)" title="Trekk fra 5">−</button>
+                            <span id="score-justering-verdi" class="score-justering-vis">{esc(justering_tekst)}</span>
+                            <button class="score-adj-btn" onclick="justerScore({esc(finnkode)}, +5)" title="Legg til 5">+</button>
+                        </span>
+                    </div>
                     <div><span class="lbl">Modell:</span> {esc(ad.get('Modell')) or '—'}</div>
                     <div><span class="lbl">Km:</span> {esc(ad.get('Kilometerstand')) or '—'}</div>
                     <div><span class="lbl">Type:</span> {esc(ad.get('Typebobil')) or '—'}</div>
@@ -3695,7 +3793,8 @@ def view_annonse(finnkode):
                     <div><span class="lbl">Lokasjon:</span> {esc(lokasjon) or '—'}</div>
                     <div><span class="lbl">Sist sett:</span> <span class="{esc(alder_cls)}">{esc(alder_txt)}</span></div>
                     <div><span class="lbl">Selger:</span> {selger_html}</div>
-                    <div><span class="lbl">Heftelser:</span> {_heftelse_html(ad.get('Heftelser'), ad.get('HeftelseSjekket'), ad.get('HeftelserDetaljer'))}{'&nbsp;<a class="heft-ekstern-link" href="https://losoreregisteret.no/registeringsrett/motorvogn/' + kjennemerke.replace(' ', '') + '" target="_blank" rel="noopener">Sjekk hos Løsøreregisteret ↗</a>' if kjennemerke else ''}</div>
+                    <div><span class="lbl">Heftelser:</span> {_heftelse_html(ad.get('Heftelser'), ad.get('HeftelseSjekket'), ad.get('HeftelserDetaljer'))}{'&nbsp;<a class="heft-ekstern-link" href="https://losoreregisteret.no/registeringsrett/motorvogn/' + kjennemerke.replace(' ', '') + '" target="_blank" rel="noopener">Sjekk ↗</a>' if kjennemerke else ''}</div>
+                    {'<div><span class="lbl">Kjennemerke:</span> <a href="https://www.vegvesen.no/kjoretoy/kjop-og-salg/kjoretoyopplysninger/?registreringsnummer=' + kjennemerke.replace(' ', '') + '" target="_blank" rel="noopener">' + esc(kjennemerke) + ' ↗</a></div>' if kjennemerke else ''}
                     <div><span class="lbl">{id_label}:</span> <a href="{esc(ad_url)}" target="_blank">{id_value}</a></div>
                 </div>
                 <div class="hero-lenker">{ext_links_html}</div>
@@ -3771,6 +3870,20 @@ def view_annonse(finnkode):
                 setTimeout(() => s.textContent = '', 3000);
                 if (d.ok && txt.trim()) {{
                     document.querySelector('#notat-details summary').textContent = 'Notat ✎';
+                }}
+            }});
+        }}
+        let _scoreJustering = {score_justering};
+        function justerScore(fk, delta) {{
+            _scoreJustering = Math.max(-30, Math.min(30, _scoreJustering + delta));
+            fetch(_apiBase + 'api/score_justering/' + fk, {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{justering: _scoreJustering}})
+            }}).then(r => r.json()).then(d => {{
+                if (d.ok) {{
+                    const vis = document.getElementById('score-justering-verdi');
+                    if (vis) vis.textContent = _scoreJustering > 0 ? '+' + _scoreJustering : String(_scoreJustering);
                 }}
             }});
         }}
@@ -3863,6 +3976,33 @@ def api_sett_prisvarsel(finnkode):
         return jsonify({"ok": True, "grense": grense})
     except Exception as e:
         logger.error("Feil i api_sett_prisvarsel: %s", e)
+        return jsonify({"ok": False}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/api/score_justering/<int:finnkode>", methods=["POST"])
+def api_sett_score_justering(finnkode):
+    """Lagre manuell scorejustering (-30 til +30) for en annonse."""
+    justering = request.json.get("justering", 0) if request.is_json else 0
+    try:
+        justering = max(-30, min(30, int(justering)))
+    except (TypeError, ValueError):
+        justering = 0
+    conn = get_db()
+    if not conn:
+        return jsonify({"ok": False}), 500
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute("SELECT Finnkode FROM bruker_data WHERE Finnkode = %s", (finnkode,))
+        if cur.fetchone():
+            cur.execute("UPDATE bruker_data SET ScoreJustering = %s WHERE Finnkode = %s", (justering, finnkode))
+        else:
+            cur.execute("INSERT INTO bruker_data (Finnkode, ScoreJustering) VALUES (%s, %s)", (finnkode, justering))
+        conn.commit()
+        return jsonify({"ok": True, "justering": justering})
+    except Exception as e:
+        logger.error("Feil i api_sett_score_justering: %s", e)
         return jsonify({"ok": False}), 500
     finally:
         conn.close()
