@@ -4035,7 +4035,8 @@ def api_sett_score_justering(finnkode):
         # Beregn ny score for å returnere til klienten
         ny_score = None
         try:
-            cur.execute("""
+            cur2 = conn.cursor(dictionary=True)
+            cur2.execute("""
                 SELECT b.Finnkode, b.Pris, b.Oppdatert, b.Opprettet, b.SistSett, b.Kilometerstand,
                        b.SvvNyttelast, b.SvvTilhengervektMedBrems, b.SvvEuKontrollfrist,
                        b.SvvEuSistGodkjent, b.SvvAarsmodell, b.Annonsenavn, b.Beskrivelse,
@@ -4048,15 +4049,15 @@ def api_sett_score_justering(finnkode):
                          b.SvvNyttelast, b.SvvTilhengervektMedBrems, b.SvvEuKontrollfrist,
                          b.SvvEuSistGodkjent, b.SvvAarsmodell, b.Annonsenavn, b.Beskrivelse
             """, (finnkode,))
-            rad = cur.fetchone()
+            rad = cur2.fetchone()
             if rad:
                 enrich_row_with_prices(rad)
                 if not rad.get("HoyestePris"):
                     rad["HoyestePris"] = parse_price(rad.get("Pris"))
                 base = beregn_kjopsscore(rad, datetime.now())
                 ny_score = min(100, max(0, base + justering))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("Feil ved scoreberegning i api_sett_score_justering: %s", e)
         return jsonify({"ok": True, "justering": justering, "ny_score": ny_score})
     except Exception as e:
         logger.error("Feil i api_sett_score_justering: %s", e)
