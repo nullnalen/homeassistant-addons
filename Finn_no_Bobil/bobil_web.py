@@ -3899,6 +3899,13 @@ def view_annonse(finnkode):
                 if (d.ok) {{
                     const vis = document.getElementById('score-justering-verdi');
                     if (vis) vis.textContent = _scoreJustering > 0 ? '+' + _scoreJustering : String(_scoreJustering);
+                    if (d.ny_score != null) {{
+                        const badge = document.querySelector('.score');
+                        if (badge) {{
+                            badge.textContent = d.ny_score;
+                            badge.className = 'score ' + (d.ny_score >= 70 ? 'score-high' : d.ny_score >= 40 ? 'score-mid' : 'score-low');
+                        }}
+                    }}
                 }}
             }});
         }}
@@ -4025,7 +4032,32 @@ def api_sett_score_justering(finnkode):
         else:
             cur.execute("INSERT INTO bruker_data (Finnkode, ScoreJustering) VALUES (%s, %s)", (finnkode, justering))
         conn.commit()
-        return jsonify({"ok": True, "justering": justering})
+        # Beregn ny score for å returnere til klienten
+        ny_score = None
+        try:
+            cur.execute("""
+                SELECT b.Finnkode, b.Pris, b.Oppdatert, b.Opprettet, b.SistSett, b.Kilometerstand,
+                       b.SvvNyttelast, b.SvvTilhengervektMedBrems, b.SvvEuKontrollfrist,
+                       b.SvvEuSistGodkjent, b.SvvAarsmodell, b.Annonsenavn, b.Beskrivelse,
+                       MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
+                       MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris
+                FROM bobil b
+                LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
+                WHERE b.Finnkode = %s
+                GROUP BY b.Finnkode, b.Pris, b.Oppdatert, b.Opprettet, b.SistSett, b.Kilometerstand,
+                         b.SvvNyttelast, b.SvvTilhengervektMedBrems, b.SvvEuKontrollfrist,
+                         b.SvvEuSistGodkjent, b.SvvAarsmodell, b.Annonsenavn, b.Beskrivelse
+            """, (finnkode,))
+            rad = cur.fetchone()
+            if rad:
+                enrich_row_with_prices(rad)
+                if not rad.get("HoyestePris"):
+                    rad["HoyestePris"] = parse_price(rad.get("Pris"))
+                base = beregn_kjopsscore(rad, datetime.now())
+                ny_score = min(100, max(0, base + justering))
+        except Exception:
+            pass
+        return jsonify({"ok": True, "justering": justering, "ny_score": ny_score})
     except Exception as e:
         logger.error("Feil i api_sett_score_justering: %s", e)
         return jsonify({"ok": False}), 500
