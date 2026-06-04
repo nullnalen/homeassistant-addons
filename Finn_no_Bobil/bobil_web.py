@@ -553,20 +553,20 @@ def get_annonser():
                    MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
                    MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris,
                    MAX(p.Tidspunkt) AS SistePrisendring,
-                   b.URL
+                   b.URL,
+                   COALESCE(bd.ScoreJustering, 0) AS ScoreJustering
             FROM bobil b
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
+            LEFT JOIN bruker_data bd ON b.Finnkode = bd.Finnkode
             WHERE (b.Solgt = 0 OR b.Solgt IS NULL)
             GROUP BY b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Modell, b.Pris,
                      b.Oppdatert, b.Opprettet, b.SistSett, b.AutodbSistEndret, b.Kilometerstand, b.Beskrivelse, b.Sengelayout,
                      b.SvvNyttelast, b.SvvTilhengervektMedBrems,
-                     b.SvvEuKontrollfrist, b.SvvEuSistGodkjent, b.SvvAarsmodell, b.SvvMerke, b.URL
+                     b.SvvEuKontrollfrist, b.SvvEuSistGodkjent, b.SvvAarsmodell, b.SvvMerke, b.URL,
+                     bd.ScoreJustering
             ORDER BY COALESCE(MAX(p.Tidspunkt), b.AutodbSistEndret, b.Opprettet) DESC
         """)
         rows = cur.fetchall()
-        # Hent scorejusteringer i én batch
-        cur.execute("SELECT Finnkode, ScoreJustering FROM bruker_data WHERE ScoreJustering != 0")
-        score_justeringer = {row["Finnkode"]: (row["ScoreJustering"] or 0) for row in cur.fetchall()}
         now = datetime.now()
         keywords = ["køye", "senkeseng", "familie", "vendbare seter", "kapteinstoler", "alkove"]
         for r in rows:
@@ -585,7 +585,7 @@ def get_annonser():
             r["Soketreff"] = ", ".join(kw for kw in keywords if kw in tekst)
             if not r.get("HoyestePris"):
                 r["HoyestePris"] = parse_price(r.get("Pris"))
-            justering = score_justeringer.get(r["Finnkode"], 0)
+            justering = int(r.get("ScoreJustering") or 0)
             r["ScoreJustering"] = justering
             r["KjopsScore"] = min(100, max(0, beregn_kjopsscore(r, now) + justering))
         return rows
@@ -2644,6 +2644,18 @@ TEMPLATE = """
                 if (table) _applySort(table, saved.idx, saved.dir);
             }
         } catch(e) {}
+
+        // Reload annonsesiden hvis score ble justert på en detaljside
+        window.addEventListener('pageshow', function(e) {
+            try {
+                if (location.pathname.endsWith('/annonser') || location.pathname === '/') {
+                    if (sessionStorage.getItem('scoreEndret') === '1') {
+                        sessionStorage.removeItem('scoreEndret');
+                        location.reload();
+                    }
+                }
+            } catch(e) {}
+        });
     </script>
 </body>
 </html>
