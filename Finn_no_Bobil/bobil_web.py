@@ -554,7 +554,8 @@ def get_annonser():
                    MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris,
                    MAX(p.Tidspunkt) AS SistePrisendring,
                    b.URL,
-                   COALESCE(bd.ScoreJustering, 0) AS ScoreJustering
+                   COALESCE(bd.ScoreJustering, 0) AS ScoreJustering,
+                   b.Kjennemerke
             FROM bobil b
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
             LEFT JOIN bruker_data bd ON b.Finnkode = bd.Finnkode
@@ -563,7 +564,7 @@ def get_annonser():
                      b.Oppdatert, b.Opprettet, b.SistSett, b.AutodbSistEndret, b.Kilometerstand, b.Beskrivelse, b.Sengelayout,
                      b.SvvNyttelast, b.SvvTilhengervektMedBrems,
                      b.SvvEuKontrollfrist, b.SvvEuSistGodkjent, b.SvvAarsmodell, b.SvvMerke, b.URL,
-                     bd.ScoreJustering
+                     bd.ScoreJustering, b.Kjennemerke
             ORDER BY COALESCE(MAX(p.Tidspunkt), b.AutodbSistEndret, b.Opprettet) DESC
         """)
         rows = cur.fetchall()
@@ -2338,6 +2339,8 @@ TEMPLATE = """
             letter-spacing: -0.2px;
         }
 
+        .liste-filter-bar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
+        .badge { background: var(--accent); color: #fff; border-radius: 10px; padding: 1px 7px; font-size: 0.75rem; margin-left: 4px; }
         .kjennemerke-rediger-rad { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
         .kjennemerke-input { background: var(--bg-grouped); border: 1px solid var(--sep); border-radius: 6px; color: var(--label); padding: 3px 8px; font-size: 0.9rem; width: 100px; text-transform: uppercase; }
         .kjennemerke-status { font-size: 0.78rem; color: var(--label-sec); }
@@ -2662,6 +2665,22 @@ TEMPLATE = """
                 if (table) _applySort(table, saved.idx, saved.dir);
             }
         } catch(e) {}
+
+        function filtrerUtenSkilt() {
+            document.querySelectorAll('tr[data-kjennemerke="1"]').forEach(r => r.style.display = 'none');
+            document.querySelectorAll('tr[data-kjennemerke="0"]').forEach(r => r.style.display = '');
+            const btn = document.getElementById('filter-uten-skilt-btn');
+            const alle = document.getElementById('filter-alle-btn');
+            if (btn) btn.style.display = 'none';
+            if (alle) alle.style.display = '';
+        }
+        function visAlle() {
+            document.querySelectorAll('tr[data-kjennemerke]').forEach(r => r.style.display = '');
+            const btn = document.getElementById('filter-uten-skilt-btn');
+            const alle = document.getElementById('filter-alle-btn');
+            if (btn) btn.style.display = '';
+            if (alle) alle.style.display = 'none';
+        }
 
         // Reload annonsesiden hvis score ble justert på en detaljside
         window.addEventListener('pageshow', function(e) {
@@ -3138,7 +3157,14 @@ def view_annonser():
     if not rows:
         return render_page("annonser", '<p class="no-data">Ingen annonser funnet.</p>')
 
-    html = """
+    antall_uten_skilt = sum(1 for r in rows if not (r.get("Kjennemerke") or "").strip())
+    html = f"""
+    <div class="liste-filter-bar">
+        <button class="btn btn-sm" id="filter-uten-skilt-btn" onclick="filtrerUtenSkilt()">
+            Uten skiltnummer <span class="badge">{antall_uten_skilt}</span>
+        </button>
+        <button class="btn btn-sm" id="filter-alle-btn" onclick="visAlle()" style="display:none">Vis alle</button>
+    </div>
     <table>
         <thead>
             <tr>
@@ -3170,8 +3196,9 @@ def view_annonser():
         )
         img_url = r.get("ImageURL", "") or ""
         thumb = f'<img src="{esc(img_url)}" class="thumb" alt="">' if img_url else ""
+        har_skilt = "1" if (r.get("Kjennemerke") or "").strip() else "0"
         html += f"""
-            <tr>
+            <tr data-kjennemerke="{har_skilt}">
                 <td><span class="score {score_cls}" data-tooltip="{esc(score_tooltip)}">{score}</span>{justering_badge}</td>
                 <td class="thumb-cell">{thumb}</td>
                 <td class="truncate"><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Annonsenavn'])}</a>{ny_badge}{_kilde_badge(r.get('Kilde'))}</td>
