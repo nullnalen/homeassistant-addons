@@ -1135,6 +1135,11 @@ def beregn_kjopsscore(r: dict, now: datetime) -> int:
     """
     s = 0
 
+    # Nøytral baseline når SVV-data mangler helt
+    mangler_svv = not (r.get("SvvEuKontrollfrist") or r.get("SvvAarsmodell") or r.get("SvvNyttelast"))
+    if mangler_svv:
+        s += 15
+
     # EU-kontrollfrist
     eu_frist = r.get("SvvEuKontrollfrist") or ""
     eu_sist = r.get("SvvEuSistGodkjent") or ""
@@ -1217,6 +1222,10 @@ def beregn_kjopsscore(r: dict, now: datetime) -> int:
     if pris and hoyeste and hoyeste > pris:
         prisfall_pct = (hoyeste - pris) / hoyeste * 100
         s += min(20, int(prisfall_pct * 2))
+
+    # Avregistrert kjøretøy
+    if "avregistrert" in (r.get("SvvRegistreringsstatus") or "").lower():
+        s -= 20
 
     return min(100, max(0, s))
 
@@ -2333,6 +2342,19 @@ TEMPLATE = """
             letter-spacing: -0.2px;
         }
 
+        .kjennemerke-rediger-rad { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
+        .kjennemerke-input { background: var(--bg-grouped); border: 1px solid var(--sep); border-radius: 6px; color: var(--label); padding: 3px 8px; font-size: 0.9rem; width: 100px; text-transform: uppercase; }
+        .kjennemerke-status { font-size: 0.78rem; color: var(--label-sec); }
+        .avregistrert-banner {
+            background: rgba(255,69,58,0.15);
+            border: 1px solid rgba(255,69,58,0.4);
+            color: #ff453a;
+            border-radius: var(--radius-sm);
+            padding: 10px 16px;
+            margin-bottom: 14px;
+            font-weight: 600;
+            font-size: 0.95em;
+        }
         .kjennemerke-hint {
             font-size: 0.85em;
             color: var(--label-sec);
@@ -3625,14 +3647,31 @@ def view_annonse(finnkode):
             ad.get("SvvEuKontrollfrist") or "", ad.get("SvvEuSistGodkjent") or ""
         )
 
+        avregistrert_banner = ""
+        if "avregistrert" in (ad.get("SvvRegistreringsstatus") or "").lower():
+            avregistrert_banner = '<div class="avregistrert-banner">&#9888; Kjøretøyet er avregistrert — avklar med selger før videre vurdering</div>'
+
+        kjennemerke_input_html = f"""
+            <div class="kjennemerke-rediger-rad">
+                <span class="lbl">Kjennemerke:</span>
+                <input id="kjennemerke-input" type="text" value="{esc(kjennemerke)}" placeholder="AB12345" maxlength="10" class="kjennemerke-input">
+                <button class="btn btn-sm" onclick="lagreKjennemerke({esc(finnkode)})">Lagre</button>
+                <span id="kjennemerke-status" class="kjennemerke-status"></span>
+            </div>
+            <div class="kjennemerke-rediger-rad" style="margin-top:8px">
+                <button class="btn btn-sm" onclick="hentSvvData({esc(finnkode)})" id="hent-svv-btn">Hent SVV-data</button>
+                <span id="hent-svv-status" class="kjennemerke-status"></span>
+            </div>"""
+
         # SVV-data i kategoriserte grupper
         svv_block = ""
         if har_svv:
             svv_block = f"""
+            {kjennemerke_input_html}
             <div class="svv-gruppe">
                 <div class="svv-gruppe-tittel">Identitet</div>
                 <div class="svv-gruppe-grid">
-                    <div><span class="lbl">Kjennemerke:</span> <strong>{esc(kjennemerke) or '—'}</strong></div>
+                    <div><span class="lbl">Kjennemerke (SVV):</span> <strong>{esc(kjennemerke) or '—'}</strong></div>
                     <div><span class="lbl">Merke (SVV):</span> {vs('SvvMerke')}</div>
                     <div><span class="lbl">Handelsbetegnelse:</span> {vs('SvvHandelsbetegnelse')}</div>
                     <div><span class="lbl">Typebetegnelse:</span> {vs('SvvTypebetegnelse')}</div>
@@ -3679,8 +3718,8 @@ def view_annonse(finnkode):
                     <div><span class="lbl">Vertikal koplingslast:</span> {kg(v('SvvVertikalKoplingslast'))}</div>
                 </div>
             </div>"""
-        elif kjennemerke:
-            svv_block = f'<p class="kjennemerke-hint">Kjennemerke: <strong>{esc(kjennemerke)}</strong> — ingen Vegvesen-data hentet ennå.</p>'
+        else:
+            svv_block = f'<p class="kjennemerke-hint">Ingen Vegvesen-data hentet ennå.</p>' + kjennemerke_input_html
 
         kilde = ad.get("Kilde") or "finn"
         autodb_id = ad.get("AutodbId")
@@ -3781,6 +3820,7 @@ def view_annonse(finnkode):
             pris_tabell_html += "</tbody></table>"
 
         html = f"""
+        {avregistrert_banner}
         <div class="detail-nav">
             <a href="javascript:history.back()">&larr; Tilbake</a>
             <a href="../mine-biler">⭐ Mine biler</a>
@@ -3902,7 +3942,7 @@ def view_annonse(finnkode):
         }}
         let _scoreJustering = {score_justering};
         function justerScore(fk, delta) {{
-            _scoreJustering = Math.max(-30, Math.min(30, _scoreJustering + delta));
+            _scoreJustering = Math.max(-100, Math.min(100, _scoreJustering + delta));
             fetch(_apiBase + 'api/score_justering/' + fk, {{
                 method: 'POST',
                 headers: {{'Content-Type': 'application/json'}},
@@ -3919,6 +3959,38 @@ def view_annonse(finnkode):
                         }}
                     }}
                 }}
+            }});
+        }}
+        function lagreKjennemerke(fk) {{
+            const val = (document.getElementById('kjennemerke-input').value || '').trim().toUpperCase();
+            const st = document.getElementById('kjennemerke-status');
+            if (!val) {{ st.textContent = 'Tomt felt'; return; }}
+            fetch(_apiBase + 'api/kjennemerke/' + fk, {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{kjennemerke: val}})
+            }}).then(r => r.json()).then(d => {{
+                st.textContent = d.ok ? 'Lagret ✓' : (d.error || 'Feil');
+                setTimeout(() => st.textContent = '', 3000);
+            }});
+        }}
+        function hentSvvData(fk) {{
+            const st = document.getElementById('hent-svv-status');
+            const btn = document.getElementById('hent-svv-btn');
+            btn.disabled = true;
+            st.textContent = 'Henter...';
+            fetch(_apiBase + 'api/hent_svv/' + fk, {{method: 'POST'}})
+            .then(r => r.json()).then(d => {{
+                if (d.ok) {{
+                    st.textContent = 'Hentet ✓ — laster siden...';
+                    setTimeout(() => location.reload(), 800);
+                }} else {{
+                    st.textContent = d.error || 'Feil ved henting';
+                    btn.disabled = false;
+                }}
+            }}).catch(() => {{
+                st.textContent = 'Nettverksfeil';
+                btn.disabled = false;
             }});
         }}
         </script>
@@ -4030,7 +4102,7 @@ def api_sett_score_justering(finnkode):
     """Lagre manuell scorejustering (-30 til +30) for en annonse."""
     try:
         data = request.get_json(force=True, silent=True) or {}
-        justering = max(-30, min(30, int(data.get("justering", 0))))
+        justering = max(-100, min(100, int(data.get("justering", 0))))
     except (TypeError, ValueError):
         justering = 0
     conn = get_db()
@@ -4074,6 +4146,69 @@ def api_sett_score_justering(finnkode):
     except Exception as e:
         logger.error("Feil i api_sett_score_justering: %s", e)
         return jsonify({"ok": False}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/api/kjennemerke/<finnkode>", methods=["POST"])
+def api_sett_kjennemerke(finnkode):
+    try: finnkode = int(finnkode)
+    except (TypeError, ValueError): return jsonify({"ok": False}), 400
+    data = request.get_json(force=True, silent=True) or {}
+    kjennemerke = (data.get("kjennemerke") or "").strip().upper().replace(" ", "")
+    if not kjennemerke or len(kjennemerke) > 10 or not kjennemerke.replace("-", "").isalnum():
+        return jsonify({"ok": False, "error": "Ugyldig kjennemerke"}), 400
+    conn = get_db()
+    if not conn:
+        return jsonify({"ok": False}), 500
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE bobil SET Kjennemerke = %s WHERE Finnkode = %s", (kjennemerke, finnkode))
+        conn.commit()
+        return jsonify({"ok": True, "kjennemerke": kjennemerke})
+    except Exception as e:
+        logger.error("Feil i api_sett_kjennemerke: %s", e)
+        return jsonify({"ok": False}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/api/hent_svv/<finnkode>", methods=["POST"])
+def api_hent_svv(finnkode):
+    try: finnkode = int(finnkode)
+    except (TypeError, ValueError): return jsonify({"ok": False}), 400
+    conn = get_db()
+    if not conn:
+        return jsonify({"ok": False}), 500
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute("SELECT Kjennemerke FROM bobil WHERE Finnkode = %s", (finnkode,))
+        rad = cur.fetchone()
+        if not rad:
+            return jsonify({"ok": False, "error": "Annonse ikke funnet"}), 404
+        kjennemerke = (rad.get("Kjennemerke") or "").strip().upper().replace(" ", "")
+        if not kjennemerke:
+            return jsonify({"ok": False, "error": "Kjennemerke mangler — legg det inn først"})
+        from bobil_v2 import VegvesenEnricher, parse_vegvesen_data, _SVV_COLS, _SVV_KEY_MAP
+        enricher = VegvesenEnricher.from_options()
+        if not enricher:
+            return jsonify({"ok": False, "error": "Vegvesen API-nøkkel ikke konfigurert"})
+        import asyncio, aiohttp
+        async def _fetch():
+            async with aiohttp.ClientSession() as session:
+                return await enricher._fetch(session, kjennemerke=kjennemerke)
+        svv = asyncio.run(_fetch())
+        if not svv:
+            return jsonify({"ok": False, "error": "Ingen data fra Vegvesen"})
+        vals = [svv.get(_SVV_KEY_MAP[col]) for col in _SVV_COLS]
+        set_clause = ", ".join(f"{col} = %s" for col in _SVV_COLS)
+        cur2 = conn.cursor()
+        cur2.execute(f"UPDATE bobil SET {set_clause} WHERE Finnkode = %s", vals + [finnkode])
+        conn.commit()
+        return jsonify({"ok": True})
+    except Exception as e:
+        logger.error("Feil i api_hent_svv: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
     finally:
         conn.close()
 
