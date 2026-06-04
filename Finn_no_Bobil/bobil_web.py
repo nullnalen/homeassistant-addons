@@ -1223,10 +1223,6 @@ def beregn_kjopsscore(r: dict, now: datetime) -> int:
         prisfall_pct = (hoyeste - pris) / hoyeste * 100
         s += min(20, int(prisfall_pct * 2))
 
-    # Avregistrert kjøretøy
-    if "avregistrert" in (r.get("SvvRegistreringsstatus") or "").lower():
-        s -= 20
-
     return min(100, max(0, s))
 
 
