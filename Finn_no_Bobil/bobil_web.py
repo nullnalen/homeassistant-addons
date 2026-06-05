@@ -1132,7 +1132,9 @@ _SEGMENT_FARGE = {
 
 def beregn_kjopsscore(r: dict, now: datetime) -> int:
     """
-    Full scoring-algoritme basert på EU-frist, km/år, nyttelast, årsmodell og merkerisiko.
+    Scoring-algoritme. Maks ~115 råpoeng normalisert til 100.
+    Faktorer: EU-kontroll, km totalt, km/år, nyttelast, årsmodell,
+    selgertype, heftelser, girkasse, prisfall, merkerisiko.
     """
     s = 0
 
@@ -1141,7 +1143,7 @@ def beregn_kjopsscore(r: dict, now: datetime) -> int:
     if mangler_svv:
         s += 15
 
-    # EU-kontrollfrist
+    # EU-kontrollfrist (+10 maks)
     eu_frist = r.get("SvvEuKontrollfrist") or ""
     eu_sist = r.get("SvvEuSistGodkjent") or ""
     mnd_til_eu = None
@@ -1158,82 +1160,120 @@ def beregn_kjopsscore(r: dict, now: datetime) -> int:
 
     if mnd_til_eu is not None:
         if mnd_til_eu > 24:
-            s += 25
+            s += 10
         elif mnd_til_eu > 12:
-            s += 15
+            s += 7
         elif mnd_til_eu > 6:
-            s += 5
+            s += 3
         else:
-            s -= 10
+            s -= 7
 
+    # EU sist godkjent (+5 maks)
     if mnd_siden_eu is not None:
         if mnd_siden_eu < 6:
-            s += 20
-        elif mnd_siden_eu < 12:
-            s += 10
-        elif mnd_siden_eu < 24:
             s += 5
-        else:
-            s -= 5
+        elif mnd_siden_eu < 12:
+            s += 3
+        elif mnd_siden_eu >= 24:
+            s -= 3
 
-    # Nyttelast (SVV)
+    # Nyttelast (+15 maks, -5 under 400 kg)
     nyttelast = r.get("SvvNyttelast") or 0
     if nyttelast >= 700:
-        s += 20
-    elif nyttelast >= 550:
         s += 15
+    elif nyttelast >= 550:
+        s += 12
     elif nyttelast >= 450:
-        s += 10
-    else:
+        s += 8
+    elif nyttelast >= 400:
         s += 3
+    elif nyttelast:
+        s -= 5
+    else:
+        s += 3  # ukjent — fallback
 
-    # Km per år
+    # Km totalt (+15 maks)
     km = parse_km(r.get("Kilometerstand"))
     try:
         aar = int(r.get("SvvAarsmodell") or r.get("Modell") or 0)
     except (ValueError, TypeError):
         aar = 0
-    if km and aar and aar > 2000:
-        alder_aar = max(1, now.year - aar)
-        km_aar = km / alder_aar
-        if km_aar < 7000:
-            s += 20
-        elif km_aar < 10000:
+    if km:
+        if km < 30000:
+            s += 15
+        elif km < 60000:
             s += 10
-        elif km_aar < 13000:
+        elif km < 100000:
             s += 5
+        elif km < 150000:
+            s += 0
         else:
             s -= 5
 
-    # Årsmodell
-    if aar >= 2019:
+    # Km per år (+10 maks)
+    if km and aar and aar > 2000:
+        alder_aar = max(1, now.year - aar)
+        km_aar = km / alder_aar
+        if km_aar < 5000:
+            s += 10
+        elif km_aar < 8000:
+            s += 7
+        elif km_aar < 11000:
+            s += 3
+        elif km_aar >= 14000:
+            s -= 5
+
+    # Årsmodell (+15 maks)
+    if aar >= 2020:
+        s += 15
+    elif aar >= 2018:
+        s += 12
+    elif aar >= 2016:
+        s += 8
+    elif aar >= 2013:
+        s += 5
+    elif aar >= 2010:
+        s += 2
+
+    # Selgertype: privat er bedre kjøp (+10)
+    selger = (r.get("Selger") or "").lower()
+    if "privat" in selger or selger == "privat":
         s += 10
-    elif aar >= 2017:
-        s += 7
-    elif aar >= 2015:
-        s += 4
 
-    # Merke-risiko (trekk)
-    merke = r.get("SvvMerke") or r.get("Annonsenavn", "").split()[0]
-    s -= FORUM_RISIKO.get(merke, 5)
+    # Heftelser (+5 hvis ingen, -5 hvis heftelse)
+    heftelser = r.get("HeftelseBelop") or r.get("HeftelseAntall") or 0
+    if heftelser and int(heftelser) > 0:
+        s -= 5
+    elif r.get("HeftelseStatus") == "ok" or heftelser == 0:
+        s += 5
 
-    # Prisfall-bonus: belønner annonser med dokumentert prisfall
+    # Girkasse: manuell = +5 (ikke betale automat-premien)
+    girkasse = (r.get("Girkasse") or "").lower()
+    if "manuell" in girkasse:
+        s += 5
+
+    # Prisfall-bonus (+5 maks)
     pris = parse_price(r.get("Pris"))
     hoyeste = r.get("HoyestePris")
     if pris and hoyeste and hoyeste > pris:
         prisfall_pct = (hoyeste - pris) / hoyeste * 100
-        s += min(20, int(prisfall_pct * 2))
+        s += min(5, int(prisfall_pct))
 
-    return min(100, max(0, s))
+    # Merke-risiko (trekk)
+    merke = r.get("SvvMerke") or (r.get("Annonsenavn") or "").split()[0]
+    s -= FORUM_RISIKO.get(merke, 5)
+
+    return min(100, max(5, s))
 
 
 def beregn_kjopsscore_forklaring(r: dict, now: datetime) -> list[tuple[str, int, str]]:
-    """Returnerer liste av (faktor, poeng, merknad) for visning på detaljsiden."""
+    """Returnerer liste av (faktor, råpoeng, merknad) for visning på detaljsiden.
+    Råpoengene vises direkte — normalisering skjer i beregn_kjopsscore."""
     items = []
 
     mangler_svv = not (r.get("SvvEuKontrollfrist") or r.get("SvvAarsmodell") or r.get("SvvNyttelast"))
     if mangler_svv:
-        items.append(("SVV-data mangler", +15, "Nøytral baseline — kjennemerke ikke registrert"))
+        items.append(("SVV-data mangler", +15, "Nøytral baseline"))
 
     eu_frist = r.get("SvvEuKontrollfrist") or ""
     eu_sist = r.get("SvvEuSistGodkjent") or ""
@@ -1242,13 +1282,13 @@ def beregn_kjopsscore_forklaring(r: dict, now: datetime) -> list[tuple[str, int,
             frist_dato = datetime.strptime(eu_frist[:10], "%Y-%m-%d")
             mnd = max(0, (frist_dato - now).days // 30)
             if mnd > 24:
-                items.append(("EU-frist", +25, f"{mnd} mnd igjen"))
+                items.append(("EU-frist", +10, f"{mnd} mnd igjen"))
             elif mnd > 12:
-                items.append(("EU-frist", +15, f"{mnd} mnd igjen"))
+                items.append(("EU-frist", +7, f"{mnd} mnd igjen"))
             elif mnd > 6:
-                items.append(("EU-frist", +5, f"{mnd} mnd igjen"))
+                items.append(("EU-frist", +3, f"{mnd} mnd igjen"))
             else:
-                items.append(("EU-frist", -10, f"Kun {mnd} mnd igjen"))
+                items.append(("EU-frist", -7, f"Kun {mnd} mnd igjen"))
     except (ValueError, TypeError):
         pass
 
@@ -1257,25 +1297,25 @@ def beregn_kjopsscore_forklaring(r: dict, now: datetime) -> list[tuple[str, int,
             sist_dato = datetime.strptime(eu_sist[:10], "%Y-%m-%d")
             mnd = max(0, (now - sist_dato).days // 30)
             if mnd < 6:
-                items.append(("EU sist godkjent", +20, f"{mnd} mnd siden"))
-            elif mnd < 12:
-                items.append(("EU sist godkjent", +10, f"{mnd} mnd siden"))
-            elif mnd < 24:
                 items.append(("EU sist godkjent", +5, f"{mnd} mnd siden"))
-            else:
-                items.append(("EU sist godkjent", -5, f"{mnd} mnd siden"))
+            elif mnd < 12:
+                items.append(("EU sist godkjent", +3, f"{mnd} mnd siden"))
+            elif mnd >= 24:
+                items.append(("EU sist godkjent", -3, f"{mnd} mnd siden"))
     except (ValueError, TypeError):
         pass
 
     nyttelast = r.get("SvvNyttelast") or 0
     if nyttelast >= 700:
-        items.append(("Nyttelast", +20, f"{nyttelast} kg"))
-    elif nyttelast >= 550:
         items.append(("Nyttelast", +15, f"{nyttelast} kg"))
+    elif nyttelast >= 550:
+        items.append(("Nyttelast", +12, f"{nyttelast} kg"))
     elif nyttelast >= 450:
-        items.append(("Nyttelast", +10, f"{nyttelast} kg"))
+        items.append(("Nyttelast", +8, f"{nyttelast} kg"))
+    elif nyttelast >= 400:
+        items.append(("Nyttelast", +3, f"{nyttelast} kg"))
     elif nyttelast:
-        items.append(("Nyttelast", +3, f"{nyttelast} kg — under 450 kg"))
+        items.append(("Nyttelast", -5, f"{nyttelast} kg — under 400 kg"))
     else:
         items.append(("Nyttelast", +3, "Ukjent — fallback"))
 
@@ -1284,41 +1324,83 @@ def beregn_kjopsscore_forklaring(r: dict, now: datetime) -> list[tuple[str, int,
         aar = int(r.get("SvvAarsmodell") or r.get("Modell") or 0)
     except (ValueError, TypeError):
         aar = 0
+
+    if km:
+        km_f = f"{km:,}".replace(",", " ")
+        if km < 30000:
+            items.append(("Km totalt", +15, f"{km_f} km"))
+        elif km < 60000:
+            items.append(("Km totalt", +10, f"{km_f} km"))
+        elif km < 100000:
+            items.append(("Km totalt", +5, f"{km_f} km"))
+        elif km < 150000:
+            items.append(("Km totalt", 0, f"{km_f} km"))
+        else:
+            items.append(("Km totalt", -5, f"{km_f} km — høyt"))
+
     if km and aar and aar > 2000:
         km_aar = int(km / max(1, now.year - aar))
         km_aar_f = f"{km_aar:,}".replace(",", " ")
-        if km_aar < 7000:
-            items.append(("Km/år", +20, f"{km_aar_f} km/år"))
-        elif km_aar < 10000:
+        if km_aar < 5000:
             items.append(("Km/år", +10, f"{km_aar_f} km/år"))
-        elif km_aar < 13000:
-            items.append(("Km/år", +5, f"{km_aar_f} km/år"))
+        elif km_aar < 8000:
+            items.append(("Km/år", +7, f"{km_aar_f} km/år"))
+        elif km_aar < 11000:
+            items.append(("Km/år", +3, f"{km_aar_f} km/år"))
+        elif km_aar < 14000:
+            items.append(("Km/år", 0, f"{km_aar_f} km/år"))
         else:
             items.append(("Km/år", -5, f"{km_aar_f} km/år — høyt"))
-    else:
+    elif not km:
         items.append(("Km/år", 0, "Kan ikke beregnes"))
 
-    if aar >= 2019:
-        items.append(("Årsmodell", +10, str(aar)))
-    elif aar >= 2017:
-        items.append(("Årsmodell", +7, str(aar)))
-    elif aar >= 2015:
-        items.append(("Årsmodell", +4, str(aar)))
+    if aar >= 2020:
+        items.append(("Årsmodell", +15, str(aar)))
+    elif aar >= 2018:
+        items.append(("Årsmodell", +12, str(aar)))
+    elif aar >= 2016:
+        items.append(("Årsmodell", +8, str(aar)))
+    elif aar >= 2013:
+        items.append(("Årsmodell", +5, str(aar)))
+    elif aar >= 2010:
+        items.append(("Årsmodell", +2, str(aar)))
     elif aar:
-        items.append(("Årsmodell", 0, f"{aar} — eldre enn 2015"))
+        items.append(("Årsmodell", 0, f"{aar}"))
     else:
         items.append(("Årsmodell", 0, "Ukjent"))
 
-    merke = r.get("SvvMerke") or (r.get("Annonsenavn", "") or "").split()[0]
-    risiko = FORUM_RISIKO.get(merke, 5)
-    items.append(("Merkerisiko", -risiko, merke if merke else "Ukjent merke"))
+    selger = (r.get("Selger") or "").lower()
+    if "privat" in selger or selger == "privat":
+        items.append(("Selger", +10, "Privat"))
+    elif selger:
+        items.append(("Selger", 0, "Forhandler"))
+
+    heftelser = r.get("HeftelseBelop") or r.get("HeftelseAntall") or 0
+    try:
+        heft_int = int(heftelser)
+    except (ValueError, TypeError):
+        heft_int = 0
+    if heft_int > 0:
+        items.append(("Heftelser", -5, f"{heft_int} heftelse(r)"))
+    elif r.get("HeftelseStatus") == "ok" or heft_int == 0:
+        items.append(("Heftelser", +5, "Ingen heftelser"))
+
+    girkasse = (r.get("Girkasse") or "").lower()
+    if "manuell" in girkasse:
+        items.append(("Girkasse", +5, "Manuell"))
+    elif girkasse:
+        items.append(("Girkasse", 0, "Automat"))
 
     pris = parse_price(r.get("Pris"))
     hoyeste = r.get("HoyestePris")
     if pris and hoyeste and hoyeste > pris:
         prisfall_pct = (hoyeste - pris) / hoyeste * 100
-        bonus = min(20, int(prisfall_pct * 2))
+        bonus = min(5, int(prisfall_pct))
         items.append(("Prisfall", +bonus, f"{prisfall_pct:.1f}% fall fra toppris"))
+
+    merke = r.get("SvvMerke") or (r.get("Annonsenavn") or "").split()[0]
+    risiko = FORUM_RISIKO.get(merke, 5)
+    items.append(("Merkerisiko", -risiko, merke if merke else "Ukjent merke"))
 
     return items
 
