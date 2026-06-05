@@ -2435,6 +2435,15 @@ TEMPLATE = """
             letter-spacing: -0.2px;
         }
 
+        .sammenlign-boks { background: var(--bg-elevated); border: 0.5px solid var(--separator-op); border-radius: var(--radius-md); padding: 14px 16px; margin-bottom: 16px; }
+        .sammenlign-tittel { font-size: 0.8rem; color: var(--label-sec); margin-bottom: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+        .sammenlign-tabell { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+        .sammenlign-tabell th { color: var(--label-sec); font-weight: 600; text-align: left; padding: 3px 10px 5px 0; border-bottom: 1px solid var(--separator-op); }
+        .sammenlign-tabell td { padding: 5px 10px 5px 0; color: var(--label); }
+        .sammenlign-tabell td:first-child { color: var(--label-sec); }
+        .sammenlign-billigere { color: #30d158; font-weight: 700; }
+        .sammenlign-dyrere { color: #ff453a; font-weight: 700; }
+        .sammenlign-spenn { color: var(--label-ter); font-size: 0.82rem; }
         .score-rad-wrapper { grid-column: 1 / -1; }
         .score-forklaring { margin-top: 8px; }
         .score-forklaring-tabell { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
@@ -2994,6 +3003,39 @@ _RABATT_PER_MODELLAAR = {
 }
 _RABATT_SNITT = 0.059
 _RABATT_AGGRESSIV = 0.10
+
+
+def get_sammenligning(aar: int | None, ekskluder_finnkode: int) -> dict | None:
+    """Hent snittdata for biler med årsmodell ±2 år, ekskludert denne annonsen."""
+    if not aar or aar < 2000:
+        return None
+    conn = get_db()
+    if not conn:
+        return None
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute("""
+            SELECT
+                COUNT(*) AS antall,
+                ROUND(AVG(CAST(REGEXP_REPLACE(b.Pris, '[^0-9]', '') AS UNSIGNED))) AS snitt_pris,
+                ROUND(AVG(CAST(REGEXP_REPLACE(b.Kilometerstand, '[^0-9]', '') AS UNSIGNED))) AS snitt_km,
+                ROUND(AVG(b.SvvNyttelast)) AS snitt_nyttelast,
+                MIN(CAST(REGEXP_REPLACE(b.Pris, '[^0-9]', '') AS UNSIGNED)) AS min_pris,
+                MAX(CAST(REGEXP_REPLACE(b.Pris, '[^0-9]', '') AS UNSIGNED)) AS max_pris
+            FROM bobil b
+            WHERE (b.Solgt = 0 OR b.Solgt IS NULL)
+              AND b.SvvAarsmodell BETWEEN %s AND %s
+              AND b.Finnkode != %s
+        """, (aar - 2, aar + 2, ekskluder_finnkode))
+        row = cur.fetchone()
+        if not row or not row["antall"]:
+            return None
+        return row
+    except Exception as e:
+        logger.error("Feil i get_sammenligning: %s", e)
+        return None
+    finally:
+        conn.close()
 
 
 def beregn_forventet_salgspris(pris: int | None, modell: int | None) -> dict | None:
@@ -3859,6 +3901,53 @@ def view_annonse(finnkode):
         ext_links_html = _kilde_lenker(ad)
         selger_html = _selger_html(ad)
         liggetid_data = get_liggetid_for_annonse(finnkode)
+
+        # Sammenligning mot lignende biler (samme årsmodell ±2 år)
+        aar_for_sammenligning = ad.get("SvvAarsmodell") or (int(ad.get("Modell")) if ad.get("Modell") and str(ad.get("Modell")).isdigit() else None)
+        sammenl = get_sammenligning(aar_for_sammenligning, finnkode)
+        if sammenl and sammenl["antall"] and pris:
+            snitt = int(sammenl["snitt_pris"] or 0)
+            diff = pris - snitt
+            diff_f = f"{abs(diff):,}".replace(",", " ")
+            diff_txt = f"{diff_f} kr **billigere**" if diff < 0 else (f"{diff_f} kr **dyrere**" if diff > 0 else "på snittet")
+            diff_cls = "sammenlign-billigere" if diff < 0 else ("sammenlign-dyrere" if diff > 0 else "")
+            snitt_km = int(sammenl["snitt_km"] or 0)
+            denne_km = parse_km(ad.get("Kilometerstand")) or 0
+            km_diff = denne_km - snitt_km
+            km_diff_f = f"{abs(km_diff):,}".replace(",", " ")
+            km_cls = "sammenlign-billigere" if km_diff < 0 else ("sammenlign-dyrere" if km_diff > 0 else "")
+            snitt_nyttelast = int(sammenl["snitt_nyttelast"] or 0) if sammenl["snitt_nyttelast"] else None
+            aar_fra = (aar_for_sammenligning or 0) - 2
+            aar_til = (aar_for_sammenligning or 0) + 2
+            sammenlign_block = f"""
+            <div class="sammenlign-boks">
+                <div class="sammenlign-tittel">Sammenligning — årsmodell {aar_fra}–{aar_til} ({sammenl['antall']} biler i databasen)</div>
+                <table class="sammenlign-tabell">
+                    <thead><tr><th></th><th>Denne</th><th>Snitt</th><th>Diff</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td>Pris</td>
+                            <td>{format_price(pris)}</td>
+                            <td>{format_price(snitt)}</td>
+                            <td class="{diff_cls}">{"−" if diff < 0 else "+"}{diff_f} kr</td>
+                        </tr>
+                        <tr>
+                            <td>Km</td>
+                            <td>{f"{denne_km:,}".replace(",", " ") if denne_km else "—"}</td>
+                            <td>{f"{snitt_km:,}".replace(",", " ") if snitt_km else "—"}</td>
+                            <td class="{km_cls}">{"−" if km_diff < 0 else "+"}{km_diff_f} km</td>
+                        </tr>
+                        {"<tr><td>Nyttelast</td><td>" + (str(ad.get('SvvNyttelast')) + " kg" if ad.get('SvvNyttelast') else "—") + "</td><td>" + (str(snitt_nyttelast) + " kg" if snitt_nyttelast else "—") + "</td><td>—</td></tr>" if snitt_nyttelast else ""}
+                        <tr>
+                            <td>Prisspenn</td>
+                            <td colspan="3" class="sammenlign-spenn">{format_price(int(sammenl['min_pris'] or 0))} – {format_price(int(sammenl['max_pris'] or 0))}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>"""
+        else:
+            sammenlign_block = ""
+
         salgspris_est = beregn_forventet_salgspris(pris, ad.get("Modell"))
         if salgspris_est:
             kalibrert_note = (
@@ -4041,6 +4130,7 @@ def view_annonse(finnkode):
         </div>
 
         <div class="ad-tab-panel" data-panel="marked">
+            {sammenlign_block}
             {salgspris_block}
             {_liggetid_html(liggetid_data)}
             {pris_chart_html}
