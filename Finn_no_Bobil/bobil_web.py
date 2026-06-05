@@ -554,7 +554,7 @@ def get_annonser():
                    MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris,
                    MAX(p.Tidspunkt) AS SistePrisendring,
                    b.URL,
-                   COALESCE(bd.ScoreJustering, 0) AS ScoreJustering,
+                   COALESCE(bd.Favoritt, 0) AS Favoritt,
                    b.Kjennemerke
             FROM bobil b
             LEFT JOIN prisendringer p ON b.Finnkode = p.Finnkode
@@ -564,7 +564,7 @@ def get_annonser():
                      b.Oppdatert, b.Opprettet, b.SistSett, b.AutodbSistEndret, b.Kilometerstand, b.Beskrivelse, b.Sengelayout,
                      b.SvvNyttelast, b.SvvTilhengervektMedBrems,
                      b.SvvEuKontrollfrist, b.SvvEuSistGodkjent, b.SvvAarsmodell, b.SvvMerke, b.URL,
-                     bd.ScoreJustering, b.Kjennemerke
+                     bd.Favoritt, b.Kjennemerke
             ORDER BY COALESCE(MAX(p.Tidspunkt), b.AutodbSistEndret, b.Opprettet) DESC
         """)
         rows = cur.fetchall()
@@ -586,9 +586,7 @@ def get_annonser():
             r["Soketreff"] = ", ".join(kw for kw in keywords if kw in tekst)
             if not r.get("HoyestePris"):
                 r["HoyestePris"] = parse_price(r.get("Pris"))
-            justering = int(r.get("ScoreJustering") or 0)
-            r["ScoreJustering"] = justering
-            r["KjopsScore"] = min(100, max(0, beregn_kjopsscore(r, now) + justering))
+            r["KjopsScore"] = beregn_kjopsscore(r, now)
         return rows
     except Exception as e:
         logger.error("Feil i get_annonser: %s\n%s", e, traceback.format_exc())
@@ -2723,6 +2721,10 @@ TEMPLATE = """
             transition: transform 0.15s;
         }
         .fav-btn:hover { transform: scale(1.2); }
+        .fav-col { width: 28px; text-align: center; padding: 0 2px; }
+        .fav-liste-btn { background: none; border: none; font-size: 1.1em; cursor: pointer; padding: 0; line-height: 1; opacity: 0.4; transition: opacity 0.15s, transform 0.15s; }
+        .fav-liste-btn:hover { opacity: 1; transform: scale(1.2); }
+        .fav-liste-btn-aktiv { opacity: 1; }
         .notat-section {
             margin-bottom: 20px;
             padding: 14px 16px;
@@ -3270,8 +3272,7 @@ def get_sammenligning(aar: int | None, ekskluder_finnkode: int) -> list | None:
         now = datetime.now()
         result = []
         for r in rader:
-            base = beregn_kjopsscore(r, now)
-            score = min(100, max(0, base + int(r.get("ScoreJustering") or 0)))
+            score = beregn_kjopsscore(r, now)
             result.append({**r, "kjops_score": score, "aar_spenn": aar_spenn})
         return result
     except Exception as e:
@@ -3567,6 +3568,7 @@ def view_annonser():
         <thead>
             <tr>
                 <th class="sortable" data-sort="number">Score</th>
+                <th class="fav-col sortable" data-sort="number" title="Sorter på favoritter">★</th>
                 <th class="thumb-cell"></th>
                 <th class="sortable">Annonse</th>
                 <th class="sortable" data-sort="number">Modell</th>
@@ -3580,26 +3582,31 @@ def view_annonser():
         </thead>
         <tbody>
     """
+    bp = request.headers.get("X-Ingress-Path", "").rstrip("/") + "/"
     for r in rows:
         ny_badge = '<span class="new-badge">NY</span>' if r.get("ErNy") else ""
         score = r.get("KjopsScore", 0)
-        justering = r.get("ScoreJustering", 0)
+        er_fav = bool(r.get("Favoritt"))
         score_cls = "score-high" if score >= 70 else ("score-mid" if score >= 40 else "score-low")
         nyttelast = f"{r['SvvNyttelast']} kg" if r.get('SvvNyttelast') else '—'
         score_tooltip = _score_tooltip(r)
-        justering_badge = (
-            f'<span class="score-justering-badge score-justering-pos">+{justering}</span>' if justering > 0
-            else f'<span class="score-justering-badge score-justering-neg">{justering}</span>' if justering < 0
-            else ""
-        )
         img_url = r.get("ImageURL", "") or ""
         thumb = f'<img src="{esc(img_url)}" class="thumb" alt="">' if img_url else ""
         har_skilt = "1" if (r.get("Kjennemerke") or "").strip() else "0"
+        fk = r['Finnkode']
+        fav_stjerne = "⭐" if er_fav else "☆"
+        fav_title = "Fjern favoritt" if er_fav else "Legg til favoritt"
+        fav_val = 1 if er_fav else 0
         html += f"""
             <tr data-kjennemerke="{har_skilt}">
-                <td><span class="score {score_cls}" data-tooltip="{esc(score_tooltip)}">{score}</span>{justering_badge}</td>
+                <td><span class="score {score_cls}" data-tooltip="{esc(score_tooltip)}">{score}</span></td>
+                <td class="fav-col" data-sort-value="{fav_val}">
+                    <button class="fav-liste-btn{'  fav-liste-btn-aktiv' if er_fav else ''}"
+                            onclick="toggleFavListe({esc(fk)}, this, '{esc(bp)}')"
+                            title="{fav_title}">{fav_stjerne}</button>
+                </td>
                 <td class="thumb-cell">{thumb}</td>
-                <td class="truncate"><a href="annonse/{esc(r['Finnkode'])}">{esc(r['Annonsenavn'])}</a>{ny_badge}{_kilde_badge(r.get('Kilde'))}</td>
+                <td class="truncate"><a href="annonse/{esc(fk)}">{esc(r['Annonsenavn'])}</a>{ny_badge}{_kilde_badge(r.get('Kilde'))}</td>
                 <td>{esc(r['Modell'])}</td>
                 <td>{esc(r['NaaverendePris'])}</td>
                 <td>{r.get('PrisfallHtml') or '<span class="note-secondary">—</span>'}</td>
@@ -3609,7 +3616,22 @@ def view_annonser():
                 <td class="{esc(r['AlderClass'])}" data-sort-value="{esc(r['AlderSort'])}">{esc(r['Alder'])}</td>
             </tr>
         """
-    html += "</tbody></table>"
+    html += """</tbody></table>
+    <script>
+    function toggleFavListe(fk, btn, bp) {
+        fetch(bp + 'api/favoritt/' + fk, {method: 'POST'})
+            .then(r => r.json())
+            .then(d => {
+                if (d.ok) {
+                    btn.textContent = d.favoritt ? '⭐' : '☆';
+                    btn.title = d.favoritt ? 'Fjern favoritt' : 'Legg til favoritt';
+                    btn.classList.toggle('fav-liste-btn-aktiv', d.favoritt);
+                    const td = btn.closest('td');
+                    if (td) td.dataset.sortValue = d.favoritt ? '1' : '0';
+                }
+            });
+    }
+    </script>"""
     return render_page("annonser", html)
 
 
@@ -4161,8 +4183,7 @@ def view_annonse(finnkode):
         if not ad.get("HoyestePris"):
             ad["HoyestePris"] = pris
         _now = datetime.now()
-        kjops_score_base = beregn_kjopsscore(ad, _now)
-        kjops_score = min(100, max(0, kjops_score_base + score_justering))
+        kjops_score = beregn_kjopsscore(ad, _now)
 
         # Andre biler i samme årsklasse — de 5 billigste
         aar_for_sammenligning = ad.get("SvvAarsmodell") or (int(ad.get("Modell")) if ad.get("Modell") and str(ad.get("Modell")).isdigit() else None)
@@ -4245,7 +4266,6 @@ def view_annonse(finnkode):
 
         score_cls = "score-high" if kjops_score >= 70 else ("score-mid" if kjops_score >= 40 else "score-low")
         score_tooltip = _score_tooltip(ad)
-        justering_tekst = (f"+{score_justering}" if score_justering > 0 else str(score_justering)) if score_justering else "0"
 
         score_forklaring = beregn_kjopsscore_forklaring(ad, _now)
         score_forklaring_html = '<div class="score-forklaring"><table class="score-forklaring-tabell">'
@@ -4254,10 +4274,6 @@ def view_annonse(finnkode):
             poeng_cls = "sf-pos" if poeng > 0 else ("sf-neg" if poeng < 0 else "sf-nul")
             poeng_str = f"+{poeng}" if poeng > 0 else str(poeng)
             score_forklaring_html += f'<tr><td>{esc(faktor)}</td><td class="{poeng_cls}">{poeng_str}</td><td class="sf-merknad">{esc(merknad)}</td></tr>'
-        if score_justering:
-            j_cls = "sf-pos" if score_justering > 0 else "sf-neg"
-            j_str = f"+{score_justering}" if score_justering > 0 else str(score_justering)
-            score_forklaring_html += f'<tr class="sf-justering-rad"><td>Manuell justering</td><td class="{j_cls}">{j_str}</td><td class="sf-merknad">Satt av deg</td></tr>'
         score_forklaring_html += f'<tr class="sf-total-rad"><td><strong>Total</strong></td><td colspan="2"><strong>{kjops_score} / 100</strong></td></tr>'
         score_forklaring_html += '</table></div>'
 
@@ -4338,11 +4354,6 @@ def view_annonse(finnkode):
                     <div class="score-rad-wrapper">
                         <div><span class="lbl">KjøpsScore:</span>
                             <span class="score {score_cls}" data-tooltip="{esc(score_tooltip)}">{kjops_score}</span>
-                            <span class="score-justering-kontroll">
-                                <button class="score-adj-btn" onclick="justerScore({esc(finnkode)}, -5)" title="Trekk fra 5">−</button>
-                                <span id="score-justering-verdi" class="score-justering-vis">{esc(justering_tekst)}</span>
-                                <button class="score-adj-btn" onclick="justerScore({esc(finnkode)}, +5)" title="Legg til 5">+</button>
-                            </span>
                         </div>
                         {score_forklaring_html}
                     </div>
@@ -4435,27 +4446,6 @@ def view_annonse(finnkode):
                 setTimeout(() => s.textContent = '', 3000);
                 if (d.ok && txt.trim()) {{
                     document.querySelector('#notat-details summary').textContent = 'Notat ✎';
-                }}
-            }});
-        }}
-        let _scoreJustering = {score_justering};
-        function justerScore(fk, delta) {{
-            _scoreJustering = Math.max(-100, Math.min(100, _scoreJustering + delta));
-            fetch(_apiBase + 'api/score_justering/' + fk, {{
-                method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{justering: _scoreJustering}})
-            }}).then(r => r.json()).then(d => {{
-                if (d.ok) {{
-                    const vis = document.getElementById('score-justering-verdi');
-                    if (vis) vis.textContent = _scoreJustering > 0 ? '+' + _scoreJustering : String(_scoreJustering);
-                    if (d.ny_score != null) {{
-                        const badge = document.querySelector('.score');
-                        if (badge) {{
-                            badge.textContent = d.ny_score;
-                            badge.className = 'score ' + (d.ny_score >= 70 ? 'score-high' : d.ny_score >= 40 ? 'score-mid' : 'score-low');
-                        }}
-                    }}
                 }}
             }});
         }}
