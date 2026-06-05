@@ -3956,6 +3956,14 @@ def view_annonse(finnkode):
         selger_html = _selger_html(ad)
         liggetid_data = get_liggetid_for_annonse(finnkode)
 
+        # KjøpsScore — beregnes tidlig siden sammenligning-blokken bruker den
+        enrich_row_with_prices(ad)
+        if not ad.get("HoyestePris"):
+            ad["HoyestePris"] = pris
+        _now = datetime.now()
+        kjops_score_base = beregn_kjopsscore(ad, _now)
+        kjops_score = min(100, max(0, kjops_score_base + score_justering))
+
         # Sammenligning mot lignende biler
         aar_for_sammenligning = ad.get("SvvAarsmodell") or (int(ad.get("Modell")) if ad.get("Modell") and str(ad.get("Modell")).isdigit() else None)
         denne_km = parse_km(ad.get("Kilometerstand")) or 0
@@ -4051,13 +4059,6 @@ def view_annonse(finnkode):
         vendbare = "Ja" if ad.get("VendbareForerstoler") == 1 else ("Nei" if ad.get("VendbareForerstoler") == 0 else "—")
         notat_har_innhold = "notat-har-innhold" if notat_verdi.strip() else ""
 
-        # KjøpsScore for detaljside
-        enrich_row_with_prices(ad)
-        if not ad.get("HoyestePris"):
-            ad["HoyestePris"] = pris
-        _now = datetime.now()
-        kjops_score_base = beregn_kjopsscore(ad, _now)
-        kjops_score = min(100, max(0, kjops_score_base + score_justering))
         score_cls = "score-high" if kjops_score >= 70 else ("score-mid" if kjops_score >= 40 else "score-low")
         score_tooltip = _score_tooltip(ad)
         justering_tekst = (f"+{score_justering}" if score_justering > 0 else str(score_justering)) if score_justering else "0"
