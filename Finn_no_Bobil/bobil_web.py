@@ -2530,6 +2530,11 @@ TEMPLATE = """
         .sammenlign-billigere { color: #30d158; font-weight: 700; }
         .sammenlign-dyrere { color: #ff453a; font-weight: 700; }
         .sammenlign-spenn { color: var(--label-ter); font-size: 0.82rem; }
+        .sammenlign-pills { display: inline-flex; gap: 3px; margin-left: 5px; vertical-align: middle; }
+        .sammenlign-pill { font-size: 0.68rem; font-weight: 600; padding: 1px 5px; border-radius: 4px; white-space: nowrap; }
+        .sammenlign-pill-type { background: rgba(120,120,128,0.2); color: var(--label-sec); }
+        .sammenlign-pill-privat { background: rgba(48,209,88,0.15); color: #30d158; }
+        .sammenlign-pill-forhandler { background: rgba(10,132,255,0.15); color: #0A84FF; }
         .score-rad-wrapper { grid-column: 1 / -1; }
         .score-forklaring { margin-top: 8px; }
         .score-forklaring-tabell { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
@@ -3107,9 +3112,13 @@ def get_sammenligning(aar: int | None, ekskluder_finnkode: int) -> list | None:
                     b.Finnkode,
                     b.Annonsenavn,
                     b.SvvAarsmodell,
+                    b.Type,
+                    b.Selger,
+                    b.Heftelser,
                     CAST(REGEXP_REPLACE(b.Pris, '[^0-9]', '') AS UNSIGNED) AS pris_int,
                     CAST(REGEXP_REPLACE(b.Kilometerstand, '[^0-9]', '') AS UNSIGNED) AS km_int,
                     b.SvvNyttelast,
+                    b.Girkasse,
                     COALESCE(bd.ScoreJustering, 0) AS ScoreJustering,
                     b.SvvEuKontrollfrist, b.SvvEuSistGodkjent, b.SvvAarsmodell, b.SvvMerke,
                     b.Kilometerstand, b.Pris, b.Beskrivelse, b.Kilde, b.AutodbId
@@ -4041,9 +4050,22 @@ def view_annonse(finnkode):
                 r_km_f = f"{r_km:,}".replace(",", " ") if r_km else "—"
                 score_cls_r = "score-high" if r_score >= 70 else ("score-mid" if r_score >= 40 else "score-low")
                 pris_cls = "sammenlign-billigere" if pris and r_pris < pris else ("sammenlign-dyrere" if pris and r_pris > pris else "")
+                # Type-pill
+                r_type = (r.get("Type") or "").strip()
+                type_kort = {"Integrert": "Int", "Delintegrert": "Del", "Alkove": "Alk"}.get(r_type, r_type[:3] if r_type else "—")
+                type_pill = f'<span class="sammenlign-pill sammenlign-pill-type">{type_kort}</span>' if r_type else ""
+                # Selger-pill
+                r_selger = (r.get("Selger") or "").lower()
+                if "privat" in r_selger:
+                    selger_pill = '<span class="sammenlign-pill sammenlign-pill-privat">Priv</span>'
+                elif r_selger:
+                    selger_pill = '<span class="sammenlign-pill sammenlign-pill-forhandler">Forh</span>'
+                else:
+                    selger_pill = ""
                 rader_html += (
                     f'<tr>'
-                    f'<td><a href="/annonse/{r_kode}" class="sammenlign-lenke">{r_navn}</a></td>'
+                    f'<td><a href="/annonse/{r_kode}" class="sammenlign-lenke">{r_navn}</a>'
+                    f'<span class="sammenlign-pills">{type_pill}{selger_pill}</span></td>'
                     f'<td class="sammenlign-aar">{r_aar}</td>'
                     f'<td class="sammenlign-km">{r_km_f} km</td>'
                     f'<td class="{pris_cls}">{format_price(r_pris)}</td>'
