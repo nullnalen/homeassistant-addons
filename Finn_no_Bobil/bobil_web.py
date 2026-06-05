@@ -3005,8 +3005,17 @@ _RABATT_SNITT = 0.059
 _RABATT_AGGRESSIV = 0.10
 
 
-def get_sammenligning(aar: int | None, ekskluder_finnkode: int) -> dict | None:
-    """Hent snittdata for biler med årsmodell ±2 år, ekskludert denne annonsen."""
+def _median(verdier: list) -> int | None:
+    v = sorted(x for x in verdier if x is not None and x > 0)
+    if not v:
+        return None
+    mid = len(v) // 2
+    return int(v[mid]) if len(v) % 2 else int((v[mid - 1] + v[mid]) / 2)
+
+
+def get_sammenligning(aar: int | None, ekskluder_finnkode: int, denne_km: int | None = None) -> dict | None:
+    """Hent sammenligningsdata. Prøver eksakt årsmodell, utvider til ±1 og ±2 ved få treff.
+    Filtrerer på km ±30% hvis denne_km er oppgitt."""
     if not aar or aar < 2000:
         return None
     conn = get_db()
@@ -3014,23 +3023,68 @@ def get_sammenligning(aar: int | None, ekskluder_finnkode: int) -> dict | None:
         return None
     try:
         cur = conn.cursor(dictionary=True)
-        cur.execute("""
-            SELECT
-                COUNT(*) AS antall,
-                ROUND(AVG(CAST(REGEXP_REPLACE(b.Pris, '[^0-9]', '') AS UNSIGNED))) AS snitt_pris,
-                ROUND(AVG(CAST(REGEXP_REPLACE(b.Kilometerstand, '[^0-9]', '') AS UNSIGNED))) AS snitt_km,
-                ROUND(AVG(b.SvvNyttelast)) AS snitt_nyttelast,
-                MIN(CAST(REGEXP_REPLACE(b.Pris, '[^0-9]', '') AS UNSIGNED)) AS min_pris,
-                MAX(CAST(REGEXP_REPLACE(b.Pris, '[^0-9]', '') AS UNSIGNED)) AS max_pris
-            FROM bobil b
-            WHERE (b.Solgt = 0 OR b.Solgt IS NULL)
-              AND b.SvvAarsmodell BETWEEN %s AND %s
-              AND b.Finnkode != %s
-        """, (aar - 2, aar + 2, ekskluder_finnkode))
-        row = cur.fetchone()
-        if not row or not row["antall"]:
+
+        def _hent(aar_fra, aar_til):
+            km_filter = ""
+            params = [aar_fra, aar_til, ekskluder_finnkode]
+            if denne_km and denne_km > 0:
+                km_min = int(denne_km * 0.7)
+                km_max = int(denne_km * 1.3)
+                km_filter = "AND CAST(REGEXP_REPLACE(b.Kilometerstand, '[^0-9]', '') AS UNSIGNED) BETWEEN %s AND %s"
+                params += [km_min, km_max]
+            cur.execute(f"""
+                SELECT
+                    b.Finnkode,
+                    CAST(REGEXP_REPLACE(b.Pris, '[^0-9]', '') AS UNSIGNED) AS pris_int,
+                    CAST(REGEXP_REPLACE(b.Kilometerstand, '[^0-9]', '') AS UNSIGNED) AS km_int,
+                    b.SvvNyttelast,
+                    COALESCE(bd.ScoreJustering, 0) AS ScoreJustering,
+                    b.SvvEuKontrollfrist, b.SvvEuSistGodkjent, b.SvvAarsmodell, b.SvvMerke,
+                    b.Kilometerstand, b.Pris, b.Annonsenavn, b.Beskrivelse
+                FROM bobil b
+                LEFT JOIN bruker_data bd ON b.Finnkode = bd.Finnkode
+                WHERE (b.Solgt = 0 OR b.Solgt IS NULL)
+                  AND b.SvvAarsmodell BETWEEN %s AND %s
+                  AND b.Finnkode != %s
+                  {km_filter}
+            """, params)
+            return cur.fetchall()
+
+        # Prøv eksakt årsmodell, deretter ±1, deretter ±2
+        rader = _hent(aar, aar)
+        aar_spenn = 0
+        if len(rader) < 5:
+            rader = _hent(aar - 1, aar + 1)
+            aar_spenn = 1
+        if len(rader) < 5:
+            rader = _hent(aar - 2, aar + 2)
+            aar_spenn = 2
+
+        if not rader:
             return None
-        return row
+
+        now = datetime.now()
+        priser = [r["pris_int"] for r in rader if r["pris_int"]]
+        kmer = [r["km_int"] for r in rader if r["km_int"]]
+        nyttelaster = [r["SvvNyttelast"] for r in rader if r["SvvNyttelast"]]
+        scorer = []
+        for r in rader:
+            base = beregn_kjopsscore(r, now)
+            scorer.append(min(100, max(0, base + int(r.get("ScoreJustering") or 0))))
+
+        return {
+            "antall": len(rader),
+            "aar_spenn": aar_spenn,
+            "aar_fra": aar - aar_spenn,
+            "aar_til": aar + aar_spenn,
+            "median_pris": _median(priser),
+            "min_pris": min(priser) if priser else None,
+            "max_pris": max(priser) if priser else None,
+            "median_km": _median(kmer),
+            "snitt_nyttelast": int(sum(nyttelaster) / len(nyttelaster)) if nyttelaster else None,
+            "snitt_score": round(sum(scorer) / len(scorer), 1) if scorer else None,
+            "km_filtrert": denne_km is not None and denne_km > 0,
+        }
     except Exception as e:
         logger.error("Feil i get_sammenligning: %s", e)
         return None
@@ -3902,42 +3956,62 @@ def view_annonse(finnkode):
         selger_html = _selger_html(ad)
         liggetid_data = get_liggetid_for_annonse(finnkode)
 
-        # Sammenligning mot lignende biler (samme årsmodell ±2 år)
+        # Sammenligning mot lignende biler
         aar_for_sammenligning = ad.get("SvvAarsmodell") or (int(ad.get("Modell")) if ad.get("Modell") and str(ad.get("Modell")).isdigit() else None)
-        sammenl = get_sammenligning(aar_for_sammenligning, finnkode)
+        denne_km = parse_km(ad.get("Kilometerstand")) or 0
+        sammenl = get_sammenligning(aar_for_sammenligning, finnkode, denne_km=denne_km)
         if sammenl and sammenl["antall"] and pris:
-            snitt = int(sammenl["snitt_pris"] or 0)
-            diff = pris - snitt
-            diff_f = f"{abs(diff):,}".replace(",", " ")
-            diff_txt = f"{diff_f} kr **billigere**" if diff < 0 else (f"{diff_f} kr **dyrere**" if diff > 0 else "på snittet")
-            diff_cls = "sammenlign-billigere" if diff < 0 else ("sammenlign-dyrere" if diff > 0 else "")
-            snitt_km = int(sammenl["snitt_km"] or 0)
-            denne_km = parse_km(ad.get("Kilometerstand")) or 0
-            km_diff = denne_km - snitt_km
+            median_pris = sammenl["median_pris"] or 0
+            pris_diff = pris - median_pris
+            pris_diff_f = f"{abs(pris_diff):,}".replace(",", " ")
+            pris_diff_cls = "sammenlign-billigere" if pris_diff < 0 else ("sammenlign-dyrere" if pris_diff > 0 else "")
+            pris_diff_str = ("−" if pris_diff < 0 else "+") + pris_diff_f + " kr"
+
+            median_km = sammenl["median_km"] or 0
+            km_diff = denne_km - median_km
             km_diff_f = f"{abs(km_diff):,}".replace(",", " ")
-            km_cls = "sammenlign-billigere" if km_diff < 0 else ("sammenlign-dyrere" if km_diff > 0 else "")
-            snitt_nyttelast = int(sammenl["snitt_nyttelast"] or 0) if sammenl["snitt_nyttelast"] else None
-            aar_fra = (aar_for_sammenligning or 0) - 2
-            aar_til = (aar_for_sammenligning or 0) + 2
+            km_diff_cls = "sammenlign-billigere" if km_diff < 0 else ("sammenlign-dyrere" if km_diff > 0 else "")
+            km_diff_str = ("−" if km_diff < 0 else "+") + km_diff_f + " km"
+
+            snitt_nyttelast = sammenl["snitt_nyttelast"]
+            snitt_score = sammenl["snitt_score"]
+            aar_fra = sammenl["aar_fra"]
+            aar_til = sammenl["aar_til"]
+            spenn_tittel = str(aar_fra) if aar_fra == aar_til else f"{aar_fra}–{aar_til}"
+            km_note = " (±30% km)" if sammenl["km_filtrert"] else ""
+
+            score_rad = ""
+            if snitt_score is not None:
+                score_diff = kjops_score - snitt_score
+                score_diff_cls = "sammenlign-billigere" if score_diff > 0 else ("sammenlign-dyrere" if score_diff < 0 else "")
+                score_diff_str = (f"+{score_diff:.1f}" if score_diff > 0 else f"{score_diff:.1f}").rstrip("0").rstrip(".")
+                score_rad = f'<tr><td>KjøpsScore</td><td>{kjops_score}</td><td>{snitt_score}</td><td class="{score_diff_cls}">{score_diff_str}</td></tr>'
+
+            nyttelast_rad = ""
+            if snitt_nyttelast:
+                denne_nyttelast = ad.get("SvvNyttelast")
+                nyttelast_rad = f'<tr><td>Nyttelast</td><td>{str(denne_nyttelast) + " kg" if denne_nyttelast else "—"}</td><td>{snitt_nyttelast} kg</td><td>—</td></tr>'
+
             sammenlign_block = f"""
             <div class="sammenlign-boks">
-                <div class="sammenlign-tittel">Sammenligning — årsmodell {aar_fra}–{aar_til} ({sammenl['antall']} biler i databasen)</div>
+                <div class="sammenlign-tittel">Sammenligning — årsmodell {spenn_tittel}{km_note} &middot; {sammenl['antall']} biler</div>
                 <table class="sammenlign-tabell">
-                    <thead><tr><th></th><th>Denne</th><th>Snitt</th><th>Diff</th></tr></thead>
+                    <thead><tr><th></th><th>Denne</th><th>Median</th><th>Diff</th></tr></thead>
                     <tbody>
                         <tr>
                             <td>Pris</td>
                             <td>{format_price(pris)}</td>
-                            <td>{format_price(snitt)}</td>
-                            <td class="{diff_cls}">{"−" if diff < 0 else "+"}{diff_f} kr</td>
+                            <td>{format_price(median_pris)}</td>
+                            <td class="{pris_diff_cls}">{pris_diff_str}</td>
                         </tr>
                         <tr>
                             <td>Km</td>
                             <td>{f"{denne_km:,}".replace(",", " ") if denne_km else "—"}</td>
-                            <td>{f"{snitt_km:,}".replace(",", " ") if snitt_km else "—"}</td>
-                            <td class="{km_cls}">{"−" if km_diff < 0 else "+"}{km_diff_f} km</td>
+                            <td>{f"{median_km:,}".replace(",", " ") if median_km else "—"}</td>
+                            <td class="{km_diff_cls}">{km_diff_str}</td>
                         </tr>
-                        {"<tr><td>Nyttelast</td><td>" + (str(ad.get('SvvNyttelast')) + " kg" if ad.get('SvvNyttelast') else "—") + "</td><td>" + (str(snitt_nyttelast) + " kg" if snitt_nyttelast else "—") + "</td><td>—</td></tr>" if snitt_nyttelast else ""}
+                        {nyttelast_rad}
+                        {score_rad}
                         <tr>
                             <td>Prisspenn</td>
                             <td colspan="3" class="sammenlign-spenn">{format_price(int(sammenl['min_pris'] or 0))} – {format_price(int(sammenl['max_pris'] or 0))}</td>
