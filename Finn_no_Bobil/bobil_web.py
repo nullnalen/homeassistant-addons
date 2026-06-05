@@ -2413,13 +2413,14 @@ TEMPLATE = """
         .svv-gruppe-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px 16px; font-size: 0.85rem; }
 
         /* ── Merke-kort ── */
-        .merke-card { background: var(--card-bg); border: 1px solid var(--sep); border-radius: 10px; padding: 14px 16px; margin: 12px 0; }
-        .merke-card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+        .merke-card { background: var(--card-bg); border: 1px solid var(--sep); border-radius: 10px; overflow: hidden; margin: 12px 0; }
+        .merke-segment-banner { font-size: 0.92rem; font-weight: 700; padding: 10px 16px; letter-spacing: 0.02em; }
+        .merke-card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; padding: 14px 16px 0; }
         .merke-navn { font-size: 1rem; font-weight: 700; color: var(--label); }
         .merke-opprinnelse { font-size: 0.82rem; color: var(--label-sec); }
         .merke-segment-pill { font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 20px; letter-spacing: 0.04em; text-transform: uppercase; }
-        .merke-beskrivelse { font-size: 0.88rem; color: var(--label-sec); margin: 0 0 10px 0; }
-        .merke-detaljer { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 10px; }
+        .merke-beskrivelse { font-size: 0.88rem; color: var(--label-sec); margin: 0 0 10px 0; padding: 0 16px; }
+        .merke-detaljer { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 10px; padding: 0 16px; }
         @media (max-width: 600px) { .merke-detaljer { grid-template-columns: 1fr; } }
         .merke-kolonne { font-size: 0.82rem; }
         .merke-kolonne ul { margin: 4px 0 0 0; padding-left: 16px; color: var(--label-sec); }
@@ -2428,9 +2429,9 @@ TEMPLATE = """
         .merke-ok { color: #30d158; }
         .merke-advarsel { color: #ff9f0a; }
         .merke-problem { color: #ff453a; }
-        .merke-modellserier { font-size: 0.83rem; color: var(--label-sec); margin: 0 0 10px 0; line-height: 1.5; }
-        .merke-kjopstips { font-size: 0.83rem; color: var(--label-sec); background: rgba(48,209,88,0.07); border-left: 3px solid #30d158; padding: 8px 10px; border-radius: 0 6px 6px 0; margin-top: 10px; line-height: 1.5; }
-        .merke-kjoper { font-size: 0.80rem; color: var(--label-ter); border-top: 1px solid var(--sep); padding-top: 8px; margin-top: 10px; }
+        .merke-modellserier { font-size: 0.83rem; color: var(--label-sec); margin: 0 0 10px 0; line-height: 1.5; padding: 0 16px; }
+        .merke-kjopstips { font-size: 0.83rem; color: var(--label-sec); background: rgba(48,209,88,0.07); border-left: 3px solid #30d158; padding: 8px 10px 8px 13px; border-radius: 0 6px 6px 0; margin: 10px 16px 0; line-height: 1.5; }
+        .merke-kjoper { font-size: 0.80rem; color: var(--label-ter); border-top: 1px solid var(--sep); padding: 8px 16px 14px; margin-top: 10px; }
 
         /* ── Truncate / nowrap ── */
         .truncate {
@@ -3236,12 +3237,17 @@ def _merke_html(ad: dict) -> str:
         if kjopstips else ""
     )
 
+    segment_ikoner = {"budget": "🟡", "mid": "🔵", "premium": "🟣", "luxury": "🥇"}
+    segment_ikon = segment_ikoner.get(segment, "")
+
     return f"""
     <div class="merke-card">
+        <div class="merke-segment-banner" style="background:{seg_bg};color:{seg_fg}">
+            {segment_ikon} {esc(info['segment_label'])} — {esc(info['visningsnavn'])} {esc(info['opprinnelse'])}
+        </div>
         <div class="merke-card-header">
             <span class="merke-navn">{esc(info['visningsnavn'])}</span>
             <span class="merke-opprinnelse">{esc(info['opprinnelse'])}</span>
-            <span class="merke-segment-pill" style="background:{seg_bg};color:{seg_fg}">{esc(info['segment_label'])}</span>
         </div>
         <p class="merke-beskrivelse">{esc(info['kortbeskrivelse'])}</p>
         {modellserier_html}
