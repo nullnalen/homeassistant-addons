@@ -3801,6 +3801,12 @@ def view_annonse(finnkode):
         )
         prishistorikk = cur.fetchall()
 
+        # Sett HoyestePris fra prishistorikk så score-algoritmen kan beregne prisfall-bonus
+        if prishistorikk:
+            alle_priser = [parse_price(p["Pris"]) for p in prishistorikk if parse_price(p["Pris"])]
+            if alle_priser:
+                ad["HoyestePris"] = max(alle_priser)
+
         pris = parse_price(ad["Pris"])
         km = parse_km(ad.get("Kilometerstand"))
         alder_txt, alder_cls, _ = format_age(ad.get("Oppdatert", ""))
