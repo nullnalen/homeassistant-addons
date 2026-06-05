@@ -1240,12 +1240,15 @@ def beregn_kjopsscore(r: dict, now: datetime) -> int:
     if "privat" in selger or selger == "privat":
         s += 10
 
-    # Heftelser (+5 hvis ingen, -5 hvis heftelse)
-    heftelser = r.get("HeftelseBelop") or r.get("HeftelseAntall") or 0
-    if heftelser and int(heftelser) > 0:
-        s -= 5
-    elif r.get("HeftelseStatus") == "ok" or heftelser == 0:
+    # Heftelser: ingen = +5, én (normalt billån) = 0, to eller flere = −15
+    try:
+        heft_antall = int(r.get("Heftelser") or 0)
+    except (ValueError, TypeError):
+        heft_antall = 0
+    if heft_antall == 0:
         s += 5
+    elif heft_antall >= 2:
+        s -= 15
 
     # Girkasse: manuell = +5 (ikke betale automat-premien)
     girkasse = (r.get("Girkasse") or "").lower()
@@ -1375,15 +1378,16 @@ def beregn_kjopsscore_forklaring(r: dict, now: datetime) -> list[tuple[str, int,
     elif selger:
         items.append(("Selger", 0, "Forhandler"))
 
-    heftelser = r.get("HeftelseBelop") or r.get("HeftelseAntall") or 0
     try:
-        heft_int = int(heftelser)
+        heft_antall = int(r.get("Heftelser") or 0)
     except (ValueError, TypeError):
-        heft_int = 0
-    if heft_int > 0:
-        items.append(("Heftelser", -5, f"{heft_int} heftelse(r)"))
-    elif r.get("HeftelseStatus") == "ok" or heft_int == 0:
+        heft_antall = 0
+    if heft_antall == 0:
         items.append(("Heftelser", +5, "Ingen heftelser"))
+    elif heft_antall == 1:
+        items.append(("Heftelser", 0, "1 heftelse — normalt (billån)"))
+    else:
+        items.append(("Heftelser", -15, f"{heft_antall} heftelser — uvanlig"))
 
     girkasse = (r.get("Girkasse") or "").lower()
     if "manuell" in girkasse:
