@@ -1227,6 +1227,102 @@ def beregn_kjopsscore(r: dict, now: datetime) -> int:
     return min(100, max(0, s))
 
 
+def beregn_kjopsscore_forklaring(r: dict, now: datetime) -> list[tuple[str, int, str]]:
+    """Returnerer liste av (faktor, poeng, merknad) for visning på detaljsiden."""
+    items = []
+
+    mangler_svv = not (r.get("SvvEuKontrollfrist") or r.get("SvvAarsmodell") or r.get("SvvNyttelast"))
+    if mangler_svv:
+        items.append(("SVV-data mangler", +15, "Nøytral baseline — kjennemerke ikke registrert"))
+
+    eu_frist = r.get("SvvEuKontrollfrist") or ""
+    eu_sist = r.get("SvvEuSistGodkjent") or ""
+    try:
+        if eu_frist:
+            frist_dato = datetime.strptime(eu_frist[:10], "%Y-%m-%d")
+            mnd = max(0, (frist_dato - now).days // 30)
+            if mnd > 24:
+                items.append(("EU-frist", +25, f"{mnd} mnd igjen"))
+            elif mnd > 12:
+                items.append(("EU-frist", +15, f"{mnd} mnd igjen"))
+            elif mnd > 6:
+                items.append(("EU-frist", +5, f"{mnd} mnd igjen"))
+            else:
+                items.append(("EU-frist", -10, f"Kun {mnd} mnd igjen"))
+    except (ValueError, TypeError):
+        pass
+
+    try:
+        if eu_sist:
+            sist_dato = datetime.strptime(eu_sist[:10], "%Y-%m-%d")
+            mnd = max(0, (now - sist_dato).days // 30)
+            if mnd < 6:
+                items.append(("EU sist godkjent", +20, f"{mnd} mnd siden"))
+            elif mnd < 12:
+                items.append(("EU sist godkjent", +10, f"{mnd} mnd siden"))
+            elif mnd < 24:
+                items.append(("EU sist godkjent", +5, f"{mnd} mnd siden"))
+            else:
+                items.append(("EU sist godkjent", -5, f"{mnd} mnd siden"))
+    except (ValueError, TypeError):
+        pass
+
+    nyttelast = r.get("SvvNyttelast") or 0
+    if nyttelast >= 700:
+        items.append(("Nyttelast", +20, f"{nyttelast} kg"))
+    elif nyttelast >= 550:
+        items.append(("Nyttelast", +15, f"{nyttelast} kg"))
+    elif nyttelast >= 450:
+        items.append(("Nyttelast", +10, f"{nyttelast} kg"))
+    elif nyttelast:
+        items.append(("Nyttelast", +3, f"{nyttelast} kg — under 450 kg"))
+    else:
+        items.append(("Nyttelast", +3, "Ukjent — fallback"))
+
+    km = parse_km(r.get("Kilometerstand"))
+    try:
+        aar = int(r.get("SvvAarsmodell") or r.get("Modell") or 0)
+    except (ValueError, TypeError):
+        aar = 0
+    if km and aar and aar > 2000:
+        km_aar = int(km / max(1, now.year - aar))
+        km_aar_f = f"{km_aar:,}".replace(",", " ")
+        if km_aar < 7000:
+            items.append(("Km/år", +20, f"{km_aar_f} km/år"))
+        elif km_aar < 10000:
+            items.append(("Km/år", +10, f"{km_aar_f} km/år"))
+        elif km_aar < 13000:
+            items.append(("Km/år", +5, f"{km_aar_f} km/år"))
+        else:
+            items.append(("Km/år", -5, f"{km_aar_f} km/år — høyt"))
+    else:
+        items.append(("Km/år", 0, "Kan ikke beregnes"))
+
+    if aar >= 2019:
+        items.append(("Årsmodell", +10, str(aar)))
+    elif aar >= 2017:
+        items.append(("Årsmodell", +7, str(aar)))
+    elif aar >= 2015:
+        items.append(("Årsmodell", +4, str(aar)))
+    elif aar:
+        items.append(("Årsmodell", 0, f"{aar} — eldre enn 2015"))
+    else:
+        items.append(("Årsmodell", 0, "Ukjent"))
+
+    merke = r.get("SvvMerke") or (r.get("Annonsenavn", "") or "").split()[0]
+    risiko = FORUM_RISIKO.get(merke, 5)
+    items.append(("Merkerisiko", -risiko, merke if merke else "Ukjent merke"))
+
+    pris = parse_price(r.get("Pris"))
+    hoyeste = r.get("HoyestePris")
+    if pris and hoyeste and hoyeste > pris:
+        prisfall_pct = (hoyeste - pris) / hoyeste * 100
+        bonus = min(20, int(prisfall_pct * 2))
+        items.append(("Prisfall", +bonus, f"{prisfall_pct:.1f}% fall fra toppris"))
+
+    return items
+
+
 def get_kjopsscore():
     """Returnerer annonser sortert etter kjøpsscore (synkende)."""
     rows = get_annonser()
@@ -2339,6 +2435,18 @@ TEMPLATE = """
             letter-spacing: -0.2px;
         }
 
+        .score-rad-wrapper { grid-column: 1 / -1; }
+        .score-forklaring { margin-top: 8px; }
+        .score-forklaring-tabell { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+        .score-forklaring-tabell th { color: var(--label-sec); font-weight: 600; text-align: left; padding: 3px 8px 3px 0; border-bottom: 1px solid var(--separator-op); }
+        .score-forklaring-tabell td { padding: 3px 8px 3px 0; color: var(--label-sec); vertical-align: top; }
+        .score-forklaring-tabell td:nth-child(2) { white-space: nowrap; font-weight: 700; min-width: 3em; }
+        .sf-pos { color: #30d158; }
+        .sf-neg { color: #ff453a; }
+        .sf-nul { color: var(--label-ter); }
+        .sf-merknad { color: var(--label-ter); font-size: 0.78rem; }
+        .sf-justering-rad td { border-top: 1px solid var(--separator-op); }
+        .sf-total-rad td { border-top: 2px solid var(--separator-op); padding-top: 5px; color: var(--label); }
         .liste-filter-bar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
         .badge { background: var(--accent); color: #fff; border-radius: 10px; padding: 1px 7px; font-size: 0.75rem; margin-left: 4px; }
         .kjennemerke-rediger-rad { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
@@ -3784,11 +3892,26 @@ def view_annonse(finnkode):
         enrich_row_with_prices(ad)
         if not ad.get("HoyestePris"):
             ad["HoyestePris"] = pris
-        kjops_score_base = beregn_kjopsscore(ad, datetime.now())
+        _now = datetime.now()
+        kjops_score_base = beregn_kjopsscore(ad, _now)
         kjops_score = min(100, max(0, kjops_score_base + score_justering))
         score_cls = "score-high" if kjops_score >= 70 else ("score-mid" if kjops_score >= 40 else "score-low")
         score_tooltip = _score_tooltip(ad)
         justering_tekst = (f"+{score_justering}" if score_justering > 0 else str(score_justering)) if score_justering else "0"
+
+        score_forklaring = beregn_kjopsscore_forklaring(ad, _now)
+        score_forklaring_html = '<div class="score-forklaring"><table class="score-forklaring-tabell">'
+        score_forklaring_html += '<tr><th>Faktor</th><th>Poeng</th><th>Detalj</th></tr>'
+        for faktor, poeng, merknad in score_forklaring:
+            poeng_cls = "sf-pos" if poeng > 0 else ("sf-neg" if poeng < 0 else "sf-nul")
+            poeng_str = f"+{poeng}" if poeng > 0 else str(poeng)
+            score_forklaring_html += f'<tr><td>{esc(faktor)}</td><td class="{poeng_cls}">{poeng_str}</td><td class="sf-merknad">{esc(merknad)}</td></tr>'
+        if score_justering:
+            j_cls = "sf-pos" if score_justering > 0 else "sf-neg"
+            j_str = f"+{score_justering}" if score_justering > 0 else str(score_justering)
+            score_forklaring_html += f'<tr class="sf-justering-rad"><td>Manuell justering</td><td class="{j_cls}">{j_str}</td><td class="sf-merknad">Satt av deg</td></tr>'
+        score_forklaring_html += f'<tr class="sf-total-rad"><td><strong>Total</strong></td><td colspan="2"><strong>{kjops_score} / 100</strong></td></tr>'
+        score_forklaring_html += '</table></div>'
 
         # Bygg prishistorikk-innhold ferdig for tab
         if chart_data and len(chart_data) > 1:
@@ -3864,13 +3987,16 @@ def view_annonse(finnkode):
             <div class="hero-info">
                 <div class="hero-pris">{esc(format_price(pris))}</div>
                 <div class="hero-grid">
-                    <div><span class="lbl">KjøpsScore:</span>
-                        <span class="score {score_cls}" data-tooltip="{esc(score_tooltip)}">{kjops_score}</span>
-                        <span class="score-justering-kontroll">
-                            <button class="score-adj-btn" onclick="justerScore({esc(finnkode)}, -5)" title="Trekk fra 5">−</button>
-                            <span id="score-justering-verdi" class="score-justering-vis">{esc(justering_tekst)}</span>
-                            <button class="score-adj-btn" onclick="justerScore({esc(finnkode)}, +5)" title="Legg til 5">+</button>
-                        </span>
+                    <div class="score-rad-wrapper">
+                        <div><span class="lbl">KjøpsScore:</span>
+                            <span class="score {score_cls}" data-tooltip="{esc(score_tooltip)}">{kjops_score}</span>
+                            <span class="score-justering-kontroll">
+                                <button class="score-adj-btn" onclick="justerScore({esc(finnkode)}, -5)" title="Trekk fra 5">−</button>
+                                <span id="score-justering-verdi" class="score-justering-vis">{esc(justering_tekst)}</span>
+                                <button class="score-adj-btn" onclick="justerScore({esc(finnkode)}, +5)" title="Legg til 5">+</button>
+                            </span>
+                        </div>
+                        {score_forklaring_html}
                     </div>
                     <div><span class="lbl">Modell:</span> {esc(ad.get('Modell')) or '—'}</div>
                     <div><span class="lbl">Km:</span> {esc(ad.get('Kilometerstand')) or '—'}</div>
