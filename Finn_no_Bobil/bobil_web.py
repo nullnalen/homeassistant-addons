@@ -168,6 +168,82 @@ def safe_int(val) -> int | None:
         return None
 
 
+def _forventet_pruting_pct(selgertype: str, dager: int) -> float:
+    """Returnerer forventet ytterligere pruting i % basert på selgertype og liggetid."""
+    if selgertype == "Forhandler":
+        if dager < 14:   return 6.0
+        if dager < 30:   return 7.0
+        if dager < 60:   return 8.0
+        if dager < 90:   return 10.0
+        return 13.0
+    else:  # Privat eller ukjent
+        if dager < 14:   return 3.0
+        if dager < 30:   return 4.0
+        if dager < 60:   return 5.0
+        return 7.0
+
+
+def enrich_row_with_kjopspris(r: dict, now: datetime) -> None:
+    """Berik rad med AlleredeKuttet, ForventetPruting og AntattKjøpspris."""
+    pris = parse_price(r.get("Pris"))
+    startpris = r.get("HoyestePris")  # MAX fra prisendringer (allerede beregnet)
+    if not pris:
+        r["AlleredeKuttetHtml"] = '<span class="note-secondary">—</span>'
+        r["ForventetPrutingHtml"] = '<span class="note-secondary">—</span>'
+        r["AntattKjopsprisHtml"] = '<span class="note-secondary">—</span>'
+        r["AntattKjopsprisSort"] = 0
+        return
+
+    # Faktor 1 — allerede kuttet
+    if startpris and startpris > pris:
+        kuttet_kr = startpris - pris
+        kuttet_pct = round(kuttet_kr / startpris * 100, 1)
+        kuttet_kr_f = f"{kuttet_kr:,.0f}".replace(",", " ")
+        r["AlleredeKuttetHtml"] = (
+            f'<span class="prisfall-cell">'
+            f'<span class="prisfall-pil">↓</span>'
+            f'<span class="prisfall-kr"> {kuttet_kr_f} kr</span>'
+            f'<span class="prisfall-pct">({kuttet_pct}%)</span>'
+            f'</span>'
+        )
+    else:
+        r["AlleredeKuttetHtml"] = '<span class="note-secondary">—</span>'
+
+    # Faktor 2 — liggetid fra PublisertDato, fallback til Oppdatert
+    publisert = r.get("PublisertDato")
+    if publisert:
+        if hasattr(publisert, "date"):
+            dager = (now - publisert).days
+        else:
+            try:
+                dager = (now - datetime.strptime(str(publisert)[:10], "%Y-%m-%d")).days
+            except (ValueError, TypeError):
+                dager = r.get("DagerPaaMarkedet") or 0
+    else:
+        dager = r.get("DagerPaaMarkedet") or 0
+
+    selgertype = r.get("SelgerType") or ""
+    pruting_pct = _forventet_pruting_pct(selgertype, dager)
+    r["ForventetPrutingHtml"] = f'<span class="note-secondary">{pruting_pct:.0f}%</span>'
+
+    # Faktor 3 — antatt kjøpspris
+    antatt = round(pris * (1 - pruting_pct / 100))
+    antatt_f = f"{antatt:,.0f}".replace(",", " ")
+    r["AntattKjopsprisSort"] = antatt
+
+    if startpris and startpris > antatt:
+        total_kr = startpris - antatt
+        total_pct = round(total_kr / startpris * 100, 1)
+        r["AntattKjopsprisHtml"] = (
+            f'<span class="antatt-kjopspris">'
+            f'<strong>{antatt_f} kr</strong>'
+            f'<span class="prisfall-pct"> (-{total_pct}% fra start)</span>'
+            f'</span>'
+        )
+    else:
+        r["AntattKjopsprisHtml"] = f'<strong>{antatt_f} kr</strong>'
+
+
 def enrich_row_with_prices(r: dict) -> None:
     """Berik én rad med formaterte prisfelter (NaaverendePris, LavestePrisF, HoyestePrisF, Prisfall)."""
     pris = parse_price(r.get("Pris"))
@@ -549,6 +625,7 @@ def get_annonser():
                    b.Opprettet, b.SistSett, b.AutodbSistEndret, b.Kilometerstand, b.Beskrivelse, b.Sengelayout,
                    b.SvvNyttelast, b.SvvTilhengervektMedBrems,
                    b.SvvEuKontrollfrist, b.SvvEuSistGodkjent, b.SvvAarsmodell, b.SvvMerke,
+                   b.SelgerType, b.PublisertDato,
                    COUNT(p.Pris) AS AntallEndringer,
                    MIN(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS LavestePris,
                    MAX(NULLIF(CAST(REGEXP_REPLACE(p.Pris, '[^0-9]', '') AS UNSIGNED), 0)) AS HoyestePris,
@@ -564,7 +641,7 @@ def get_annonser():
                      b.Oppdatert, b.Opprettet, b.SistSett, b.AutodbSistEndret, b.Kilometerstand, b.Beskrivelse, b.Sengelayout,
                      b.SvvNyttelast, b.SvvTilhengervektMedBrems,
                      b.SvvEuKontrollfrist, b.SvvEuSistGodkjent, b.SvvAarsmodell, b.SvvMerke, b.URL,
-                     bd.Favoritt, b.Kjennemerke
+                     bd.Favoritt, b.Kjennemerke, b.SelgerType, b.PublisertDato
             ORDER BY COALESCE(MAX(p.Tidspunkt), b.AutodbSistEndret, b.Opprettet) DESC
         """)
         rows = cur.fetchall()
@@ -587,6 +664,7 @@ def get_annonser():
             if not r.get("HoyestePris"):
                 r["HoyestePris"] = parse_price(r.get("Pris"))
             r["KjopsScore"] = beregn_kjopsscore(r, now)
+            enrich_row_with_kjopspris(r, now)
         return rows
     except Exception as e:
         logger.error("Feil i get_annonser: %s\n%s", e, traceback.format_exc())
@@ -2827,6 +2905,8 @@ TEMPLATE = """
         .prisfall-pil  { color: var(--green); font-weight: 700; }
         .prisfall-kr   { font-weight: 600; color: var(--green); }
         .prisfall-pct  { font-size: 0.78em; color: var(--label-sec); margin-left: 3px; }
+        .antatt-kjopspris { white-space: nowrap; }
+        .antatt-kjopspris strong { color: var(--accent); }
 
         /* ── Thumb-kolonne ── */
         .thumb-cell { width: 56px; padding: 6px 8px 6px 4px !important; }
@@ -3574,6 +3654,9 @@ def view_annonser():
                 <th class="sortable" data-sort="number">Modell</th>
                 <th class="sortable" data-sort="number">Pris</th>
                 <th class="sortable" data-sort="number">Prisfall</th>
+                <th class="sortable" data-sort="number" title="Allerede kuttet fra startpris">Kuttet</th>
+                <th class="sortable" data-sort="number" title="Forventet ytterligere pruting basert på selgertype og liggetid">Pruting</th>
+                <th class="sortable" data-sort="number" title="Antatt kjøpspris etter forventet pruting">Antatt kjøp</th>
                 <th class="sortable" data-sort="number">Nyttelast</th>
                 <th class="sortable" data-sort="number">Endringer</th>
                 <th class="sortable" data-sort="number">Dager</th>
@@ -3610,6 +3693,9 @@ def view_annonser():
                 <td>{esc(r['Modell'])}</td>
                 <td>{esc(r['NaaverendePris'])}</td>
                 <td>{r.get('PrisfallHtml') or '<span class="note-secondary">—</span>'}</td>
+                <td>{r.get('AlleredeKuttetHtml') or '<span class="note-secondary">—</span>'}</td>
+                <td>{r.get('ForventetPrutingHtml') or '<span class="note-secondary">—</span>'}</td>
+                <td data-sort-value="{r.get('AntattKjopsprisSort', 0)}">{r.get('AntattKjopsprisHtml') or '<span class="note-secondary">—</span>'}</td>
                 <td>{nyttelast}</td>
                 <td><strong>{esc(r['AntallEndringer'])}</strong></td>
                 <td>{esc(r['DagerPaaMarkedet'])}</td>
