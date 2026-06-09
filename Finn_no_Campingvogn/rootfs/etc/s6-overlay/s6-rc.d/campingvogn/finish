@@ -1,0 +1,12 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Finn.no Campingvogn Add-on: Håndterer avslutning
+# ==============================================================================
+
+bashio::log.info "Campingvogn add-on avsluttet med kode: ${1}"
+
+if [[ "${1}" -ne 0 ]] && [[ "${1}" -ne 256 ]]; then
+    bashio::log.warning "Campingvogn krasjet, venter 5 sekunder før restart..."
+    sleep 5
+fi

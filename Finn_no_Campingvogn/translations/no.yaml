@@ -1,0 +1,62 @@
+configuration:
+  databasehost:
+    name: Databasevert
+    description: >-
+      Vertsnavn eller IP-adresse til MySQL/MariaDB-serveren.
+  databaseusername:
+    name: Databasebrukernavn
+    description: >-
+      Brukernavn for databasetilkoblingen.
+  databasepassword:
+    name: Databasepassord
+    description: >-
+      Passord for databasetilkoblingen.
+  databasename:
+    name: Databasenavn
+    description: >-
+      Navnet på databasen (standard: finn_no).
+  databaseport:
+    name: Databaseport
+    description: >-
+      Port for MySQL-tilkobling (standard: 3306).
+  dry_run:
+    name: Testkjøring
+    description: >-
+      Når aktivert henter addonet data og sammenligner med databasen,
+      men skriver ingen endringer. Nyttig for testing.
+  price_from:
+    name: Minimumspris (kr)
+    description: >-
+      Laveste pris i norske kroner for søket.
+  price_to:
+    name: Maksimumspris (kr)
+    description: >-
+      Høyeste pris i norske kroner for søket.
+  year_from:
+    name: Tidligste årsmodell
+    description: >-
+      Tidligste årsmodell som inkluderes i søket.
+  no_of_sleepers_from:
+    name: Minimum soveplasser
+    description: >-
+      Minimum antall soveplasser.
+  weight_to:
+    name: Maks totalvekt (kg)
+    description: >-
+      Maksimum tillatt totalvekt i kilogram.
+  locations:
+    name: Lokasjoner
+    description: >-
+      Liste med finn.no-regionkoder.
+  sort:
+    name: Sortering
+    description: >-
+      Sorteringsrekkefølge (f.eks. YEAR_DESC, PRICE_ASC, PRICE_DESC).
+  scrape_interval:
+    name: Scrape-intervall (timer)
+    description: >-
+      Hvor ofte nye annonser hentes fra Finn.no.
+  vegvesen_api_key:
+    name: Vegvesen API-nøkkel
+    description: >-
+      Valgfri API-nøkkel for oppslag mot Statens vegvesen (SVV-data på kjennemerke).

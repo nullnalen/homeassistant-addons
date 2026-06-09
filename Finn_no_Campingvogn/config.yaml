@@ -1,0 +1,60 @@
+name: "Finn no Campingvogn"
+description: "Addon traverserer finn på jakt etter campingvogner og lagrer historikk i database"
+version: "1.0"
+slug: "finn_no_campingvogn"
+init: false
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+startup: services
+ingress: true
+ingress_port: 8101
+panel_icon: "mdi:caravan"
+ports:
+  8101/tcp: 8101
+ports_description:
+  8101/tcp: "Campingvogn web UI"
+options:
+  databasehost: "database host"
+  databaseusername: "database username"
+  databasepassword: "database password"
+  databasename: "finn_no"
+  databaseport: "3306"
+  dry_run: false
+  price_from: 50000
+  price_to: 500000
+  year_from: 2010
+  no_of_sleepers_from: 2
+  weight_to: 2000
+  locations:
+    - "22042"
+    - "20003"
+    - "20007"
+    - "22034"
+    - "20061"
+    - "20009"
+    - "20008"
+    - "20002"
+  sort: "YEAR_DESC"
+  scrape_interval: 6
+  vegvesen_api_key: ""
+schema:
+  databasehost: "str"
+  databaseusername: "str"
+  databasepassword: "str"
+  databasename: "str"
+  databaseport: "str"
+  dry_run: "bool"
+  price_from: "int"
+  price_to: "int"
+  year_from: "int"
+  no_of_sleepers_from: "int"
+  weight_to: "int"
+  locations:
+    - "str"
+  sort: "str"
+  scrape_interval: "int"
+  vegvesen_api_key: "str?"
