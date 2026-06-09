@@ -1,6 +1,6 @@
 name: "Finn no Campingvogn"
 description: "Addon traverserer finn på jakt etter campingvogner og lagrer historikk i database"
-version: "1.3"
+version: "1.4"
 slug: "finn_no_campingvogn"
 init: false
 arch:

@@ -876,18 +876,18 @@ def view_statistikk():
         cur.execute(f"""
             SELECT
                 CASE
-                    WHEN DATEDIFF(NOW(), Oppdatert) < 7   THEN '0-7 dager'
-                    WHEN DATEDIFF(NOW(), Oppdatert) < 14  THEN '7-14 dager'
-                    WHEN DATEDIFF(NOW(), Oppdatert) < 30  THEN '14-30 dager'
-                    WHEN DATEDIFF(NOW(), Oppdatert) < 60  THEN '30-60 dager'
-                    WHEN DATEDIFF(NOW(), Oppdatert) < 90  THEN '60-90 dager'
+                    WHEN DATEDIFF(NOW(), COALESCE(PublisertDato, Opprettet)) < 7   THEN '0-7 dager'
+                    WHEN DATEDIFF(NOW(), COALESCE(PublisertDato, Opprettet)) < 14  THEN '7-14 dager'
+                    WHEN DATEDIFF(NOW(), COALESCE(PublisertDato, Opprettet)) < 30  THEN '14-30 dager'
+                    WHEN DATEDIFF(NOW(), COALESCE(PublisertDato, Opprettet)) < 60  THEN '30-60 dager'
+                    WHEN DATEDIFF(NOW(), COALESCE(PublisertDato, Opprettet)) < 90  THEN '60-90 dager'
                     ELSE '90+ dager'
                 END AS Bucket,
                 COUNT(*) AS Antall
             FROM `{TABLE}`
-            WHERE (Solgt = 0 OR Solgt IS NULL) AND Oppdatert IS NOT NULL
+            WHERE (Solgt = 0 OR Solgt IS NULL) AND COALESCE(PublisertDato, Opprettet) IS NOT NULL
             GROUP BY Bucket
-            ORDER BY MIN(DATEDIFF(NOW(), Oppdatert))
+            ORDER BY MIN(DATEDIFF(NOW(), COALESCE(PublisertDato, Opprettet)))
         """)
         tid_buckets = cur.fetchall()
 
@@ -912,10 +912,10 @@ def view_statistikk():
         # --- Markedsaktivitet: nye + solgte per uke siste 12 uker ---
         cur.execute(f"""
             SELECT
-                DATE_FORMAT(DATE(Oppdatert) - INTERVAL WEEKDAY(Oppdatert) DAY, '%Y-%m-%d') AS Uke,
+                DATE_FORMAT(DATE(COALESCE(PublisertDato, Opprettet)) - INTERVAL WEEKDAY(COALESCE(PublisertDato, Opprettet)) DAY, '%Y-%m-%d') AS Uke,
                 COUNT(*) AS NyeAnnonser
             FROM `{TABLE}`
-            WHERE Oppdatert >= NOW() - INTERVAL 12 WEEK
+            WHERE COALESCE(PublisertDato, Opprettet) >= NOW() - INTERVAL 12 WEEK
             GROUP BY Uke
             ORDER BY Uke ASC
         """)
@@ -923,10 +923,10 @@ def view_statistikk():
 
         cur.execute(f"""
             SELECT
-                DATE_FORMAT(DATE(Oppdatert) - INTERVAL WEEKDAY(Oppdatert) DAY, '%Y-%m-%d') AS Uke,
+                DATE_FORMAT(DATE(COALESCE(PublisertDato, Opprettet)) - INTERVAL WEEKDAY(COALESCE(PublisertDato, Opprettet)) DAY, '%Y-%m-%d') AS Uke,
                 COUNT(*) AS SolgteAnnonser
             FROM `{TABLE}`
-            WHERE Solgt = 1 AND Oppdatert >= NOW() - INTERVAL 12 WEEK
+            WHERE Solgt = 1 AND COALESCE(PublisertDato, Opprettet) >= NOW() - INTERVAL 12 WEEK
             GROUP BY Uke
             ORDER BY Uke ASC
         """)
@@ -951,15 +951,15 @@ def view_statistikk():
         cur.execute(f"""
             SELECT
                 COUNT(*) AS Antall,
-                ROUND(MIN(Pris))  AS MinPris,
-                ROUND(AVG(Pris))  AS SnittPris,
-                ROUND(MAX(Pris))  AS MaksPris,
+                ROUND(MIN(CAST(REGEXP_REPLACE(c.Pris,'[^0-9]','') AS UNSIGNED))) AS MinPris,
+                ROUND(AVG(CAST(REGEXP_REPLACE(c.Pris,'[^0-9]','') AS UNSIGNED))) AS SnittPris,
+                ROUND(MAX(CAST(REGEXP_REPLACE(c.Pris,'[^0-9]','') AS UNSIGNED))) AS MaksPris,
                 ROUND(
-                    AVG(CASE WHEN hp.HoyestePris > c.Pris
-                        THEN (hp.HoyestePris - c.Pris) / hp.HoyestePris * 100
+                    AVG(CASE WHEN hp.HoyestePris > CAST(REGEXP_REPLACE(c.Pris,'[^0-9]','') AS UNSIGNED)
+                        THEN (hp.HoyestePris - CAST(REGEXP_REPLACE(c.Pris,'[^0-9]','') AS UNSIGNED)) / hp.HoyestePris * 100
                         END), 1
                 ) AS SnittFallPct,
-                ROUND(AVG(DATEDIFF(NOW(), c.Oppdatert))) AS SnittDager
+                ROUND(AVG(DATEDIFF(NOW(), COALESCE(c.PublisertDato, c.Opprettet)))) AS SnittDager
             FROM `{TABLE}` c
             LEFT JOIN (
                 SELECT Finnkode,
@@ -967,50 +967,54 @@ def view_statistikk():
                 FROM `{PRISENDRINGER_TABLE}` GROUP BY Finnkode
             ) hp ON c.Finnkode = hp.Finnkode
             WHERE (c.Solgt = 0 OR c.Solgt IS NULL)
-              AND c.Pris > 0
+              AND CAST(REGEXP_REPLACE(c.Pris,'[^0-9]','') AS UNSIGNED) > 0
               AND COALESCE(c.SvvAarsmodell, CAST(LEFT(c.Modell,4) AS UNSIGNED)) BETWEEN %s AND %s
-              AND c.Lengde BETWEEN %s AND %s
-              AND c.Soveplasser BETWEEN %s AND %s
+              AND CAST(REGEXP_REPLACE(c.Lengde,'[^0-9]','') AS UNSIGNED) BETWEEN %s AND %s
+              AND CAST(REGEXP_REPLACE(c.Soveplasser,'[^0-9]','') AS UNSIGNED) BETWEEN %s AND %s
         """, (aar_fra, aar_til, lengde_fra, lengde_til, sov_fra, sov_til))
         salg_sammenlignbare = cur.fetchone()
 
         # Antall solgte sammenlignbare siste 6 mnd
         cur.execute(f"""
             SELECT COUNT(*) AS AntallSolgte,
-                   ROUND(AVG(Pris)) AS SnittSolgtPris
+                   ROUND(AVG(CAST(REGEXP_REPLACE(Pris,'[^0-9]','') AS UNSIGNED))) AS SnittSolgtPris
             FROM `{TABLE}`
             WHERE Solgt = 1
-              AND Oppdatert >= NOW() - INTERVAL 6 MONTH
-              AND Pris > 0
+              AND COALESCE(PublisertDato, Opprettet) >= NOW() - INTERVAL 6 MONTH
+              AND CAST(REGEXP_REPLACE(Pris,'[^0-9]','') AS UNSIGNED) > 0
               AND COALESCE(SvvAarsmodell, CAST(LEFT(Modell,4) AS UNSIGNED)) BETWEEN %s AND %s
-              AND Lengde BETWEEN %s AND %s
-              AND Soveplasser BETWEEN %s AND %s
+              AND CAST(REGEXP_REPLACE(Lengde,'[^0-9]','') AS UNSIGNED) BETWEEN %s AND %s
+              AND CAST(REGEXP_REPLACE(Soveplasser,'[^0-9]','') AS UNSIGNED) BETWEEN %s AND %s
         """, (aar_fra, aar_til, lengde_fra, lengde_til, sov_fra, sov_til))
         salg_historikk = cur.fetchone()
 
         # --- Sesong: snitt-pris og antall annonser per måned (alle år) ---
+        # Bruker COALESCE(PublisertDato, Opprettet) — Oppdatert er varchar med norsk datoformat
         cur.execute(f"""
             SELECT
-                MONTH(Oppdatert) AS Maaned,
+                MONTH(COALESCE(PublisertDato, Opprettet)) AS Maaned,
                 COUNT(*) AS Antall,
-                ROUND(AVG(Pris)) AS SnittPris
+                ROUND(AVG(CAST(REGEXP_REPLACE(Pris,'[^0-9]','') AS UNSIGNED))) AS SnittPris
             FROM `{TABLE}`
-            WHERE Pris > 0 AND Oppdatert IS NOT NULL
-            GROUP BY MAANED
-            ORDER BY MAANED
+            WHERE CAST(REGEXP_REPLACE(Pris,'[^0-9]','') AS UNSIGNED) > 0
+              AND COALESCE(PublisertDato, Opprettet) IS NOT NULL
+            GROUP BY Maaned
+            ORDER BY Maaned
         """)
         sesong_alle = cur.fetchall()
 
         # Sesong for solgte: gjennomsnittlig liggetid og pris per måned de ble solgt
         cur.execute(f"""
             SELECT
-                MONTH(Oppdatert) AS Maaned,
+                MONTH(COALESCE(PublisertDato, Opprettet)) AS Maaned,
                 COUNT(*) AS AntallSolgte,
-                ROUND(AVG(Pris)) AS SnittPris
+                ROUND(AVG(CAST(REGEXP_REPLACE(Pris,'[^0-9]','') AS UNSIGNED))) AS SnittPris
             FROM `{TABLE}`
-            WHERE Solgt = 1 AND Pris > 0 AND Oppdatert IS NOT NULL
-            GROUP BY MAANED
-            ORDER BY MAANED
+            WHERE Solgt = 1
+              AND CAST(REGEXP_REPLACE(Pris,'[^0-9]','') AS UNSIGNED) > 0
+              AND COALESCE(PublisertDato, Opprettet) IS NOT NULL
+            GROUP BY Maaned
+            ORDER BY Maaned
         """)
         sesong_solgte = cur.fetchall()
 
