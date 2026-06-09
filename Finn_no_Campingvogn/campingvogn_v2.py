@@ -44,9 +44,12 @@ else:
         logger.error("Ukjent feil ved lasting av SUPERVISOR_OPTIONS: %s", e)
         sys.exit(1)
 
-FINN_API_BASE = "https://www.finn.no/mobility/search/api/search/SEARCH_ID_CARAVAN"
+FINN_API_BASE = "https://www.finn.no/mobility/search/api/search/SEARCH_ID_CAR_CARAVAN"
 TABLE = "campingvogn_elbil"
 PRISENDRINGER_TABLE = "campingvogn_elbil_prisendringer"
+
+# Finn.no caravan API bruker streng-range for soveplasser, f.eks. "2", "3-4", "5-6", "7+"
+_SLEEPER_RANGES = ["2", "3-4", "5-6", "7+"]
 
 def build_search_url(opts: dict) -> str:
     params = []
@@ -55,12 +58,24 @@ def build_search_url(opts: dict) -> str:
         locations = [locations]
     for loc in locations:
         params.append(("location", loc))
+
+    price_from = opts.get("price_from", 50000)
+    price_to = opts.get("price_to", 500000)
+    year_from = opts.get("year_from", 2010)
+    weight_to = opts.get("weight_to", 2000)
+    min_sleepers = opts.get("no_of_sleepers_from", 2)
+
+    # Legg til alle soveplasser-ranger som er >= min_sleepers
+    for r in _SLEEPER_RANGES:
+        low = int(r.split("-")[0].replace("+", ""))
+        if low >= min_sleepers:
+            params.append(("no_of_sleepers", r))
+
     params.extend([
-        ("price_from", opts.get("price_from", 50000)),
-        ("price_to", opts.get("price_to", 500000)),
-        ("year_from", opts.get("year_from", 2010)),
-        ("no_of_sleepers_from", opts.get("no_of_sleepers_from", 2)),
-        ("weight_to", opts.get("weight_to", 2000)),
+        ("price_from", price_from),
+        ("price_to", price_to),
+        ("year_from", year_from),
+        ("weight_to", weight_to),
         ("sort", opts.get("sort", "YEAR_DESC")),
     ])
     return f"{FINN_API_BASE}?{urlencode(params)}"
