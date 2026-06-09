@@ -52,6 +52,19 @@ TABLE = "campingvogn_elbil"
 PRISENDRINGER_TABLE = "campingvogn_elbil_prisendringer"
 BRUKER_TABLE = "campingvogn_bruker_data"
 
+# Referansevogn — Dethleffs 480 QLK 2022 (vår nåværende vogn)
+REFERANSEVOGN = {
+    "navn":        "Dethleffs 480 QLK (2022)",
+    "pris":        250995,
+    "egenvekt":    990,
+    "totalvekt":   1500,
+    "nyttelast":   510,
+    "lengde":      716,
+    "bredde":      213,
+    "soveplasser": 6,
+    "aarsmodell":  2022,
+}
+
 scraper_status = {"last_run": None, "running": False, "error": None}
 
 MONTH_MAP = {
@@ -222,6 +235,72 @@ def enrich_row_with_prices(r: dict, now: datetime) -> None:
         )
     else:
         r["AntattKjopsprisHtml"] = f'<strong>{antatt_f} kr</strong>'
+
+
+def _diff_pill(label: str, val, ref_val, unit: str = "", lower_is_better: bool = False) -> str:
+    """Lager en verdi-celle med fargekodet diff-pill mot referansevognen."""
+    if val is None or ref_val is None:
+        return f'<div class="ref-cell"><div class="ref-lbl">{label}</div><div class="ref-val">—</div></div>'
+    try:
+        v = float(val)
+        r = float(ref_val)
+    except (TypeError, ValueError):
+        return f'<div class="ref-cell"><div class="ref-lbl">{label}</div><div class="ref-val">{val}{unit}</div></div>'
+
+    diff = v - r
+    if abs(diff) < 0.01:
+        pill = '<span class="diff-pill diff-neutral">=</span>'
+    else:
+        pct = diff / r * 100 if r else 0
+        sign = "+" if diff > 0 else ""
+        if label in ("Pris", "Egenvekt", "Totalvekt"):
+            better = diff < 0
+        elif lower_is_better:
+            better = diff < 0
+        else:
+            better = diff > 0
+        cls = "diff-better" if better else "diff-worse"
+        if unit in (" kr",):
+            diff_f = f"{int(abs(diff)):,}".replace(",", " ")
+            pill = f'<span class="diff-pill {cls}">{sign}{diff_f} kr ({sign}{pct:.0f}%)</span>'
+        else:
+            pill = f'<span class="diff-pill {cls}">{sign}{diff:.0f}{unit} ({sign}{pct:.0f}%)</span>'
+
+    val_fmt = f"{int(v):,}".replace(",", " ") + unit if unit in (" kr",) else f"{v:.0f}{unit}" if v == int(v) else f"{v}{unit}"
+    return f'<div class="ref-cell"><div class="ref-lbl">{label}</div><div class="ref-val">{val_fmt}{pill}</div></div>'
+
+
+def build_ref_banner(ad: dict) -> str:
+    ref = REFERANSEVOGN
+    pris = parse_price(ad.get("Pris"))
+    egenvekt = ad.get("Egenvekt") or ad.get("SvvEgenvekt")
+    totalvekt = ad.get("Totalvekt") or ad.get("SvvTillattTotalvekt")
+    nyttelast = ad.get("Nyttelast") or ad.get("SvvNyttelast")
+    lengde = ad.get("Lengde") or ad.get("SvvLengde")
+    bredde = ad.get("Bredde") or ad.get("SvvBredde")
+    soveplasser = ad.get("Soveplasser")
+    aarsmodell_raw = ad.get("Modell") or ad.get("SvvAarsmodell")
+    try:
+        aarsmodell = int(str(aarsmodell_raw)[:4]) if aarsmodell_raw else None
+    except (TypeError, ValueError):
+        aarsmodell = None
+
+    cells = [
+        _diff_pill("Pris", pris, ref["pris"], " kr", lower_is_better=True),
+        _diff_pill("Egenvekt", egenvekt, ref["egenvekt"], " kg", lower_is_better=True),
+        _diff_pill("Totalvekt", totalvekt, ref["totalvekt"], " kg", lower_is_better=True),
+        _diff_pill("Nyttelast", nyttelast, ref["nyttelast"], " kg"),
+        _diff_pill("Lengde", lengde, ref["lengde"], " cm"),
+        _diff_pill("Bredde", bredde, ref["bredde"], " cm"),
+        _diff_pill("Soveplasser", soveplasser, ref["soveplasser"]),
+        _diff_pill("Årsmodell", aarsmodell, ref["aarsmodell"]),
+    ]
+    return (
+        f'<div class="ref-banner">'
+        f'<div class="ref-banner-title">Sammenliknet med referansevogn — {esc(ref["navn"])}</div>'
+        f'<div class="ref-grid">{"".join(cells)}</div>'
+        f'</div>'
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -500,6 +579,22 @@ TEMPLATE = """
         .stat-lbl { font-size: 0.78rem; color: var(--label-sec); margin-top: 2px; }
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
         .truncate { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ref-banner { background: var(--bg-grouped); border: 0.5px solid var(--accent); border-radius: var(--radius-md); padding: 14px 18px; margin-bottom: 20px; }
+        .ref-banner-title { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--accent); margin-bottom: 10px; }
+        .ref-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px 16px; }
+        .ref-cell { font-size: 0.85em; }
+        .ref-cell .ref-lbl { color: var(--label-sec); font-size: 0.75em; margin-bottom: 1px; }
+        .ref-cell .ref-val { font-weight: 600; }
+        .diff-pill { display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 0.72em; font-weight: 700; margin-left: 4px; vertical-align: middle; }
+        .diff-better { background: rgba(48,209,88,0.18); color: #30D158; }
+        .diff-worse  { background: rgba(255,69,58,0.18);  color: #FF453A; }
+        .diff-neutral{ background: rgba(120,120,128,0.22); color: var(--label-sec); }
+        .chart-bar-wrap { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+        .chart-bar-row { display: flex; align-items: center; gap: 8px; font-size: 0.8em; }
+        .chart-bar-lbl { width: 54px; text-align: right; color: var(--label-sec); flex-shrink: 0; }
+        .chart-bar-track { flex: 1; background: var(--bg-grouped); border-radius: 4px; height: 18px; overflow: hidden; }
+        .chart-bar-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.3s; }
+        .chart-bar-num { width: 80px; color: var(--label-sec); font-size: 0.78em; flex-shrink: 0; }
     </style>
 </head>
 <body>
@@ -747,37 +842,221 @@ def view_statistikk():
         return render_page("statistikk", '<p class="no-data">Databasefeil.</p>')
     try:
         cur = conn.cursor(dictionary=True)
+
+        # --- Topptall ---
         cur.execute(f"SELECT COUNT(*) AS antall FROM `{TABLE}` WHERE Solgt = 0 OR Solgt IS NULL")
         antall_aktive = cur.fetchone()["antall"]
         cur.execute(f"SELECT COUNT(*) AS antall FROM `{TABLE}` WHERE Solgt = 1")
         antall_solgte = cur.fetchone()["antall"]
-        cur.execute(f"SELECT ROUND(AVG(Pris)) AS snitt FROM `{TABLE}` WHERE Pris > 0 AND (Solgt = 0 OR Solgt IS NULL)")
-        snitt_pris = parse_price(cur.fetchone()["snitt"])
+        cur.execute(f"SELECT ROUND(AVG(Pris)) AS snitt, MIN(Pris) AS minpris, MAX(Pris) AS makspris FROM `{TABLE}` WHERE Pris > 0 AND (Solgt = 0 OR Solgt IS NULL)")
+        pris_row = cur.fetchone()
+        snitt_pris = parse_price(pris_row["snitt"])
+        min_pris = parse_price(pris_row["minpris"])
+        maks_pris = parse_price(pris_row["makspris"])
+
+        # --- Prisfordeling per årsmodell ---
+        cur.execute(f"""
+            SELECT
+                COALESCE(SvvAarsmodell, CAST(LEFT(Modell,4) AS UNSIGNED)) AS Aar,
+                COUNT(*) AS Antall,
+                ROUND(MIN(Pris)) AS MinPris,
+                ROUND(AVG(Pris)) AS SnittPris,
+                ROUND(MAX(Pris)) AS MaksPris
+            FROM `{TABLE}`
+            WHERE Pris > 0 AND (Solgt = 0 OR Solgt IS NULL)
+              AND (SvvAarsmodell >= 2010 OR CAST(LEFT(Modell,4) AS UNSIGNED) >= 2010)
+            GROUP BY Aar
+            HAVING Aar >= 2010 AND Aar <= YEAR(NOW())
+            ORDER BY Aar DESC
+            LIMIT 15
+        """)
+        aarsmodell_priser = cur.fetchall()
+
+        # --- Tid på markedet (histogram-buckets i dager) ---
+        cur.execute(f"""
+            SELECT
+                CASE
+                    WHEN DATEDIFF(NOW(), Oppdatert) < 7   THEN '0-7 dager'
+                    WHEN DATEDIFF(NOW(), Oppdatert) < 14  THEN '7-14 dager'
+                    WHEN DATEDIFF(NOW(), Oppdatert) < 30  THEN '14-30 dager'
+                    WHEN DATEDIFF(NOW(), Oppdatert) < 60  THEN '30-60 dager'
+                    WHEN DATEDIFF(NOW(), Oppdatert) < 90  THEN '60-90 dager'
+                    ELSE '90+ dager'
+                END AS Bucket,
+                COUNT(*) AS Antall
+            FROM `{TABLE}`
+            WHERE (Solgt = 0 OR Solgt IS NULL) AND Oppdatert IS NOT NULL
+            GROUP BY Bucket
+            ORDER BY MIN(DATEDIFF(NOW(), Oppdatert))
+        """)
+        tid_buckets = cur.fetchall()
+
+        # --- Prisfall-analyse: andel med prisfall, gjennomsnittlig kutt ---
+        cur.execute(f"""
+            SELECT
+                COUNT(*) AS TotaltMedHistorikk,
+                SUM(CASE WHEN HoyestePris > c.Pris THEN 1 ELSE 0 END) AS AntallMedKutt,
+                ROUND(AVG(CASE WHEN HoyestePris > c.Pris THEN (HoyestePris - c.Pris) / HoyestePris * 100 END), 1) AS SnittKuttPct,
+                ROUND(AVG(CASE WHEN HoyestePris > c.Pris THEN HoyestePris - c.Pris END)) AS SnittKuttKr
+            FROM `{TABLE}` c
+            JOIN (
+                SELECT Finnkode,
+                       MAX(NULLIF(CAST(REGEXP_REPLACE(Pris,'[^0-9]','') AS UNSIGNED),0)) AS HoyestePris
+                FROM `{PRISENDRINGER_TABLE}`
+                GROUP BY Finnkode
+            ) p ON c.Finnkode = p.Finnkode
+            WHERE (c.Solgt = 0 OR c.Solgt IS NULL) AND c.Pris > 0
+        """)
+        prisfall_row = cur.fetchone()
+
+        # --- Markedsaktivitet: nye + solgte per uke siste 12 uker ---
+        cur.execute(f"""
+            SELECT
+                DATE_FORMAT(DATE(Oppdatert) - INTERVAL WEEKDAY(Oppdatert) DAY, '%Y-%m-%d') AS Uke,
+                COUNT(*) AS NyeAnnonser
+            FROM `{TABLE}`
+            WHERE Oppdatert >= NOW() - INTERVAL 12 WEEK
+            GROUP BY Uke
+            ORDER BY Uke ASC
+        """)
+        ukentlig_nye = cur.fetchall()
+
+        cur.execute(f"""
+            SELECT
+                DATE_FORMAT(DATE(Oppdatert) - INTERVAL WEEKDAY(Oppdatert) DAY, '%Y-%m-%d') AS Uke,
+                COUNT(*) AS SolgteAnnonser
+            FROM `{TABLE}`
+            WHERE Solgt = 1 AND Oppdatert >= NOW() - INTERVAL 12 WEEK
+            GROUP BY Uke
+            ORDER BY Uke ASC
+        """)
+        ukentlig_solgte = cur.fetchall()
+
+        # --- Merker topp 10 ---
         cur.execute(f"""
             SELECT SvvMerke AS Merke, COUNT(*) AS Antall, ROUND(AVG(Pris)) AS SnittPris
             FROM `{TABLE}` WHERE SvvMerke IS NOT NULL AND (Solgt = 0 OR Solgt IS NULL)
             GROUP BY SvvMerke ORDER BY Antall DESC LIMIT 10
         """)
         merker = cur.fetchall()
+
     except Exception as e:
-        logger.error("Feil i statistikk: %s", e)
-        antall_aktive, antall_solgte, snitt_pris, merker = 0, 0, None, []
+        logger.error("Feil i statistikk: %s\n%s", e, traceback.format_exc())
+        antall_aktive = antall_solgte = snitt_pris = min_pris = maks_pris = 0
+        aarsmodell_priser = tid_buckets = merker = ukentlig_nye = ukentlig_solgte = []
+        prisfall_row = {}
     finally:
         conn.close()
 
+    # --- Bygg HTML ---
     html = f"""
     <div class="stats-grid">
         <div class="stat-box"><div class="stat-num">{antall_aktive}</div><div class="stat-lbl">Aktive annonser</div></div>
         <div class="stat-box"><div class="stat-num">{antall_solgte}</div><div class="stat-lbl">Solgte (historikk)</div></div>
         <div class="stat-box"><div class="stat-num">{format_price(snitt_pris)}</div><div class="stat-lbl">Snittspris aktive</div></div>
+        <div class="stat-box"><div class="stat-num">{format_price(min_pris)}</div><div class="stat-lbl">Laveste pris</div></div>
+        <div class="stat-box"><div class="stat-num">{format_price(maks_pris)}</div><div class="stat-lbl">Høyeste pris</div></div>
     </div>
     """
+
+    # Prisfordeling per årsmodell
+    if aarsmodell_priser:
+        html += '<h3 class="section-heading">Prisfordeling per årsmodell</h3>'
+        html += '<table><thead><tr><th>Årsmodell</th><th class="sortable" data-sort="number">Antall</th><th class="sortable" data-sort="number">Min</th><th class="sortable" data-sort="number">Snitt</th><th class="sortable" data-sort="number">Maks</th></tr></thead><tbody>'
+        for row in aarsmodell_priser:
+            snitt = parse_price(row["SnittPris"])
+            # Marker hvis snitt er nær referansevognens pris
+            ref_mark = ""
+            if row.get("Aar") == REFERANSEVOGN["aarsmodell"]:
+                ref_mark = ' <span class="diff-pill diff-neutral">ref</span>'
+            html += (
+                f'<tr>'
+                f'<td><strong>{esc(row["Aar"])}</strong>{ref_mark}</td>'
+                f'<td>{row["Antall"]}</td>'
+                f'<td>{format_price(parse_price(row["MinPris"]))}</td>'
+                f'<td>{format_price(snitt)}</td>'
+                f'<td>{format_price(parse_price(row["MaksPris"]))}</td>'
+                f'</tr>'
+            )
+        html += '</tbody></table>'
+
+    # Prisfall-analyse
+    if prisfall_row and prisfall_row.get("TotaltMedHistorikk"):
+        totalt = prisfall_row["TotaltMedHistorikk"] or 0
+        med_kutt = prisfall_row["AntallMedKutt"] or 0
+        andel = round(med_kutt / totalt * 100) if totalt else 0
+        snitt_pct = prisfall_row["SnittKuttPct"] or 0
+        snitt_kr = parse_price(prisfall_row["SnittKuttKr"])
+        html += '<h3 class="section-heading">Prisfall-analyse</h3>'
+        html += f'''
+        <div class="stats-grid" style="margin-bottom:12px">
+            <div class="stat-box">
+                <div class="stat-num">{andel}%</div>
+                <div class="stat-lbl">Andel annonser med prisfall ({med_kutt} av {totalt})</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-num">{snitt_pct:.1f}%</div>
+                <div class="stat-lbl">Gjennomsnittlig kutt (%)</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-num">{format_price(snitt_kr)}</div>
+                <div class="stat-lbl">Gjennomsnittlig kutt (kr)</div>
+            </div>
+        </div>
+        '''
+
+    # Tid på markedet
+    if tid_buckets:
+        max_antall = max(b["Antall"] for b in tid_buckets) or 1
+        html += '<h3 class="section-heading">Tid på markedet (aktive annonser)</h3>'
+        html += '<div class="chart-bar-wrap">'
+        for b in tid_buckets:
+            pct = b["Antall"] / max_antall * 100
+            html += (
+                f'<div class="chart-bar-row">'
+                f'<div class="chart-bar-lbl">{esc(b["Bucket"])}</div>'
+                f'<div class="chart-bar-track"><div class="chart-bar-fill" style="width:{pct:.0f}%"></div></div>'
+                f'<div class="chart-bar-num">{b["Antall"]} annonser</div>'
+                f'</div>'
+            )
+        html += '</div>'
+
+    # Markedsaktivitet per uke
+    if ukentlig_nye or ukentlig_solgte:
+        # Bygg en felles uke-dict
+        uke_data = {}
+        for r in ukentlig_nye:
+            uke_data.setdefault(r["Uke"], {"nye": 0, "solgte": 0})["nye"] = r["NyeAnnonser"]
+        for r in ukentlig_solgte:
+            uke_data.setdefault(r["Uke"], {"nye": 0, "solgte": 0})["solgte"] = r["SolgteAnnonser"]
+        uker = sorted(uke_data.keys())
+        max_val = max((max(v["nye"], v["solgte"]) for v in uke_data.values()), default=1) or 1
+
+        html += '<h3 class="section-heading">Markedsaktivitet per uke (siste 12 uker)</h3>'
+        html += '<table><thead><tr><th>Uke</th><th>Nye annonser</th><th>Solgte</th></tr></thead><tbody>'
+        for uke in reversed(uker):
+            d = uke_data[uke]
+            nye_bar = f'<div style="display:inline-block;width:{int(d["nye"]/max_val*80)}px;height:10px;background:var(--accent);border-radius:2px;margin-right:4px;vertical-align:middle"></div>'
+            solgt_bar = f'<div style="display:inline-block;width:{int(d["solgte"]/max_val*80)}px;height:10px;background:var(--red);border-radius:2px;margin-right:4px;vertical-align:middle"></div>'
+            html += f'<tr><td>{esc(uke)}</td><td>{nye_bar}{d["nye"]}</td><td>{solgt_bar}{d["solgte"]}</td></tr>'
+        html += '</tbody></table>'
+
+    # Merker
     if merker:
         html += '<h3 class="section-heading">Merker (topp 10)</h3>'
-        html += '<table><thead><tr><th>Merke</th><th data-sort="number" class="sortable">Antall</th><th data-sort="number" class="sortable">Snittspris</th></tr></thead><tbody>'
+        max_m = max(m["Antall"] for m in merker) or 1
+        html += '<div class="chart-bar-wrap" style="margin-bottom:20px">'
         for m in merker:
-            html += f'<tr><td>{esc(m["Merke"])}</td><td>{m["Antall"]}</td><td>{format_price(parse_price(m["SnittPris"]))}</td></tr>'
-        html += '</tbody></table>'
+            pct = m["Antall"] / max_m * 100
+            html += (
+                f'<div class="chart-bar-row">'
+                f'<div class="chart-bar-lbl" style="width:80px">{esc(m["Merke"])}</div>'
+                f'<div class="chart-bar-track"><div class="chart-bar-fill" style="width:{pct:.0f}%"></div></div>'
+                f'<div class="chart-bar-num">{m["Antall"]} · {format_price(parse_price(m["SnittPris"]))}</div>'
+                f'</div>'
+            )
+        html += '</div>'
+
     return render_page("statistikk", html)
 
 
@@ -885,6 +1164,8 @@ def view_annonse(finnkode):
             <div><div class="lbl">Lokasjon</div><div>{esc(ad.get('Lokasjon') or '—')}</div></div>
         </div>
     </div>
+
+    {build_ref_banner(ad)}
 
     <h3 class="section-heading">Kjennemerke / SVV-data</h3>
     <div class="kjennemerke-hint">
