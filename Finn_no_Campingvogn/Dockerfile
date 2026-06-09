@@ -2,8 +2,8 @@ ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
 LABEL maintainer="Kristian Kaldager <kaldager.kristian@gmail.com>"
-LABEL io.hass.version="1.2"
-ENV ADDON_VERSION="1.2"
+LABEL io.hass.version="1.3"
+ENV ADDON_VERSION="1.3"
 
 RUN apk add --no-cache python3 py3-pip
 

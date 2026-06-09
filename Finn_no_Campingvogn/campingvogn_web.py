@@ -940,11 +940,87 @@ def view_statistikk():
         """)
         merker = cur.fetchall()
 
+        # --- Salgsanalyse: sammenlignbare vogner (ref ±2 år, ±15% lengde, ±2 soveplasser) ---
+        ref = REFERANSEVOGN
+        aar_fra = ref["aarsmodell"] - 2
+        aar_til = ref["aarsmodell"] + 2
+        lengde_fra = int(ref["lengde"] * 0.85)
+        lengde_til = int(ref["lengde"] * 1.15)
+        sov_fra = ref["soveplasser"] - 2
+        sov_til = ref["soveplasser"] + 2
+        cur.execute(f"""
+            SELECT
+                COUNT(*) AS Antall,
+                ROUND(MIN(Pris))  AS MinPris,
+                ROUND(AVG(Pris))  AS SnittPris,
+                ROUND(MAX(Pris))  AS MaksPris,
+                ROUND(
+                    AVG(CASE WHEN hp.HoyestePris > c.Pris
+                        THEN (hp.HoyestePris - c.Pris) / hp.HoyestePris * 100
+                        END), 1
+                ) AS SnittFallPct,
+                ROUND(AVG(DATEDIFF(NOW(), c.Oppdatert))) AS SnittDager
+            FROM `{TABLE}` c
+            LEFT JOIN (
+                SELECT Finnkode,
+                       MAX(NULLIF(CAST(REGEXP_REPLACE(Pris,'[^0-9]','') AS UNSIGNED),0)) AS HoyestePris
+                FROM `{PRISENDRINGER_TABLE}` GROUP BY Finnkode
+            ) hp ON c.Finnkode = hp.Finnkode
+            WHERE (c.Solgt = 0 OR c.Solgt IS NULL)
+              AND c.Pris > 0
+              AND COALESCE(c.SvvAarsmodell, CAST(LEFT(c.Modell,4) AS UNSIGNED)) BETWEEN %s AND %s
+              AND c.Lengde BETWEEN %s AND %s
+              AND c.Soveplasser BETWEEN %s AND %s
+        """, (aar_fra, aar_til, lengde_fra, lengde_til, sov_fra, sov_til))
+        salg_sammenlignbare = cur.fetchone()
+
+        # Antall solgte sammenlignbare siste 6 mnd
+        cur.execute(f"""
+            SELECT COUNT(*) AS AntallSolgte,
+                   ROUND(AVG(Pris)) AS SnittSolgtPris
+            FROM `{TABLE}`
+            WHERE Solgt = 1
+              AND Oppdatert >= NOW() - INTERVAL 6 MONTH
+              AND Pris > 0
+              AND COALESCE(SvvAarsmodell, CAST(LEFT(Modell,4) AS UNSIGNED)) BETWEEN %s AND %s
+              AND Lengde BETWEEN %s AND %s
+              AND Soveplasser BETWEEN %s AND %s
+        """, (aar_fra, aar_til, lengde_fra, lengde_til, sov_fra, sov_til))
+        salg_historikk = cur.fetchone()
+
+        # --- Sesong: snitt-pris og antall annonser per måned (alle år) ---
+        cur.execute(f"""
+            SELECT
+                MONTH(Oppdatert) AS Maaned,
+                COUNT(*) AS Antall,
+                ROUND(AVG(Pris)) AS SnittPris
+            FROM `{TABLE}`
+            WHERE Pris > 0 AND Oppdatert IS NOT NULL
+            GROUP BY MAANED
+            ORDER BY MAANED
+        """)
+        sesong_alle = cur.fetchall()
+
+        # Sesong for solgte: gjennomsnittlig liggetid og pris per måned de ble solgt
+        cur.execute(f"""
+            SELECT
+                MONTH(Oppdatert) AS Maaned,
+                COUNT(*) AS AntallSolgte,
+                ROUND(AVG(Pris)) AS SnittPris
+            FROM `{TABLE}`
+            WHERE Solgt = 1 AND Pris > 0 AND Oppdatert IS NOT NULL
+            GROUP BY MAANED
+            ORDER BY MAANED
+        """)
+        sesong_solgte = cur.fetchall()
+
     except Exception as e:
         logger.error("Feil i statistikk: %s\n%s", e, traceback.format_exc())
         antall_aktive = antall_solgte = snitt_pris = min_pris = maks_pris = 0
         aarsmodell_priser = tid_buckets = merker = ukentlig_nye = ukentlig_solgte = []
         prisfall_row = {}
+        salg_sammenlignbare = salg_historikk = None
+        sesong_alle = sesong_solgte = []
     finally:
         conn.close()
 
@@ -1056,6 +1132,152 @@ def view_statistikk():
                 f'</div>'
             )
         html += '</div>'
+
+    # -----------------------------------------------------------------------
+    # SALGSANALYSE — Hva kan jeg selge min vogn for?
+    # -----------------------------------------------------------------------
+    ref = REFERANSEVOGN
+    html += f'<h2 class="section-heading" style="font-size:1.2rem;margin-top:28px;border-top:0.5px solid var(--separator-op);padding-top:20px">Din vogn — salgsanalyse</h2>'
+    html += f'<p style="color:var(--label-sec);font-size:0.85em;margin-bottom:16px">Basert på sammenlignbare annonser: årsmodell {ref["aarsmodell"]-2}–{ref["aarsmodell"]+2}, lengde {int(ref["lengde"]*0.85)}–{int(ref["lengde"]*1.15)} cm, {ref["soveplasser"]-2}–{ref["soveplasser"]+2} soveplasser.</p>'
+
+    if salg_sammenlignbare and salg_sammenlignbare.get("Antall"):
+        s = salg_sammenlignbare
+        antall_s = s["Antall"] or 0
+        min_s = parse_price(s["MinPris"])
+        snitt_s = parse_price(s["SnittPris"])
+        maks_s = parse_price(s["MaksPris"])
+        fall_pct = float(s["SnittFallPct"] or 0)
+        snitt_dager = int(s["SnittDager"] or 0)
+
+        # Beregn forventet startpris og realistisk pris basert på ref-pris
+        forventet_start = ref["pris"]
+        realistisk_lav = round(snitt_s * 0.93) if snitt_s else None
+        realistisk_hoy = round(snitt_s * 1.05) if snitt_s else None
+
+        html += f'''
+        <div class="stats-grid" style="margin-bottom:16px">
+            <div class="stat-box">
+                <div class="stat-num">{antall_s}</div>
+                <div class="stat-lbl">Aktive sammenlignbare annonser</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-num">{format_price(snitt_s)}</div>
+                <div class="stat-lbl">Snittspris sammenlignbare</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-num">{format_price(min_s)} – {format_price(maks_s)}</div>
+                <div class="stat-lbl">Prisspenn i markedet</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-num">{snitt_dager} dager</div>
+                <div class="stat-lbl">Snitt liggetid aktive</div>
+            </div>
+        </div>
+        '''
+
+        # Prisanbefaling
+        if snitt_s and realistisk_lav and realistisk_hoy:
+            kjoper_betaler = round(snitt_s * (1 - fall_pct / 100)) if fall_pct else snitt_s
+            html += f'''
+            <div class="ref-banner" style="margin-bottom:16px">
+                <div class="ref-banner-title">Prisanbefaling for din Dethleffs 480 QLK (2022)</div>
+                <div class="ref-grid" style="gap:12px 24px">
+                    <div class="ref-cell">
+                        <div class="ref-lbl">Anbefalt annonseringspris</div>
+                        <div class="ref-val" style="font-size:1.1em">{format_price(realistisk_lav)} – {format_price(realistisk_hoy)}</div>
+                    </div>
+                    <div class="ref-cell">
+                        <div class="ref-lbl">Hva kjøper trolig betaler</div>
+                        <div class="ref-val" style="font-size:1.1em;color:var(--accent)">{format_price(kjoper_betaler)}</div>
+                    </div>
+                    <div class="ref-cell">
+                        <div class="ref-lbl">Typisk prisfall før salg</div>
+                        <div class="ref-val">{fall_pct:.1f}%</div>
+                    </div>
+                    <div class="ref-cell">
+                        <div class="ref-lbl">Kjøpspris din vogn (2024)</div>
+                        <div class="ref-val note-secondary">{format_price(ref["pris"])}</div>
+                    </div>
+                </div>
+            </div>
+            '''
+
+        if salg_historikk and salg_historikk.get("AntallSolgte"):
+            sh = salg_historikk
+            html += f'''
+            <div class="info-panel" style="margin-bottom:20px">
+                <div class="info-grid">
+                    <div><div class="lbl">Solgte (siste 6 mnd)</div><div><strong>{sh["AntallSolgte"]}</strong></div></div>
+                    <div><div class="lbl">Snittspris solgte</div><div><strong>{format_price(parse_price(sh["SnittSolgtPris"]))}</strong></div></div>
+                </div>
+            </div>
+            '''
+    else:
+        html += '<p class="note-secondary" style="margin-bottom:20px">Ikke nok sammenlignbare annonser i databasen ennå.</p>'
+
+    # -----------------------------------------------------------------------
+    # SESONG — Når bør jeg selge?
+    # -----------------------------------------------------------------------
+    MAANED_NAVN = ["", "Jan", "Feb", "Mar", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Des"]
+
+    if sesong_alle:
+        sesong_map = {r["Maaned"]: r for r in sesong_alle}
+        solgt_map  = {r["Maaned"]: r for r in sesong_solgte}
+
+        max_antall = max((r["Antall"] for r in sesong_alle), default=1) or 1
+        max_pris_m = max((parse_price(r["SnittPris"]) or 0 for r in sesong_alle), default=1) or 1
+
+        html += '<h3 class="section-heading" style="margin-top:24px">Sesong — når bør du selge?</h3>'
+        html += '<p style="color:var(--label-sec);font-size:0.85em;margin-bottom:12px">Basert på alle annonser i databasen. Høy aktivitet + høy snittspris = godt tidspunkt å legge ut.</p>'
+
+        html += '<table style="margin-bottom:20px"><thead><tr>'
+        html += '<th>Måned</th><th>Aktivitet</th><th>Snittspris aktive</th><th>Solgte</th><th>Snittspris solgte</th>'
+        html += '</tr></thead><tbody>'
+
+        # Finn beste måned (høyest kombinert score: normalisert antall * normalisert pris)
+        scores = {}
+        for mnd in range(1, 13):
+            r = sesong_map.get(mnd, {})
+            antall_n = (r.get("Antall") or 0) / max_antall
+            pris_n = (parse_price(r.get("SnittPris")) or 0) / max_pris_m
+            scores[mnd] = antall_n * 0.5 + pris_n * 0.5
+        beste_mnd = max(scores, key=scores.get) if scores else None
+
+        for mnd in range(1, 13):
+            r = sesong_map.get(mnd, {})
+            rs = solgt_map.get(mnd, {})
+            antall_m = r.get("Antall") or 0
+            snitt_m  = parse_price(r.get("SnittPris"))
+            bar_w = int(antall_m / max_antall * 80) if max_antall else 0
+            bar = f'<div style="display:inline-block;width:{bar_w}px;height:10px;background:var(--accent);border-radius:2px;margin-right:4px;vertical-align:middle"></div>'
+            beste_mark = ' <span class="diff-pill diff-better">★ best</span>' if mnd == beste_mnd else ''
+            html += (
+                f'<tr>'
+                f'<td><strong>{MAANED_NAVN[mnd]}</strong>{beste_mark}</td>'
+                f'<td>{bar}{antall_m}</td>'
+                f'<td>{format_price(snitt_m) if snitt_m else "—"}</td>'
+                f'<td>{rs.get("AntallSolgte") or "—"}</td>'
+                f'<td>{format_price(parse_price(rs.get("SnittPris"))) if rs.get("SnittPris") else "—"}</td>'
+                f'</tr>'
+            )
+        html += '</tbody></table>'
+
+        # Tekstlig anbefaling
+        beste_navn = MAANED_NAVN[beste_mnd] if beste_mnd else "ukjent"
+        topp3 = sorted(scores, key=scores.get, reverse=True)[:3]
+        topp3_navn = ", ".join(MAANED_NAVN[m] for m in sorted(topp3))
+        html += f'''
+        <div class="ref-banner">
+            <div class="ref-banner-title">Anbefaling basert på sesongdata</div>
+            <p style="font-size:0.9em;color:var(--label);margin-bottom:6px">
+                Beste måneder å legge ut for salg: <strong style="color:var(--accent)">{topp3_navn}</strong>
+            </p>
+            <p style="font-size:0.85em;color:var(--label-sec)">
+                Høy markedsaktivitet kombinert med høy snittspris gir best utgangspunkt.
+                Campingvogner selges typisk best tidlig vår (folk planlegger sesong) og svakest sent høst/vinter.
+            </p>
+        </div>
+        '''
 
     return render_page("statistikk", html)
 
