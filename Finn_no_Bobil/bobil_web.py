@@ -184,17 +184,16 @@ def _forventet_pruting_pct(selgertype: str, dager: int) -> float:
 
 
 def enrich_row_with_kjopspris(r: dict, now: datetime) -> None:
-    """Berik rad med AlleredeKuttet, ForventetPruting og AntattKjøpspris."""
+    """Berik rad med AlleredeKuttet og AntattKjøpspris (realistisk landing fra statistisk modell)."""
     pris = parse_price(r.get("Pris"))
     startpris = r.get("HoyestePris")  # MAX fra prisendringer (allerede beregnet)
     if not pris:
         r["AlleredeKuttetHtml"] = '<span class="note-secondary">—</span>'
-        r["ForventetPrutingHtml"] = '<span class="note-secondary">—</span>'
         r["AntattKjopsprisHtml"] = '<span class="note-secondary">—</span>'
         r["AntattKjopsprisSort"] = 0
         return
 
-    # Faktor 1 — allerede kuttet
+    # Allerede kuttet fra startpris
     if startpris and startpris > pris:
         kuttet_kr = startpris - pris
         kuttet_pct = round(kuttet_kr / startpris * 100, 1)
@@ -209,39 +208,21 @@ def enrich_row_with_kjopspris(r: dict, now: datetime) -> None:
     else:
         r["AlleredeKuttetHtml"] = '<span class="note-secondary">—</span>'
 
-    # Faktor 2 — liggetid fra PublisertDato, fallback til Oppdatert
-    publisert = r.get("PublisertDato")
-    if publisert:
-        if hasattr(publisert, "date"):
-            dager = (now - publisert).days
-        else:
-            try:
-                dager = (now - datetime.strptime(str(publisert)[:10], "%Y-%m-%d")).days
-            except (ValueError, TypeError):
-                dager = r.get("DagerPaaMarkedet") or 0
-    else:
-        dager = r.get("DagerPaaMarkedet") or 0
-
-    selgertype = r.get("SelgerType") or ""
-    pruting_pct = _forventet_pruting_pct(selgertype, dager)
-    r["ForventetPrutingHtml"] = f'<span class="note-secondary">{pruting_pct:.0f}%</span>'
-
-    # Faktor 3 — antatt kjøpspris
-    antatt = round(pris * (1 - pruting_pct / 100))
-    antatt_f = f"{antatt:,.0f}".replace(",", " ")
-    r["AntattKjopsprisSort"] = antatt
-
-    if startpris and startpris > antatt:
-        total_kr = startpris - antatt
-        total_pct = round(total_kr / startpris * 100, 1)
+    # Antatt kjøpspris — bruker samme statistiske modell som detaljsiden ("Realistisk landing")
+    est = beregn_forventet_salgspris(pris, r.get("Modell"))
+    if est:
+        antatt = est["realistisk"]
+        antatt_f = f"{antatt:,.0f}".replace(",", " ")
+        r["AntattKjopsprisSort"] = antatt
+        rabatt_note = f"{est['snitt_rabatt_pct']}%"
         r["AntattKjopsprisHtml"] = (
-            f'<span class="antatt-kjopspris">'
+            f'<span class="antatt-kjopspris" title="Realistisk landing · {rabatt_note} snittrabatt">'
             f'<strong>{antatt_f} kr</strong>'
-            f'<span class="prisfall-pct"> (-{total_pct}% fra start)</span>'
             f'</span>'
         )
     else:
-        r["AntattKjopsprisHtml"] = f'<strong>{antatt_f} kr</strong>'
+        r["AntattKjopsprisHtml"] = '<span class="note-secondary">—</span>'
+        r["AntattKjopsprisSort"] = 0
 
 
 def enrich_row_with_prices(r: dict) -> None:
