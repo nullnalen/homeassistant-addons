@@ -3082,16 +3082,27 @@ TEMPLATE = """
             }
         } catch(e) {}
 
+        let _skiltFilter = false;
+        function filtrerTabell() {
+            const q = (document.getElementById('annonse-sok')?.value || '').toLowerCase();
+            document.querySelectorAll('tr[data-kjennemerke]').forEach(r => {
+                const tekst = r.textContent.toLowerCase();
+                const sokMatch = !q || tekst.includes(q);
+                const skiltMatch = !_skiltFilter || r.dataset.kjennemerke === '0';
+                r.style.display = (sokMatch && skiltMatch) ? '' : 'none';
+            });
+        }
         function filtrerUtenSkilt() {
-            document.querySelectorAll('tr[data-kjennemerke="1"]').forEach(r => r.style.display = 'none');
-            document.querySelectorAll('tr[data-kjennemerke="0"]').forEach(r => r.style.display = '');
+            _skiltFilter = true;
+            filtrerTabell();
             const btn = document.getElementById('filter-uten-skilt-btn');
             const alle = document.getElementById('filter-alle-btn');
             if (btn) btn.style.display = 'none';
             if (alle) alle.style.display = '';
         }
         function visAlle() {
-            document.querySelectorAll('tr[data-kjennemerke]').forEach(r => r.style.display = '');
+            _skiltFilter = false;
+            filtrerTabell();
             const btn = document.getElementById('filter-uten-skilt-btn');
             const alle = document.getElementById('filter-alle-btn');
             if (btn) btn.style.display = '';
@@ -3639,6 +3650,9 @@ def view_annonser():
     antall_uten_skilt = sum(1 for r in rows if not (r.get("Kjennemerke") or "").strip())
     html = f"""
     <div class="liste-filter-bar">
+        <input type="search" id="annonse-sok" placeholder="Søk annonse eller modell…"
+               oninput="filtrerTabell()" autocomplete="off"
+               style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);color:var(--label);font-size:0.9rem;min-width:200px;">
         <button class="btn btn-sm" id="filter-uten-skilt-btn" onclick="filtrerUtenSkilt()">
             Uten skiltnummer <span class="badge">{antall_uten_skilt}</span>
         </button>
@@ -3653,10 +3667,8 @@ def view_annonser():
                 <th class="sortable">Annonse</th>
                 <th class="sortable" data-sort="number">Modell</th>
                 <th class="sortable" data-sort="number">Pris</th>
-                <th class="sortable" data-sort="number">Prisfall</th>
                 <th class="sortable" data-sort="number" title="Allerede kuttet fra startpris">Kuttet</th>
-                <th class="sortable" data-sort="number" title="Forventet ytterligere pruting basert på selgertype og liggetid">Pruting</th>
-                <th class="sortable" data-sort="number" title="Antatt kjøpspris etter forventet pruting">Antatt kjøp</th>
+                <th class="sortable" data-sort="number" title="Antatt kjøpspris etter forventet pruting basert på selgertype og liggetid">Antatt kjøp</th>
                 <th class="sortable" data-sort="number">Nyttelast</th>
                 <th class="sortable" data-sort="number">Endringer</th>
                 <th class="sortable" data-sort="number">Dager</th>
@@ -3692,9 +3704,7 @@ def view_annonser():
                 <td class="truncate"><a href="annonse/{esc(fk)}">{esc(r['Annonsenavn'])}</a>{ny_badge}{_kilde_badge(r.get('Kilde'))}</td>
                 <td>{esc(r['Modell'])}</td>
                 <td>{esc(r['NaaverendePris'])}</td>
-                <td>{r.get('PrisfallHtml') or '<span class="note-secondary">—</span>'}</td>
                 <td>{r.get('AlleredeKuttetHtml') or '<span class="note-secondary">—</span>'}</td>
-                <td>{r.get('ForventetPrutingHtml') or '<span class="note-secondary">—</span>'}</td>
                 <td data-sort-value="{r.get('AntattKjopsprisSort', 0)}">{r.get('AntattKjopsprisHtml') or '<span class="note-secondary">—</span>'}</td>
                 <td>{nyttelast}</td>
                 <td><strong>{esc(r['AntallEndringer'])}</strong></td>
