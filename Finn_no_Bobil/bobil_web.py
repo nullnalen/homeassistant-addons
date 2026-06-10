@@ -1347,9 +1347,10 @@ def beregn_kjopsscore(r: dict, now: datetime) -> int:
     if mangler_svv:
         s += 15
 
-    # EU-kontrollfrist (+10 maks)
+    # EU-kontrollfrist (+10 maks) — nøytral for forhandler (EU ordnes ved salg)
     eu_frist = r.get("SvvEuKontrollfrist") or ""
     eu_sist = r.get("SvvEuSistGodkjent") or ""
+    er_forhandler = (r.get("SelgerType") or "").lower() == "forhandler"
     mnd_til_eu = None
     mnd_siden_eu = None
     try:
@@ -1362,24 +1363,25 @@ def beregn_kjopsscore(r: dict, now: datetime) -> int:
     except (ValueError, TypeError):
         pass
 
-    if mnd_til_eu is not None:
-        if mnd_til_eu > 24:
-            s += 10
-        elif mnd_til_eu > 12:
-            s += 7
-        elif mnd_til_eu > 6:
-            s += 3
-        else:
-            s -= 7
+    if not er_forhandler:
+        if mnd_til_eu is not None:
+            if mnd_til_eu > 24:
+                s += 10
+            elif mnd_til_eu > 12:
+                s += 7
+            elif mnd_til_eu > 6:
+                s += 3
+            else:
+                s -= 7
 
-    # EU sist godkjent (+5 maks)
-    if mnd_siden_eu is not None:
-        if mnd_siden_eu < 6:
-            s += 5
-        elif mnd_siden_eu < 12:
-            s += 3
-        elif mnd_siden_eu >= 24:
-            s -= 3
+        # EU sist godkjent (+5 maks)
+        if mnd_siden_eu is not None:
+            if mnd_siden_eu < 6:
+                s += 5
+            elif mnd_siden_eu < 12:
+                s += 3
+            elif mnd_siden_eu >= 24:
+                s -= 3
 
     # Nyttelast (+15 maks, -5 under 400 kg)
     nyttelast = r.get("SvvNyttelast") or 0
@@ -1484,11 +1486,14 @@ def beregn_kjopsscore_forklaring(r: dict, now: datetime) -> list[tuple[str, int,
 
     eu_frist = r.get("SvvEuKontrollfrist") or ""
     eu_sist = r.get("SvvEuSistGodkjent") or ""
+    er_forhandler = (r.get("SelgerType") or "").lower() == "forhandler"
     try:
         if eu_frist:
             frist_dato = datetime.strptime(eu_frist[:10], "%Y-%m-%d")
             mnd = max(0, (frist_dato - now).days // 30)
-            if mnd > 24:
+            if er_forhandler:
+                items.append(("EU-frist", 0, f"{mnd} mnd igjen — nøytral (forhandler ordner ved salg)"))
+            elif mnd > 24:
                 items.append(("EU-frist", +10, f"{mnd} mnd igjen"))
             elif mnd > 12:
                 items.append(("EU-frist", +7, f"{mnd} mnd igjen"))
@@ -1500,7 +1505,7 @@ def beregn_kjopsscore_forklaring(r: dict, now: datetime) -> list[tuple[str, int,
         pass
 
     try:
-        if eu_sist:
+        if eu_sist and not er_forhandler:
             sist_dato = datetime.strptime(eu_sist[:10], "%Y-%m-%d")
             mnd = max(0, (now - sist_dato).days // 30)
             if mnd < 6:
