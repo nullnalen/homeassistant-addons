@@ -862,6 +862,28 @@ MERKE_INFO = {
         "kjopstips": "Van 60-serien fra 2018+ er trygge kjøp og holder godt. Sjekk pakninger rundt sidevindu på eldre modeller. Et trygt og lett-omsettelig valg i mellomsjiktet.",
         "typiske_kjopere": "Kjøpere som vil ha tysk mellomsjikt-kvalitet med rask omsetning og solid reservedelsdekning gjennom Hymer-konsernet.",
     },
+    "capron": {
+        "visningsnavn": "Capron",
+        "segment": "budget",
+        "segment_label": "Budsjett",
+        "opprinnelse": "🇩🇪 Tyskland",
+        "kortbeskrivelse": "Capron GmbH er en bobilprodusent i Neustadt (Sachsen), nær Dresden, grunnlagt i 2006 som en felles fabrikk eid av Erwin Hymer Group. Produserer utelukkende merkene Carado og Sunlight — biler registrert på SVV som 'Capron' er med andre ord enten Carado eller Sunlight under hetten. Nådde 20 000 produserte enheter allerede i 2013.",
+        "modellserier": "Produserer Carado (T-, A-, I-, V-klasse) og Sunlight (Van 60, T-serie, A-klasse). Se Carado eller Sunlight for modelldetaljer — merkenavnet 'Capron' i SVV-registeret er kun fabrikantnavnet, ikke et eget merke.",
+        "styrker": [
+            "Del av Erwin Hymer Group — solid konsernbakgrunn og reservedelsdekning",
+            "Effektiv fabrikk med høy produksjonsvolum — gir lavere pris til sluttkunde",
+            "Carado og Sunlight er begge veldokumenterte og etterspurte merker i Norge",
+        ],
+        "svakheter": [
+            "SVV-registrering som 'Capron' i stedet for Carado/Sunlight kan skape forvirring ved salg og forsikring",
+            "Enklere interiørfinish enn Hymer og Bürstner fra samme konsern",
+        ],
+        "kjente_problemer": [
+            "Se kjente problemer for Carado eller Sunlight — Capron er fabrikanten, ikke et eget merke med egne feil",
+        ],
+        "kjopstips": "Sjekk om annonsen gjelder Carado eller Sunlight (fremgår av modellnavn og utstyrsliste). Begge er gode, trygge kjøp i mellomsjiktet. Ikke la 'Capron'-merket i papirene skremme — det er kun fabrikantnavnet.",
+        "typiske_kjopere": "Kjøpere som har funnet en Carado eller Sunlight og ser 'Capron' i vognkortet — samme kjøperprofil som for disse to merkene.",
+    },
     "carado": {
         "visningsnavn": "Carado",
         "segment": "mid",
