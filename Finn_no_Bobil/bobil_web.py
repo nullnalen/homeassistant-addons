@@ -1336,9 +1336,10 @@ _SEGMENT_FARGE = {
 
 def beregn_kjopsscore(r: dict, now: datetime) -> int:
     """
-    Scoring-algoritme. Maks ~115 råpoeng normalisert til 100.
-    Faktorer: EU-kontroll, km totalt, km/år, nyttelast, årsmodell,
-    selgertype, heftelser, girkasse, prisfall, merkerisiko.
+    Scoring-algoritme normalisert til 0–100.
+    Faktorer: EU-kontroll, nyttelast, km totalt, km/år, årsmodell,
+    selgertype, heftelser, prisfall.
+    Girkasse og merkerisiko beholdes som info, påvirker ikke score.
     """
     s = 0
 
@@ -1347,43 +1348,29 @@ def beregn_kjopsscore(r: dict, now: datetime) -> int:
     if mangler_svv:
         s += 15
 
-    # EU-kontrollfrist (+10 maks) — nøytral for forhandler (EU ordnes ved salg)
+    # EU-kontrollfrist — differensiert på selgertype
     eu_frist = r.get("SvvEuKontrollfrist") or ""
-    eu_sist = r.get("SvvEuSistGodkjent") or ""
     er_forhandler = (r.get("SelgerType") or "").lower() == "forhandler"
-    mnd_til_eu = None
-    mnd_siden_eu = None
     try:
         if eu_frist:
             frist_dato = datetime.strptime(eu_frist[:10], "%Y-%m-%d")
-            mnd_til_eu = max(0, (frist_dato - now).days // 30)
-        if eu_sist:
-            sist_dato = datetime.strptime(eu_sist[:10], "%Y-%m-%d")
-            mnd_siden_eu = max(0, (now - sist_dato).days // 30)
+            mnd = (frist_dato - now).days // 30
+            if er_forhandler:
+                if mnd > 18:   s += 3
+                elif mnd > 12: s += 2
+                elif mnd > 6:  s += 2
+                # 2–6 mnd, < 2 mnd, utgått: 0
+            else:
+                if mnd > 18:   s += 8
+                elif mnd > 12: s += 5
+                elif mnd > 6:  s += 2
+                elif mnd > 2:  s -= 3
+                elif mnd >= 0: s -= 8
+                else:          s -= 12
     except (ValueError, TypeError):
         pass
 
-    if not er_forhandler:
-        if mnd_til_eu is not None:
-            if mnd_til_eu > 24:
-                s += 10
-            elif mnd_til_eu > 12:
-                s += 7
-            elif mnd_til_eu > 6:
-                s += 3
-            else:
-                s -= 7
-
-        # EU sist godkjent (+5 maks)
-        if mnd_siden_eu is not None:
-            if mnd_siden_eu < 6:
-                s += 5
-            elif mnd_siden_eu < 12:
-                s += 3
-            elif mnd_siden_eu >= 24:
-                s -= 3
-
-    # Nyttelast (+15 maks, -5 under 400 kg)
+    # Nyttelast (+15 maks, −5 under 400 kg)
     nyttelast = r.get("SvvNyttelast") or 0
     if nyttelast >= 700:
         s += 15
@@ -1446,20 +1433,23 @@ def beregn_kjopsscore(r: dict, now: datetime) -> int:
     if "privat" in selger or selger == "privat":
         s += 10
 
-    # Heftelser: ingen = +5, én (normalt billån) = 0, to eller flere = −15
+    # Heftelser — differensiert på selgertype
     try:
         heft_antall = int(r.get("Heftelser") or 0)
     except (ValueError, TypeError):
         heft_antall = 0
-    if heft_antall == 0:
-        s += 5
-    elif heft_antall >= 2:
-        s -= 15
-
-    # Girkasse: manuell = +5 (ikke betale automat-premien)
-    girkasse = (r.get("Girkasse") or "").lower()
-    if "manuell" in girkasse:
-        s += 5
+    if er_forhandler:
+        if heft_antall == 0:
+            s += 3
+        elif heft_antall == 1:
+            s -= 3
+        elif heft_antall >= 2:
+            s -= 8
+    else:
+        if heft_antall == 0:
+            s += 5
+        elif heft_antall >= 2:
+            s -= 15
 
     # Prisfall-bonus (+5 maks)
     pris = parse_price(r.get("Pris"))
@@ -1467,10 +1457,6 @@ def beregn_kjopsscore(r: dict, now: datetime) -> int:
     if pris and hoyeste and hoyeste > pris:
         prisfall_pct = (hoyeste - pris) / hoyeste * 100
         s += min(5, int(prisfall_pct))
-
-    # Merke-risiko (trekk)
-    merke = r.get("SvvMerke") or (r.get("Annonsenavn") or "").split()[0]
-    s -= FORUM_RISIKO.get(merke, 5)
 
     return min(100, max(5, s))
 
@@ -1485,35 +1471,33 @@ def beregn_kjopsscore_forklaring(r: dict, now: datetime) -> list[tuple[str, int,
         items.append(("SVV-data mangler", +15, "Nøytral baseline"))
 
     eu_frist = r.get("SvvEuKontrollfrist") or ""
-    eu_sist = r.get("SvvEuSistGodkjent") or ""
     er_forhandler = (r.get("SelgerType") or "").lower() == "forhandler"
     try:
         if eu_frist:
             frist_dato = datetime.strptime(eu_frist[:10], "%Y-%m-%d")
-            mnd = max(0, (frist_dato - now).days // 30)
+            mnd = (frist_dato - now).days // 30
             if er_forhandler:
-                items.append(("EU-frist", 0, f"{mnd} mnd igjen — nøytral (forhandler ordner ved salg)"))
-            elif mnd > 24:
-                items.append(("EU-frist", +10, f"{mnd} mnd igjen"))
-            elif mnd > 12:
-                items.append(("EU-frist", +7, f"{mnd} mnd igjen"))
-            elif mnd > 6:
-                items.append(("EU-frist", +3, f"{mnd} mnd igjen"))
+                if mnd > 18:
+                    items.append(("EU-frist", +3, f"{mnd} mnd igjen (forhandler)"))
+                elif mnd > 12:
+                    items.append(("EU-frist", +2, f"{mnd} mnd igjen (forhandler)"))
+                elif mnd > 6:
+                    items.append(("EU-frist", +2, f"{mnd} mnd igjen (forhandler)"))
+                else:
+                    items.append(("EU-frist", 0, f"{mnd} mnd igjen — forhandler ordner ved salg"))
             else:
-                items.append(("EU-frist", -7, f"Kun {mnd} mnd igjen"))
-    except (ValueError, TypeError):
-        pass
-
-    try:
-        if eu_sist and not er_forhandler:
-            sist_dato = datetime.strptime(eu_sist[:10], "%Y-%m-%d")
-            mnd = max(0, (now - sist_dato).days // 30)
-            if mnd < 6:
-                items.append(("EU sist godkjent", +5, f"{mnd} mnd siden"))
-            elif mnd < 12:
-                items.append(("EU sist godkjent", +3, f"{mnd} mnd siden"))
-            elif mnd >= 24:
-                items.append(("EU sist godkjent", -3, f"{mnd} mnd siden"))
+                if mnd > 18:
+                    items.append(("EU-frist", +8, f"{mnd} mnd igjen"))
+                elif mnd > 12:
+                    items.append(("EU-frist", +5, f"{mnd} mnd igjen"))
+                elif mnd > 6:
+                    items.append(("EU-frist", +2, f"{mnd} mnd igjen"))
+                elif mnd > 2:
+                    items.append(("EU-frist", -3, f"{mnd} mnd igjen"))
+                elif mnd >= 0:
+                    items.append(("EU-frist", -8, f"{mnd} mnd igjen — snart utgått"))
+                else:
+                    items.append(("EU-frist", -12, "Utgått"))
     except (ValueError, TypeError):
         pass
 
@@ -1591,18 +1575,20 @@ def beregn_kjopsscore_forklaring(r: dict, now: datetime) -> list[tuple[str, int,
         heft_antall = int(r.get("Heftelser") or 0)
     except (ValueError, TypeError):
         heft_antall = 0
-    if heft_antall == 0:
-        items.append(("Heftelser", +5, "Ingen heftelser"))
-    elif heft_antall == 1:
-        items.append(("Heftelser", 0, "1 heftelse — normalt (billån)"))
+    if er_forhandler:
+        if heft_antall == 0:
+            items.append(("Heftelser", +3, "Ingen heftelser (forhandler)"))
+        elif heft_antall == 1:
+            items.append(("Heftelser", -3, "1 heftelse (forhandler)"))
+        else:
+            items.append(("Heftelser", -8, f"{heft_antall} heftelser (forhandler)"))
     else:
-        items.append(("Heftelser", -15, f"{heft_antall} heftelser — uvanlig"))
-
-    girkasse = (r.get("Girkasse") or "").lower()
-    if "manuell" in girkasse:
-        items.append(("Girkasse", +5, "Manuell"))
-    elif girkasse:
-        items.append(("Girkasse", 0, "Automat"))
+        if heft_antall == 0:
+            items.append(("Heftelser", +5, "Ingen heftelser"))
+        elif heft_antall == 1:
+            items.append(("Heftelser", 0, "1 heftelse — normalt (billån)"))
+        else:
+            items.append(("Heftelser", -15, f"{heft_antall} heftelser — uvanlig"))
 
     pris = parse_price(r.get("Pris"))
     hoyeste = r.get("HoyestePris")
@@ -1610,10 +1596,6 @@ def beregn_kjopsscore_forklaring(r: dict, now: datetime) -> list[tuple[str, int,
         prisfall_pct = (hoyeste - pris) / hoyeste * 100
         bonus = min(5, int(prisfall_pct))
         items.append(("Prisfall", +bonus, f"{prisfall_pct:.1f}% fall fra toppris"))
-
-    merke = r.get("SvvMerke") or (r.get("Annonsenavn") or "").split()[0]
-    risiko = FORUM_RISIKO.get(merke, 5)
-    items.append(("Merkerisiko", -risiko, merke if merke else "Ukjent merke"))
 
     return items
 
