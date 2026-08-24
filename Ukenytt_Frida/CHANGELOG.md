@@ -5,6 +5,15 @@ Alle vesentlige endringer i dette prosjektet vil bli dokumentert i denne filen.
 Formatet er basert på [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 og prosjektet følger [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.27] - 2026-08-24
+
+### Lagt til
+- Dagsplanen inkluderer nå separate `start_tid` og `slutt_tid` i tillegg til samlet `tid`.
+- `/status` viser om `/ukenytt/<barn>` bruker rik JSON-fil eller fallback fra sensor-state.
+
+### Fikset
+- `has_ukenytt_data` i `/status` rapporterer nå sant når `/ukenytt/<barn>` kan returnere data fra sensor-state.
+
 ## [1.0.26] - 2026-08-24
 
 ### Lagt til

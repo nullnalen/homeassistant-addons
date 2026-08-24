@@ -53,7 +53,7 @@ except (json.JSONDecodeError, TypeError, ValueError) as _cfg_err:
 
 # Versjon satt av Dockerfile via ADDON_VERSION env-var, fallback til hardkodet
 # (synkroniseres med config.yaml ved hvert release via Dockerfile LABEL)
-ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.26")
+ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.27")
 
 # Konstanter
 MAX_INFO_LENGTH = 500
@@ -389,8 +389,25 @@ def get_original_filename(child_name: str) -> str | None:
 
 def _extract_time(cell: str) -> str | None:
     """Trekker ut tidspunkt på formen '08.30 – 14.10' fra en celle."""
-    match = re.search(r'\d{1,2}[.:]\d{2}\s*[–\-]\s*\d{1,2}[.:]\d{2}', str(cell))
-    return match.group(0).strip() if match else None
+    parsed = _extract_time_range(cell)
+    return parsed["tid"] if parsed else None
+
+
+def _extract_time_range(cell: str) -> dict | None:
+    """Trekker ut samlet tid, start og slutt fra en celle."""
+    match = re.search(
+        r'(?P<start>\d{1,2}[.:]\d{2})\s*[–\-]\s*(?P<end>\d{1,2}[.:]\d{2})',
+        str(cell)
+    )
+    if not match:
+        return None
+    start = match.group("start").replace(":", ".")
+    end = match.group("end").replace(":", ".")
+    return {
+        "tid": f"{start} – {end}",
+        "start_tid": start,
+        "slutt_tid": end,
+    }
 
 
 def _split_items(cell) -> list[str]:
@@ -437,7 +454,7 @@ def _parse_ukeplan_from_text(file_path: Path) -> dict:
         day_match = re.match(r'^(Mandag|Tirsdag|Onsdag|Torsdag|Fredag)\b\s*(.*)$', line)
         if day_match:
             current_day = day_match.group(1)
-            output[current_day] = {"tid": None, "fag": [], "lekser": []}
+            output[current_day] = {"tid": None, "start_tid": None, "slutt_tid": None, "fag": [], "lekser": []}
             if pending_before_first_day:
                 for pending_line in pending_before_first_day:
                     subject, homework = _split_subject_and_homework(pending_line)
@@ -457,10 +474,13 @@ def _parse_ukeplan_from_text(file_path: Path) -> dict:
             pending_before_first_day = [line]
             continue
 
-        time_match = re.match(r'^(\d{1,2}[.:]\d{2}\s*[–\-]\s*\d{1,2}[.:]\d{2})\s*(.*)$', line)
+        time_match = re.match(
+            r'^(?P<time>\d{1,2}[.:]\d{2}\s*[–\-]\s*\d{1,2}[.:]\d{2})\s*(?P<rest>.*)$',
+            line
+        )
         if time_match:
-            output[current_day]["tid"] = time_match.group(1).strip()
-            line = time_match.group(2).strip()
+            output[current_day].update(_extract_time_range(time_match.group("time")) or {})
+            line = time_match.group("rest").strip()
 
         subject, homework = _split_subject_and_homework(line)
         if subject:
@@ -480,6 +500,8 @@ def parse_pdf(file_path: Path) -> tuple[dict, list]:
       {
         "Mandag": {
           "tid": "08.30 – 14.10",
+          "start_tid": "08.30",
+          "slutt_tid": "14.10",
           "fag": ["Lek", "Norsk", ...],
           "lekser": ["Les s. 14-15 ...", ...]
         },
@@ -569,7 +591,11 @@ def parse_pdf(file_path: Path) -> tuple[dict, list]:
 
         # Tidspunkt ligger i samme celle som dagnavnet (kolonne 0)
         dag_celle = str(df.iloc[row_idx, 0])
-        tid = _extract_time(dag_celle)
+        tid_data = _extract_time_range(dag_celle) or {
+            "tid": None,
+            "start_tid": None,
+            "slutt_tid": None,
+        }
 
         # Fag = kolonne 1 (alle rader for denne dagen)
         fag = []
@@ -584,7 +610,7 @@ def parse_pdf(file_path: Path) -> tuple[dict, list]:
         lekser = [l for l in lekser if l]
 
         output[day] = {
-            "tid": tid,
+            **tid_data,
             "fag": fag,
             "lekser": lekser,
         }
@@ -820,6 +846,15 @@ def load_ukenytt_data(child_name: str) -> dict | None:
     except (json.JSONDecodeError, IOError) as e:
         logger.warning("Kunne ikke laste rik ukenytt-data for %s: %s", child_name, e)
         return None
+
+
+def _sensor_state_has_ukenytt_data(child_name: str) -> bool:
+    """Returnerer om sensor-state har nok data til /ukenytt fallback-respons."""
+    state = load_sensor_state(child_name)
+    if not state:
+        return False
+    attrs = state.get("attributes", {})
+    return bool(attrs.get("ukeplan"))
 
 
 def _get_sensor_state_path(child_name: str) -> Path:
@@ -1225,6 +1260,8 @@ def status():
             pdf_uploaded_at = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
 
         original_filename = get_original_filename(child)
+        has_ukenytt_json = ukenytt_path.exists()
+        has_ukenytt_fallback = _sensor_state_has_ukenytt_data(child)
 
         status_info[child] = {
             "has_pdf": pdf_path.exists(),
@@ -1233,7 +1270,9 @@ def status():
             "original_filename": original_filename,
             "has_info_file": info_path.exists(),
             "has_sensor_state": state_path.exists(),
-            "has_ukenytt_data": ukenytt_path.exists(),
+            "has_ukenytt_data": has_ukenytt_json or has_ukenytt_fallback,
+            "has_ukenytt_json": has_ukenytt_json,
+            "has_ukenytt_fallback": has_ukenytt_fallback,
         }
 
     return jsonify({"children": status_info, "data_directory": str(DATA_DIR)})
