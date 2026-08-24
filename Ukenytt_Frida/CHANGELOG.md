@@ -5,6 +5,12 @@ Alle vesentlige endringer i dette prosjektet vil bli dokumentert i denne filen.
 Formatet er basert på [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 og prosjektet følger [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.28] - 2026-08-24
+
+### Fikset
+- `GET /ukenytt/<barn>` reparerer nå manglende rik JSON automatisk ved å reparse lagret PDF før fallback til sensor-state.
+- Eksisterende installasjoner får dermed `start_tid` og `slutt_tid` uten manuell `POST /process`.
+
 ## [1.0.27] - 2026-08-24
 
 ### Lagt til

@@ -53,7 +53,7 @@ except (json.JSONDecodeError, TypeError, ValueError) as _cfg_err:
 
 # Versjon satt av Dockerfile via ADDON_VERSION env-var, fallback til hardkodet
 # (synkroniseres med config.yaml ved hvert release via Dockerfile LABEL)
-ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.27")
+ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.28")
 
 # Konstanter
 MAX_INFO_LENGTH = 500
@@ -1048,6 +1048,29 @@ def _update_derived_sensors(child_name: str, ukeplan: dict, headers: dict) -> No
             logger.warning("Kunne ikke oppdatere avledet sensor '%s'", sensor_name)
 
 
+def build_ukenytt_data_from_pdf(
+    child_name: str, original_filename: str = None, pdf_override: Path = None
+) -> dict:
+    """Parser PDF og bygger rik ukenytt-data uten å oppdatere HA-sensorer."""
+    pdf_path = pdf_override or get_pdf_path(child_name)
+    if not pdf_path.exists():
+        raise ValueError(f"Ingen PDF funnet for {child_name}")
+
+    data, tables = parse_pdf(pdf_path)
+    page_texts = extract_pdf_page_texts(pdf_path)
+    pdf_text = "\n".join(page_texts)
+
+    effective_filename = original_filename or get_original_filename(child_name)
+    if effective_filename:
+        week_number = extract_week_number(Path(effective_filename), tables, pdf_text)
+    else:
+        week_number = extract_week_number(pdf_path, tables, pdf_text)
+
+    return extract_ukenytt_content(
+        pdf_path, data, week_number, pdf_text, page_texts, effective_filename
+    )
+
+
 def process_pdf_for_child(
     child_name: str, original_filename: str = None, pdf_override: Path = None
 ) -> tuple[bool, str]:
@@ -1061,22 +1084,11 @@ def process_pdf_for_child(
         return False, f"Ingen PDF funnet for {child_name}"
 
     try:
-        data, tables = parse_pdf(pdf_path)
-
-        # Les all tekst fra PDF (for overskrift, læringsmål, ordlister og lærerbrev)
+        rich_data = build_ukenytt_data_from_pdf(child_name, original_filename, pdf_path)
+        data = rich_data["ukeplan"]
+        week_number = str(rich_data["week"])
         page_texts = extract_pdf_page_texts(pdf_path)
         pdf_text = "\n".join(page_texts)
-
-        # Bruk originalt filnavn for ukenummer hvis tilgjengelig
-        effective_filename = original_filename or get_original_filename(child_name)
-        if effective_filename:
-            week_number = extract_week_number(Path(effective_filename), tables, pdf_text)
-        else:
-            week_number = extract_week_number(pdf_path, tables, pdf_text)
-
-        rich_data = extract_ukenytt_content(
-            pdf_path, data, week_number, pdf_text, page_texts, effective_filename
-        )
         extra_text = rich_data.get("laererbrev") or extract_extra_text(pdf_text)
 
         if update_home_assistant_sensor(child_name, data, week_number, extra_text, rich_data):
@@ -1261,7 +1273,7 @@ def status():
 
         original_filename = get_original_filename(child)
         has_ukenytt_json = ukenytt_path.exists()
-        has_ukenytt_fallback = _sensor_state_has_ukenytt_data(child)
+        has_ukenytt_fallback = (not has_ukenytt_json) and _sensor_state_has_ukenytt_data(child)
 
         status_info[child] = {
             "has_pdf": pdf_path.exists(),
@@ -1313,6 +1325,15 @@ def get_ukenytt(child_name: str):
     child_name = CHILDREN[child_index]
 
     data = load_ukenytt_data(child_name)
+    if not data:
+        pdf_path = get_pdf_path(child_name)
+        if pdf_path.exists():
+            try:
+                data = build_ukenytt_data_from_pdf(child_name)
+                save_ukenytt_data(child_name, data)
+            except ValueError as e:
+                logger.warning("Kunne ikke bygge rik ukenytt-data for %s fra PDF: %s", child_name, e)
+
     if not data:
         state = load_sensor_state(child_name)
         if state:
