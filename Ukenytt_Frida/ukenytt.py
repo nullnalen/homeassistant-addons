@@ -419,64 +419,139 @@ def _split_items(cell) -> list[str]:
 
 
 
+_LEKSE_NOISE = {"God helg!", "God helg", "Lykke til!", "PÅ SKOLEN", "HJEMME"}
+_DAY_RE = re.compile(r'(Mandag|Tirsdag|Onsdag|Torsdag|Fredag)\b')
+_TIME_RE = re.compile(r'\d{1,2}[.:]\d{2}')
+
+
+def _find_day_in_row(cells: list[str]) -> tuple[str | None, str | None]:
+    """Returnerer (dagsnavn, celle-med-tid-eller-None) fra en rad."""
+    for cell in cells:
+        m = _DAY_RE.match(cell)
+        if m:
+            return m.group(1), cell
+    return None, None
+
+
 def _parse_ukeplan_table(rows: list[list]) -> dict:
     """Parser ukeplan fra pdfplumber-rader (tabell 0 på side 1).
 
-    Tabellstruktur (fra Kirkevoll-malen):
-      kolonne 0 : dag + tidspunkt  ("Mandag\\n08.30 – 14.10")
-      kolonne 4 : fag på skolen    ("Lek", "Norsk", ...)
-      kolonne 6/7: hjemmelekser    (langt tekstfelt)
+    Kirkevoll-malen finnes i to varianter som begge følger samme kolonnestruktur:
+      kolonne 4      : fag på skolen (konsekvent i begge varianter)
+      kolonne 6 eller 7: hjemmelekser (lengste tekstcell til høyre for fag)
 
-    Dag-raden er den første raden der kolonne 0 inneholder et ukedagnavn.
-    Påfølgende rader med tom kolonne 0 tilhører samme dag.
+    Dagsnavn kan stå i kolonne 0 (med tidspunkt på samme linje) eller kolonne 1
+    (med tidspunkt på neste rad i samme kolonne). Vi søker dagsnavn i alle celler.
+    Fag og lekser akkumuleres per dag over alle påfølgende rader frem til neste dag.
     """
     output = {}
     current_day = None
 
+    # Første pass: finn hvilken kolonne fag konsekvent sitter i.
+    # Vi teller hvilken kolonne som oftest inneholder korte tekster som ikke er dag/tid/lekse.
+    col_scores = {}
     for row in rows:
-        # Normaliser: fyll inn None som tom streng
         cells = [(c or "").strip() for c in row]
-        n = len(cells)
+        for ci, val in enumerate(cells):
+            if not val or _DAY_RE.search(val) or _TIME_RE.search(val):
+                continue
+            lines = [l for l in _split_items(val) if l and len(l) < 40 and l not in _LEKSE_NOISE]
+            if lines:
+                col_scores[ci] = col_scores.get(ci, 0) + len(lines)
 
-        # Sjekk om kolonne 0 starter en ny dag
-        col0 = cells[0] if n > 0 else ""
-        dag_match = re.match(r'^(Mandag|Tirsdag|Onsdag|Torsdag|Fredag)\b', col0)
-        if dag_match:
-            current_day = dag_match.group(1)
-            tid_data = _extract_time_range(col0) or {"tid": None, "start_tid": None, "slutt_tid": None}
-            output[current_day] = {**tid_data, "fag": [], "lekser": []}
+    # Fag-kolonnen er den med høyest score ekskl. de siste kolonnene (lekser)
+    n_cols = max((len(r) for r in rows), default=9)
+    lekse_start_col = max(n_cols - 3, 2)
+    fag_col = max(
+        (ci for ci in col_scores if ci < lekse_start_col),
+        key=lambda ci: col_scores[ci],
+        default=4
+    )
+    logger.info("Fag-kolonne bestemt til: %d (scores: %s)", fag_col, col_scores)
+
+    # Normaliser alle rader én gang
+    norm_rows = [[(c or "").strip() for c in row] for row in rows]
+
+    def _extract_fag(cells):
+        result = []
+        if fag_col < len(cells):
+            for item in _split_items(cells[fag_col]):
+                if (item and item not in WEEKDAYS and not _TIME_RE.search(item)
+                        and item not in _LEKSE_NOISE and len(item) < 40):
+                    result.append(item)
+        return result
+
+    def _extract_lekser(cells):
+        lekse_text = ""
+        for ci in range(fag_col + 1, len(cells)):
+            val = cells[ci]
+            if val and len(val) > len(lekse_text) and not _DAY_RE.search(val) and not _TIME_RE.search(val):
+                lekse_text = val
+        return [item for item in _split_items(lekse_text) if item and item not in _LEKSE_NOISE]
+
+    # Detect PDF-variant: Henrik-varianten har dagsnavn i kolonne 1 (col0 er tom på dag-raden).
+    # Frida-varianten har dag+tid i kolonne 0.
+    # Vi teller hvor mange dag-rader som har dagsnavn KUN i kolonne 1 (ikke kolonne 0).
+    day_in_col1_only = sum(
+        1 for cells in norm_rows
+        if _DAY_RE.match(cells[1] if len(cells) > 1 else "")
+        and not _DAY_RE.match(cells[0] if cells else "")
+    )
+    is_henrik_variant = day_in_col1_only >= 2
+    logger.info("PDF-variant: %s (dag-i-col1-only: %d)", "Henrik" if is_henrik_variant else "Frida", day_in_col1_only)
+
+    current_day = None
+    buffered_fag: list[str] = []
+    buffered_lekser: list[str] = []
+
+    for i, cells in enumerate(norm_rows):
+        day, day_cell = _find_day_in_row(cells)
+
+        if day:
+            current_day = day
+            tid_data = _extract_time_range(day_cell) or {"tid": None, "start_tid": None, "slutt_tid": None}
+            output[current_day] = {**tid_data, "fag": list(buffered_fag), "lekser": list(buffered_lekser)}
+            buffered_fag.clear()
+            buffered_lekser.clear()
+
+            for item in _extract_fag(cells):
+                if item not in output[current_day]["fag"]:
+                    output[current_day]["fag"].append(item)
+            for item in _extract_lekser(cells):
+                if item not in output[current_day]["lekser"]:
+                    output[current_day]["lekser"].append(item)
+            continue
+
+        # Ingen dag funnet på denne raden
+        if is_henrik_variant:
+            # Henrik-variant: raden rett FØR neste dag-rad tilhører den kommende dagen
+            next_has_day = (
+                i + 1 < len(norm_rows)
+                and _find_day_in_row(norm_rows[i + 1])[0] is not None
+            )
+            if next_has_day:
+                buffered_fag = _extract_fag(cells)
+                buffered_lekser = _extract_lekser(cells)
+                continue
 
         if current_day is None:
             continue
 
-        # Fag: søk etter kolonne som inneholder fagnavn (kolonne 4 i standard mal,
-        # men vi tar den første kolonnen etter kolonne 0 som ikke er tom og ikke er tidspunkt)
-        fag_col = None
-        for ci in range(1, n):
-            val = cells[ci]
-            if val and not re.search(r'\d{1,2}[.:]\d{2}', val):
-                fag_col = ci
-                break
+        # Plukk opp tid fra rader uten dagsnavn der en celle kun inneholder tidspunkt
+        if output[current_day]["tid"] is None:
+            for cell in cells:
+                if cell and _TIME_RE.search(cell) and not _DAY_RE.search(cell) and len(cell) < 20:
+                    tid_data = _extract_time_range(cell)
+                    if tid_data:
+                        output[current_day].update(tid_data)
+                        break
 
-        if fag_col is not None:
-            for item in _split_items(cells[fag_col]):
-                # Filtrer bort dagsnavn og tidspunkter som sniker seg inn som fag
-                if (item
-                        and item not in output[current_day]["fag"]
-                        and item not in WEEKDAYS
-                        and not re.search(r'\d{1,2}[.:]\d{2}', item)):
-                    output[current_day]["fag"].append(item)
-
-        # Lekser: ta den lengste tekstcellen blant de gjenværende kolonnene
-        lekse_text = ""
-        for ci in range(fag_col + 1 if fag_col else 1, n):
-            val = cells[ci]
-            if val and len(val) > len(lekse_text):
-                lekse_text = val
-
-        _NOISE = {"God helg!", "God helg", "Lykke til!"}
-        for item in _split_items(lekse_text):
-            if item and item not in output[current_day]["lekser"] and item not in _NOISE:
+        # Akkumler fag og lekser for current_day
+        for item in _extract_fag(cells):
+            if item not in output[current_day]["fag"]:
+                output[current_day]["fag"].append(item)
+        for item in _extract_lekser(cells):
+            if item not in output[current_day]["lekser"]:
                 output[current_day]["lekser"].append(item)
 
     return output
