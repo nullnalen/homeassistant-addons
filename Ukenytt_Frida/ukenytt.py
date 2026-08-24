@@ -51,7 +51,7 @@ except (json.JSONDecodeError, TypeError, ValueError) as _cfg_err:
 
 # Versjon satt av Dockerfile via ADDON_VERSION env-var, fallback til hardkodet
 # (synkroniseres med config.yaml ved hvert release via Dockerfile LABEL)
-ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.29")
+ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.30")
 
 # Konstanter
 MAX_INFO_LENGTH = 500
