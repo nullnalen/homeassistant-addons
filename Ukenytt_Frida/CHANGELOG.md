@@ -5,6 +5,16 @@ Alle vesentlige endringer i dette prosjektet vil bli dokumentert i denne filen.
 Formatet er basert på [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 og prosjektet følger [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.26] - 2026-08-24
+
+### Lagt til
+- `GET /ukenytt/<barn>` returnerer rik JSON med dag/tid, fag på skolen, hjemmelekser, læringsmål, øveord, gloser og lærerbrev.
+- Ukenytt-data lagres lokalt som JSON og gjenbrukes uten reparsing.
+
+### Endret
+- PDF-parseren skiller nå mellom tidspunkt, fag på skolen og hjemmelekser per dag.
+- Avledede idag/imorgen-sensorer formatterer ny dagsstruktur bakoverkompatibelt.
+
 ## [1.0.25] - 2026-05-21
 
 ### Endret

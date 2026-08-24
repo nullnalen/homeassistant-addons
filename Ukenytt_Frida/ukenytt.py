@@ -53,7 +53,7 @@ except (json.JSONDecodeError, TypeError, ValueError) as _cfg_err:
 
 # Versjon satt av Dockerfile via ADDON_VERSION env-var, fallback til hardkodet
 # (synkroniseres med config.yaml ved hvert release via Dockerfile LABEL)
-ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.25")
+ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.26")
 
 # Konstanter
 MAX_INFO_LENGTH = 500
@@ -76,6 +76,37 @@ def _safe_sensor_name(child_name: str) -> str:
 def _safe_file_name(child_name: str) -> str:
     """Genererer filnavn-vennlig streng (alfanumerisk, - og _)."""
     return "".join(c for c in child_name.lower() if c.isalnum() or c in "-_")
+
+
+def _format_day_lines(day_data) -> list[str]:
+    """Formatterer gammel eller ny dagsstruktur til visningslinjer."""
+    if isinstance(day_data, dict):
+        lines = []
+        if day_data.get("tid"):
+            lines.append(day_data["tid"])
+        fag = day_data.get("fag") or []
+        lekser = day_data.get("lekser") or []
+        if fag:
+            lines.append("På skolen: " + ", ".join(fag))
+        if lekser:
+            lines.append("Lekser: " + " ".join(lekser))
+        return lines
+    if isinstance(day_data, list):
+        return day_data
+    if day_data:
+        return [str(day_data)]
+    return []
+
+
+def _format_ukeplan_for_display(ukeplan: dict | None) -> dict:
+    """Lager en enkel dag -> linjer-struktur til HTML og avledede tekstsensorer."""
+    if not isinstance(ukeplan, dict):
+        return {}
+    return {
+        day: _format_day_lines(ukeplan.get(day))
+        for day in DAYS_NO
+        if _format_day_lines(ukeplan.get(day))
+    }
 
 
 # HTML-mal for Ingress-visning
@@ -257,6 +288,7 @@ INGRESS_TEMPLATE = """
             <p><code>POST /upload?child=navn</code> - Last opp PDF</p>
             <p><code>POST /refresh</code> - Oppdater idag/imorgen-sensorer</p>
             <p><code>GET /info/navn</code> - Hent full info-tekst (JSON)</p>
+            <p><code>GET /ukenytt/navn</code> - Hent rik ukeplan, lekser, ord og lærerbrev (JSON)</p>
             <p><code>GET /api</code> - JSON API-status</p>
         </div>
     </div>
@@ -274,7 +306,7 @@ def get_child_data(child_name: str) -> dict:
     if local_state:
         data["week"] = local_state.get("state")
         attrs = local_state.get("attributes", {})
-        data["ukeplan"] = attrs.get("ukeplan")
+        data["ukeplan"] = _format_ukeplan_for_display(attrs.get("ukeplan"))
         data["info"] = attrs.get("info")
 
     # Hent full info fra fil (har alltid prioritet over truncert sensor-info)
@@ -306,6 +338,7 @@ def index():
             "status": "GET /status",
             "process": "POST /process",
             "info": "GET /info/<child_name>",
+            "ukenytt": "GET /ukenytt/<child_name>",
             "api": "GET /api"
         }
     })
@@ -325,7 +358,8 @@ def api_index():
             "refresh": "POST /refresh",
             "health": "GET /health",
             "status": "GET /status",
-            "info": "GET /info/<child_name>"
+            "info": "GET /info/<child_name>",
+            "ukenytt": "GET /ukenytt/<child_name>"
         }
     })
 
@@ -353,24 +387,121 @@ def get_original_filename(child_name: str) -> str | None:
     return None
 
 
+def _extract_time(cell: str) -> str | None:
+    """Trekker ut tidspunkt på formen '08.30 – 14.10' fra en celle."""
+    match = re.search(r'\d{1,2}[.:]\d{2}\s*[–\-]\s*\d{1,2}[.:]\d{2}', str(cell))
+    return match.group(0).strip() if match else None
+
+
+def _split_items(cell) -> list[str]:
+    """Deler celleinnhold (linjeskift eller newline) til rensede enkeltposter."""
+    if not cell or not str(cell).strip():
+        return []
+    return [item.strip() for item in str(cell).split("\n") if item.strip()]
+
+
+SCHOOL_SUBJECTS = [
+    "Kunst & håndverk", "Bibliotek / Norsk", "Sosial kompetanse", "Kroppsøving",
+    "Samfunnsfag", "Naturfag", "Leketime", "Engelsk", "Uteskole", "Musikk",
+    "Norsk", "Matte", "KRLE", "Lek",
+]
+
+
+def _split_subject_and_homework(text: str) -> tuple[str | None, str | None]:
+    """Best-effort split for pdfplumber text fallback."""
+    value = text.strip()
+    if not value:
+        return None, None
+    for subject in SCHOOL_SUBJECTS:
+        if value == subject:
+            return subject, None
+        if value.startswith(subject + " "):
+            return subject, value[len(subject):].strip()
+    return None, value
+
+
+def _parse_ukeplan_from_text(file_path: Path) -> dict:
+    """Fallback-parser som bruker pdfplumber-tekst hvis Tabula/Java feiler."""
+    page_texts = extract_pdf_page_texts(file_path)
+    page1_text = page_texts[0] if page_texts else ""
+    if not page1_text:
+        raise ValueError("Kunne ikke lese tekst fra PDF-en")
+
+    table_text = _extract_between_markers(page1_text, r'PÅ SKOLEN\s+HJEMME', [r'FAG/TEMA\s+LÆRINGSMÅL'])
+    lines = _clean_section_lines(table_text)
+    output = {}
+    current_day = None
+    pending_before_first_day = []
+
+    for line_number, line in enumerate(lines):
+        day_match = re.match(r'^(Mandag|Tirsdag|Onsdag|Torsdag|Fredag)\b\s*(.*)$', line)
+        if day_match:
+            current_day = day_match.group(1)
+            output[current_day] = {"tid": None, "fag": [], "lekser": []}
+            if pending_before_first_day:
+                for pending_line in pending_before_first_day:
+                    subject, homework = _split_subject_and_homework(pending_line)
+                    if subject:
+                        output[current_day]["fag"].append(subject)
+                    if homework:
+                        output[current_day]["lekser"].append(homework)
+                pending_before_first_day = []
+            line = day_match.group(2).strip()
+        elif current_day is None:
+            pending_before_first_day.append(line)
+            continue
+        elif (
+            line_number + 1 < len(lines)
+            and re.match(r'^(Mandag|Tirsdag|Onsdag|Torsdag|Fredag)\b', lines[line_number + 1])
+        ):
+            pending_before_first_day = [line]
+            continue
+
+        time_match = re.match(r'^(\d{1,2}[.:]\d{2}\s*[–\-]\s*\d{1,2}[.:]\d{2})\s*(.*)$', line)
+        if time_match:
+            output[current_day]["tid"] = time_match.group(1).strip()
+            line = time_match.group(2).strip()
+
+        subject, homework = _split_subject_and_homework(line)
+        if subject:
+            output[current_day]["fag"].append(subject)
+        if homework:
+            output[current_day]["lekser"].append(homework)
+
+    if not output:
+        raise ValueError("Ingen ukedager funnet i PDF-teksten")
+    return output
+
+
 def parse_pdf(file_path: Path) -> tuple[dict, list]:
-    """Parser PDF og returnerer ukeplan som dictionary og rå tabeller."""
+    """Parser PDF og returnerer rik ukeplan-dict og rå tabeller.
+
+    Returnert dict har formen:
+      {
+        "Mandag": {
+          "tid": "08.30 – 14.10",
+          "fag": ["Lek", "Norsk", ...],
+          "lekser": ["Les s. 14-15 ...", ...]
+        },
+        ...
+      }
+    """
     logger.info("Parser PDF: %s", file_path)
 
     pd.options.mode.chained_assignment = None
 
     try:
-        # Bruk java_options for å unngå JPype (subprocess-modus)
         tables = tabula.read_pdf(
             str(file_path), pages=1, multiple_tables=True, stream=True,
             java_options=["-Xmx256m"]
         )
     except Exception as e:
-        logger.error("Feil ved lesing av PDF: %s", e)
-        raise ValueError(f"Kunne ikke lese PDF: {e}") from e
+        logger.warning("Tabula feilet ved lesing av PDF, prøver pdfplumber-fallback: %s", e)
+        return _parse_ukeplan_from_text(file_path), []
 
     if not tables or not isinstance(tables[0], pd.DataFrame):
-        raise ValueError("Ingen gyldige tabeller funnet i PDF-en")
+        logger.warning("Ingen gyldige Tabula-tabeller funnet, prøver pdfplumber-fallback")
+        return _parse_ukeplan_from_text(file_path), []
 
     df = tables[0].fillna("")
     if df.empty:
@@ -378,7 +509,6 @@ def parse_pdf(file_path: Path) -> tuple[dict, list]:
 
     logger.info("Tabell funnet med %d rader og %d kolonner", len(df), len(df.columns))
 
-    # Valider at tabellen har nok kolonner (forventer minst 3: dag, tom, aktiviteter)
     if len(df.columns) < 3:
         col_preview = df.to_string(max_rows=5, max_cols=10)
         logger.error(
@@ -390,9 +520,20 @@ def parse_pdf(file_path: Path) -> tuple[dict, list]:
             "PDF-malen kan ha endret seg."
         )
 
+    # Finn hvilken kolonne dagnavnene står i (kolonne 0 inneholder "Mandag\n08.30 – 14.10")
     ordered_weekdays = WEEKDAYS
-    indices = {day: df[df.iloc[:, 0] == day].index.min() for day in ordered_weekdays}
-    found_days = [day for day in ordered_weekdays if pd.notna(indices[day])]
+
+    def _find_day_row(day: str) -> int | None:
+        """Returnerer radindeks der ukedagen finnes (søker i alle kolonner)."""
+        for col_idx in range(min(2, len(df.columns))):
+            mask = df.iloc[:, col_idx].astype(str).str.contains(day, na=False)
+            idx = df[mask].index.min()
+            if pd.notna(idx):
+                return int(idx)
+        return None
+
+    indices = {day: _find_day_row(day) for day in ordered_weekdays}
+    found_days = [day for day in ordered_weekdays if indices[day] is not None]
 
     if not found_days:
         col0_values = df.iloc[:, 0].unique().tolist()[:10]
@@ -410,20 +551,43 @@ def parse_pdf(file_path: Path) -> tuple[dict, list]:
 
     output = {}
     for i, day in enumerate(ordered_weekdays):
-        if pd.notna(indices[day]):
-            start = max(0, indices[day] - 1)
-            next_day_idx = (
-                indices[ordered_weekdays[i + 1]]
-                if i + 1 < len(ordered_weekdays)
-                else None
-            )
-            end = (next_day_idx - 2) if pd.notna(next_day_idx) else last_index
-            end = max(start, end)
+        row_idx = indices[day]
+        if row_idx is None:
+            continue
 
-            todo_list = df.iloc[start : end + 1, 2].tolist()
-            todo_list = [item for item in todo_list if item and str(item).strip()]
-            if todo_list:
-                output[day] = todo_list
+        next_day_idx = next(
+            (indices[ordered_weekdays[j]] for j in range(i + 1, len(ordered_weekdays))
+             if indices[ordered_weekdays[j]] is not None),
+            None
+        )
+        # Rader som tilhører denne dagen
+        start = max(0, row_idx - 1)
+        end = (next_day_idx - 2) if next_day_idx is not None else last_index
+        end = max(start, end)
+
+        day_rows = df.iloc[start: end + 1]
+
+        # Tidspunkt ligger i samme celle som dagnavnet (kolonne 0)
+        dag_celle = str(df.iloc[row_idx, 0])
+        tid = _extract_time(dag_celle)
+
+        # Fag = kolonne 1 (alle rader for denne dagen)
+        fag = []
+        for cell in day_rows.iloc[:, 1]:
+            fag.extend(_split_items(cell))
+        fag = [f for f in fag if f]
+
+        # Lekser = kolonne 2 (alle rader for denne dagen)
+        lekser = []
+        for cell in day_rows.iloc[:, 2]:
+            lekser.extend(_split_items(cell))
+        lekser = [l for l in lekser if l]
+
+        output[day] = {
+            "tid": tid,
+            "fag": fag,
+            "lekser": lekser,
+        }
 
     if not output:
         logger.warning("Parsing fullført, men ingen aktiviteter ble funnet. Ukedager: %s", found_days)
@@ -433,15 +597,127 @@ def parse_pdf(file_path: Path) -> tuple[dict, list]:
 
 def extract_pdf_text(file_path: Path) -> str:
     """Leser all tekst fra PDF-en (inkludert overskrifter og tekst utenfor tabeller)."""
+    return "\n".join(extract_pdf_page_texts(file_path))
+
+
+def extract_pdf_page_texts(file_path: Path) -> list[str]:
+    """Leser tekst fra PDF-en side for side."""
     try:
         with pdfplumber.open(str(file_path)) as pdf:
-            text = ""
-            for page in pdf.pages:
-                text += page.extract_text() or ""
-            return text
+            return [page.extract_text() or "" for page in pdf.pages]
     except Exception as e:
         logger.warning("Kunne ikke lese PDF-tekst med pdfplumber for %s: %s", file_path.name, e, exc_info=True)
+        return []
+
+
+def _clean_section_lines(text: str) -> list[str]:
+    """Returnerer ikke-tomme, trimmede linjer."""
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+def _extract_between_markers(text: str, start_pattern: str, end_patterns: list[str]) -> str:
+    """Henter tekst mellom en startmarkør og første etterfølgende sluttmarkør."""
+    start = re.search(start_pattern, text, flags=re.IGNORECASE)
+    if not start:
         return ""
+
+    section = text[start.end():]
+    end_positions = []
+    for pattern in end_patterns:
+        end = re.search(pattern, section, flags=re.IGNORECASE)
+        if end:
+            end_positions.append(end.start())
+
+    if end_positions:
+        section = section[:min(end_positions)]
+    return section.strip()
+
+
+def extract_learning_goals(page1_text: str) -> dict[str, list[str]]:
+    """Parser FAG/TEMA -> LÆRINGSMÅL fra første side."""
+    section = _extract_between_markers(page1_text, r'FAG/TEMA\s+LÆRINGSMÅL', [r'\bØVEORD\b'])
+    if not section:
+        return {}
+
+    lines = [
+        line for line in _clean_section_lines(section)
+        if "noen mål jobbes" not in line.lower()
+    ]
+
+    goals = {}
+    current_subject = None
+    subject_pattern = re.compile(r'^(NORSK|MATEMATIKK|SOSIAL KOMPETANSE|ENGELSK|NATURFAG|SAMFUNNSFAG|KRLE|MUSIKK)\b\s*(.*)$', re.IGNORECASE)
+
+    for line in lines:
+        match = subject_pattern.match(line)
+        if match:
+            current_subject = match.group(1).upper()
+            goals.setdefault(current_subject, [])
+            remainder = match.group(2).strip()
+            if remainder:
+                goals[current_subject].append(remainder)
+            continue
+
+        if current_subject:
+            if line.startswith("Å ") or line.startswith("å "):
+                goals[current_subject].append(line)
+            elif goals[current_subject]:
+                goals[current_subject][-1] = f"{goals[current_subject][-1]} {line}"
+            else:
+                goals[current_subject].append(line)
+
+    return {subject: items for subject, items in goals.items() if items}
+
+
+def extract_word_sections(page1_text: str) -> tuple[list[str], list[dict[str, str]]]:
+    """Parser øveord og gloser fra første side."""
+    section = _extract_between_markers(page1_text, r'\bØVEORD\s+GLOSER\b', [])
+    if not section:
+        return [], []
+
+    practice_words = []
+    glossary = []
+
+    for line in _clean_section_lines(section):
+        parts = re.split(r'\s+[–-]\s+', line, maxsplit=1)
+        if len(parts) == 2:
+            left, right = parts[0].strip(), parts[1].strip()
+            left_words = left.split()
+            if len(left_words) > 1:
+                practice_words.extend(left_words[:-1])
+                left = left_words[-1]
+            glossary.append({"engelsk": left, "norsk": right})
+        else:
+            practice_words.extend(line.split())
+
+    return practice_words, glossary
+
+
+def extract_teacher_letter(page_texts: list[str]) -> str:
+    """Returnerer fritekstbrevet fra lærerne, normalt hele side 2."""
+    if len(page_texts) < 2:
+        return ""
+    return page_texts[1].strip()
+
+
+def extract_ukenytt_content(
+    file_path: Path, ukeplan: dict, week_number: str, pdf_text: str, page_texts: list[str],
+    source_filename: str | None = None
+) -> dict:
+    """Bygger rik JSON-struktur for /ukenytt-endepunktet."""
+    page1_text = page_texts[0] if page_texts else pdf_text
+    oveord, gloser = extract_word_sections(page1_text)
+
+    return {
+        "week": int(week_number) if str(week_number).isdigit() else week_number,
+        "source_file": source_filename or file_path.name,
+        "ukeplan": ukeplan,
+        "laeringsmaal": extract_learning_goals(page1_text),
+        "oveord": oveord,
+        "gloser": gloser,
+        "laererbrev": extract_teacher_letter(page_texts),
+        "last_updated": datetime.now(tz=timezone.utc).isoformat(),
+    }
 
 
 def extract_week_number(file_path: Path, pdf_tables: list = None, pdf_text: str = None) -> str:
@@ -522,6 +798,30 @@ def save_info_file(child_name: str, info_text: str) -> Path:
     return info_path
 
 
+def _get_ukenytt_data_path(child_name: str) -> Path:
+    """Returnerer stien til rik ukenytt-JSON for et barn."""
+    return DATA_DIR / f"{_safe_file_name(child_name)}_ukenytt.json"
+
+
+def save_ukenytt_data(child_name: str, payload: dict) -> None:
+    """Lagrer rik ukenytt-struktur til disk."""
+    path = _get_ukenytt_data_path(child_name)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info("Lagret rik ukenytt-data til %s", path)
+
+
+def load_ukenytt_data(child_name: str) -> dict | None:
+    """Laster rik ukenytt-struktur fra disk."""
+    path = _get_ukenytt_data_path(child_name)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, IOError) as e:
+        logger.warning("Kunne ikke laste rik ukenytt-data for %s: %s", child_name, e)
+        return None
+
+
 def _get_sensor_state_path(child_name: str) -> Path:
     """Returnerer stien til JSON-filen som lagrer sensor-state for et barn."""
     return DATA_DIR / f"{_safe_file_name(child_name)}_sensor.json"
@@ -562,9 +862,9 @@ def _format_day_plan(ukeplan: dict, day: str) -> str:
     """Returnerer dagens/morgendagens plan som lesbar tekst."""
     if day in WEEKEND:
         return "Ingen skole i helgen"
-    plan = ukeplan.get(day, [])
-    if plan:
-        return "\n".join(plan)[:240]
+    lines = _format_day_lines(ukeplan.get(day))
+    if lines:
+        return "\n".join(lines)[:240]
     return f"Ingen planer for {day}"
 
 
@@ -614,7 +914,7 @@ def _post_ha_sensor(url: str, headers: dict, payload: dict, retries: int = 3, de
 
 
 def update_home_assistant_sensor(
-    child_name: str, data: dict, week_number: str, extra_text: str = ""
+    child_name: str, data: dict, week_number: str, extra_text: str = "", rich_data: dict | None = None
 ) -> bool:
     """Oppdaterer Home Assistant sensor for et barn."""
     sensor_name = f"sensor.{_safe_sensor_name(child_name)}_ukenytt_tabell"
@@ -641,6 +941,10 @@ def update_home_assistant_sensor(
         "attributes": {
             "barn": child_name,
             "ukeplan": data,
+            "laeringsmaal": rich_data.get("laeringsmaal") if rich_data else None,
+            "oveord": rich_data.get("oveord") if rich_data else None,
+            "gloser": rich_data.get("gloser") if rich_data else None,
+            "laererbrev": truncate_text(rich_data.get("laererbrev"), MAX_INFO_LENGTH) if rich_data else None,
             "info": info_truncated if info_truncated else None,
             "info_full_available": has_full_info,
             "last_updated": datetime.now(tz=timezone.utc).isoformat(),
@@ -724,8 +1028,9 @@ def process_pdf_for_child(
     try:
         data, tables = parse_pdf(pdf_path)
 
-        # Les all tekst fra PDF (for overskrift og ekstra info)
-        pdf_text = extract_pdf_text(pdf_path)
+        # Les all tekst fra PDF (for overskrift, læringsmål, ordlister og lærerbrev)
+        page_texts = extract_pdf_page_texts(pdf_path)
+        pdf_text = "\n".join(page_texts)
 
         # Bruk originalt filnavn for ukenummer hvis tilgjengelig
         effective_filename = original_filename or get_original_filename(child_name)
@@ -734,10 +1039,13 @@ def process_pdf_for_child(
         else:
             week_number = extract_week_number(pdf_path, tables, pdf_text)
 
-        # Hent ekstra tekst (beskjeder etc)
-        extra_text = extract_extra_text(pdf_text)
+        rich_data = extract_ukenytt_content(
+            pdf_path, data, week_number, pdf_text, page_texts, effective_filename
+        )
+        extra_text = rich_data.get("laererbrev") or extract_extra_text(pdf_text)
 
-        if update_home_assistant_sensor(child_name, data, week_number, extra_text):
+        if update_home_assistant_sensor(child_name, data, week_number, extra_text, rich_data):
+            save_ukenytt_data(child_name, rich_data)
             return True, f"Sensor oppdatert for {child_name}, uke {week_number}"
         return False, f"Kunne ikke oppdatere sensor for {child_name}"
     except ValueError as e:
@@ -909,6 +1217,7 @@ def status():
         pdf_path = get_pdf_path(child)
         info_path = DATA_DIR / f"{_safe_file_name(child)}_info.txt"
         state_path = _get_sensor_state_path(child)
+        ukenytt_path = _get_ukenytt_data_path(child)
 
         pdf_uploaded_at = None
         if pdf_path.exists():
@@ -924,6 +1233,7 @@ def status():
             "original_filename": original_filename,
             "has_info_file": info_path.exists(),
             "has_sensor_state": state_path.exists(),
+            "has_ukenytt_data": ukenytt_path.exists(),
         }
 
     return jsonify({"children": status_info, "data_directory": str(DATA_DIR)})
@@ -951,6 +1261,39 @@ def get_info(child_name: str):
         "info": info_text,
         "length": len(info_text)
     })
+
+
+@app.route("/ukenytt/<child_name>", methods=["GET"])
+def get_ukenytt(child_name: str):
+    """Henter rik ukenytt-struktur for et barn."""
+    children_lower = [c.lower() for c in CHILDREN]
+    if child_name.lower() not in children_lower:
+        return jsonify({"error": f"Ukjent barn: {child_name}"}), 404
+
+    child_index = children_lower.index(child_name.lower())
+    child_name = CHILDREN[child_index]
+
+    data = load_ukenytt_data(child_name)
+    if not data:
+        state = load_sensor_state(child_name)
+        if state:
+            attrs = state.get("attributes", {})
+            data = {
+                "week": state.get("state"),
+                "ukeplan": attrs.get("ukeplan", {}),
+                "laeringsmaal": attrs.get("laeringsmaal", {}),
+                "oveord": attrs.get("oveord", []),
+                "gloser": attrs.get("gloser", []),
+                "laererbrev": attrs.get("laererbrev") or attrs.get("info", ""),
+                "last_updated": attrs.get("last_updated"),
+            }
+
+    if not data:
+        return jsonify({"error": f"Ingen ukenytt-data funnet for {child_name}"}), 404
+
+    response = {"child": child_name}
+    response.update(data)
+    return jsonify(response)
 
 
 def _refresh_derived_sensors() -> None:
