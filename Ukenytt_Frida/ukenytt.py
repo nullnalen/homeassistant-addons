@@ -15,10 +15,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pandas as pd
 import pdfplumber
 import requests
-import tabula
 from flask import Flask, jsonify, request, render_template_string
 
 # Konfigurer logging til stdout for S6-overlay
@@ -53,13 +51,16 @@ except (json.JSONDecodeError, TypeError, ValueError) as _cfg_err:
 
 # Versjon satt av Dockerfile via ADDON_VERSION env-var, fallback til hardkodet
 # (synkroniseres med config.yaml ved hvert release via Dockerfile LABEL)
-ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.28")
+ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.29")
 
 # Konstanter
 MAX_INFO_LENGTH = 500
 MAX_PDF_SIZE = 10 * 1024 * 1024  # 10 MB
 WEEKDAYS = ["Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag"]
 WEEKDAYS_LOWER = ["mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag", "søndag"]
+DAYS_NO = ["Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag", "Søndag"]
+WEEKEND = {"Lørdag", "Søndag"}
+OPENEPAPERLINK_WIDTH = 20
 
 # Mappe for lagring av PDF-filer
 DATA_DIR = Path("/data/ukenytt")
@@ -417,84 +418,72 @@ def _split_items(cell) -> list[str]:
     return [item.strip() for item in str(cell).split("\n") if item.strip()]
 
 
-SCHOOL_SUBJECTS = [
-    "Kunst & håndverk", "Bibliotek / Norsk", "Sosial kompetanse", "Kroppsøving",
-    "Samfunnsfag", "Naturfag", "Leketime", "Engelsk", "Uteskole", "Musikk",
-    "Norsk", "Matte", "KRLE", "Lek",
-]
 
+def _parse_ukeplan_table(rows: list[list]) -> dict:
+    """Parser ukeplan fra pdfplumber-rader (tabell 0 på side 1).
 
-def _split_subject_and_homework(text: str) -> tuple[str | None, str | None]:
-    """Best-effort split for pdfplumber text fallback."""
-    value = text.strip()
-    if not value:
-        return None, None
-    for subject in SCHOOL_SUBJECTS:
-        if value == subject:
-            return subject, None
-        if value.startswith(subject + " "):
-            return subject, value[len(subject):].strip()
-    return None, value
+    Tabellstruktur (fra Kirkevoll-malen):
+      kolonne 0 : dag + tidspunkt  ("Mandag\\n08.30 – 14.10")
+      kolonne 4 : fag på skolen    ("Lek", "Norsk", ...)
+      kolonne 6/7: hjemmelekser    (langt tekstfelt)
 
-
-def _parse_ukeplan_from_text(file_path: Path) -> dict:
-    """Fallback-parser som bruker pdfplumber-tekst hvis Tabula/Java feiler."""
-    page_texts = extract_pdf_page_texts(file_path)
-    page1_text = page_texts[0] if page_texts else ""
-    if not page1_text:
-        raise ValueError("Kunne ikke lese tekst fra PDF-en")
-
-    table_text = _extract_between_markers(page1_text, r'PÅ SKOLEN\s+HJEMME', [r'FAG/TEMA\s+LÆRINGSMÅL'])
-    lines = _clean_section_lines(table_text)
+    Dag-raden er den første raden der kolonne 0 inneholder et ukedagnavn.
+    Påfølgende rader med tom kolonne 0 tilhører samme dag.
+    """
     output = {}
     current_day = None
-    pending_before_first_day = []
 
-    for line_number, line in enumerate(lines):
-        day_match = re.match(r'^(Mandag|Tirsdag|Onsdag|Torsdag|Fredag)\b\s*(.*)$', line)
-        if day_match:
-            current_day = day_match.group(1)
-            output[current_day] = {"tid": None, "start_tid": None, "slutt_tid": None, "fag": [], "lekser": []}
-            if pending_before_first_day:
-                for pending_line in pending_before_first_day:
-                    subject, homework = _split_subject_and_homework(pending_line)
-                    if subject:
-                        output[current_day]["fag"].append(subject)
-                    if homework:
-                        output[current_day]["lekser"].append(homework)
-                pending_before_first_day = []
-            line = day_match.group(2).strip()
-        elif current_day is None:
-            pending_before_first_day.append(line)
-            continue
-        elif (
-            line_number + 1 < len(lines)
-            and re.match(r'^(Mandag|Tirsdag|Onsdag|Torsdag|Fredag)\b', lines[line_number + 1])
-        ):
-            pending_before_first_day = [line]
+    for row in rows:
+        # Normaliser: fyll inn None som tom streng
+        cells = [(c or "").strip() for c in row]
+        n = len(cells)
+
+        # Sjekk om kolonne 0 starter en ny dag
+        col0 = cells[0] if n > 0 else ""
+        dag_match = re.match(r'^(Mandag|Tirsdag|Onsdag|Torsdag|Fredag)\b', col0)
+        if dag_match:
+            current_day = dag_match.group(1)
+            tid_data = _extract_time_range(col0) or {"tid": None, "start_tid": None, "slutt_tid": None}
+            output[current_day] = {**tid_data, "fag": [], "lekser": []}
+
+        if current_day is None:
             continue
 
-        time_match = re.match(
-            r'^(?P<time>\d{1,2}[.:]\d{2}\s*[–\-]\s*\d{1,2}[.:]\d{2})\s*(?P<rest>.*)$',
-            line
-        )
-        if time_match:
-            output[current_day].update(_extract_time_range(time_match.group("time")) or {})
-            line = time_match.group("rest").strip()
+        # Fag: søk etter kolonne som inneholder fagnavn (kolonne 4 i standard mal,
+        # men vi tar den første kolonnen etter kolonne 0 som ikke er tom og ikke er tidspunkt)
+        fag_col = None
+        for ci in range(1, n):
+            val = cells[ci]
+            if val and not re.search(r'\d{1,2}[.:]\d{2}', val):
+                fag_col = ci
+                break
 
-        subject, homework = _split_subject_and_homework(line)
-        if subject:
-            output[current_day]["fag"].append(subject)
-        if homework:
-            output[current_day]["lekser"].append(homework)
+        if fag_col is not None:
+            for item in _split_items(cells[fag_col]):
+                # Filtrer bort dagsnavn og tidspunkter som sniker seg inn som fag
+                if (item
+                        and item not in output[current_day]["fag"]
+                        and item not in WEEKDAYS
+                        and not re.search(r'\d{1,2}[.:]\d{2}', item)):
+                    output[current_day]["fag"].append(item)
 
-    if not output:
-        raise ValueError("Ingen ukedager funnet i PDF-teksten")
+        # Lekser: ta den lengste tekstcellen blant de gjenværende kolonnene
+        lekse_text = ""
+        for ci in range(fag_col + 1 if fag_col else 1, n):
+            val = cells[ci]
+            if val and len(val) > len(lekse_text):
+                lekse_text = val
+
+        _NOISE = {"God helg!", "God helg", "Lykke til!"}
+        for item in _split_items(lekse_text):
+            if item and item not in output[current_day]["lekser"] and item not in _NOISE:
+                output[current_day]["lekser"].append(item)
+
     return output
 
 
 def parse_pdf(file_path: Path) -> tuple[dict, list]:
-    """Parser PDF og returnerer rik ukeplan-dict og rå tabeller.
+    """Parser PDF med pdfplumber og returnerer rik ukeplan-dict.
 
     Returnert dict har formen:
       {
@@ -510,114 +499,29 @@ def parse_pdf(file_path: Path) -> tuple[dict, list]:
     """
     logger.info("Parser PDF: %s", file_path)
 
-    pd.options.mode.chained_assignment = None
-
     try:
-        tables = tabula.read_pdf(
-            str(file_path), pages=1, multiple_tables=True, stream=True,
-            java_options=["-Xmx256m"]
-        )
+        with pdfplumber.open(str(file_path)) as pdf:
+            if not pdf.pages:
+                raise ValueError("PDF-en er tom")
+            page1 = pdf.pages[0]
+            tables = page1.extract_tables()
     except Exception as e:
-        logger.warning("Tabula feilet ved lesing av PDF, prøver pdfplumber-fallback: %s", e)
-        return _parse_ukeplan_from_text(file_path), []
+        logger.error("Feil ved lesing av PDF: %s", e)
+        raise ValueError(f"Kunne ikke lese PDF: {e}") from e
 
-    if not tables or not isinstance(tables[0], pd.DataFrame):
-        logger.warning("Ingen gyldige Tabula-tabeller funnet, prøver pdfplumber-fallback")
-        return _parse_ukeplan_from_text(file_path), []
+    if not tables:
+        raise ValueError("Ingen tabeller funnet i PDF-en")
 
-    df = tables[0].fillna("")
-    if df.empty:
-        raise ValueError("Tabellen i PDF-en er tom")
+    # Tabell 0 er alltid ukeplan-tabellen
+    ukeplan_rows = tables[0]
+    logger.info("Ukeplan-tabell: %d rader, %d kolonner", len(ukeplan_rows), len(ukeplan_rows[0]) if ukeplan_rows else 0)
 
-    logger.info("Tabell funnet med %d rader og %d kolonner", len(df), len(df.columns))
-
-    if len(df.columns) < 3:
-        col_preview = df.to_string(max_rows=5, max_cols=10)
-        logger.error(
-            "Uventet tabellstruktur: kun %d kolonne(r). Forventet minst 3.\nTabellinnhold (5 første rader):\n%s",
-            len(df.columns), col_preview
-        )
-        raise ValueError(
-            f"Uventet tabellstruktur: {len(df.columns)} kolonne(r), forventet minst 3. "
-            "PDF-malen kan ha endret seg."
-        )
-
-    # Finn hvilken kolonne dagnavnene står i (kolonne 0 inneholder "Mandag\n08.30 – 14.10")
-    ordered_weekdays = WEEKDAYS
-
-    def _find_day_row(day: str) -> int | None:
-        """Returnerer radindeks der ukedagen finnes (søker i alle kolonner)."""
-        for col_idx in range(min(2, len(df.columns))):
-            mask = df.iloc[:, col_idx].astype(str).str.contains(day, na=False)
-            idx = df[mask].index.min()
-            if pd.notna(idx):
-                return int(idx)
-        return None
-
-    indices = {day: _find_day_row(day) for day in ordered_weekdays}
-    found_days = [day for day in ordered_weekdays if indices[day] is not None]
-
-    if not found_days:
-        col0_values = df.iloc[:, 0].unique().tolist()[:10]
-        logger.error(
-            "Ingen ukedager funnet i kolonne 0. Innhold i kolonne 0 (inntil 10 unike): %s",
-            col0_values
-        )
-        raise ValueError(
-            f"Ingen ukedager (Mandag–Fredag) funnet i PDF-tabellen. "
-            f"Kolonne 0 inneholder: {col0_values}. PDF-malen kan ha endret seg."
-        )
-
-    logger.info("Fant ukedager i PDF: %s", found_days)
-    last_index = len(df) - 1
-
-    output = {}
-    for i, day in enumerate(ordered_weekdays):
-        row_idx = indices[day]
-        if row_idx is None:
-            continue
-
-        next_day_idx = next(
-            (indices[ordered_weekdays[j]] for j in range(i + 1, len(ordered_weekdays))
-             if indices[ordered_weekdays[j]] is not None),
-            None
-        )
-        # Rader som tilhører denne dagen
-        start = max(0, row_idx - 1)
-        end = (next_day_idx - 2) if next_day_idx is not None else last_index
-        end = max(start, end)
-
-        day_rows = df.iloc[start: end + 1]
-
-        # Tidspunkt ligger i samme celle som dagnavnet (kolonne 0)
-        dag_celle = str(df.iloc[row_idx, 0])
-        tid_data = _extract_time_range(dag_celle) or {
-            "tid": None,
-            "start_tid": None,
-            "slutt_tid": None,
-        }
-
-        # Fag = kolonne 1 (alle rader for denne dagen)
-        fag = []
-        for cell in day_rows.iloc[:, 1]:
-            fag.extend(_split_items(cell))
-        fag = [f for f in fag if f]
-
-        # Lekser = kolonne 2 (alle rader for denne dagen)
-        lekser = []
-        for cell in day_rows.iloc[:, 2]:
-            lekser.extend(_split_items(cell))
-        lekser = [l for l in lekser if l]
-
-        output[day] = {
-            **tid_data,
-            "fag": fag,
-            "lekser": lekser,
-        }
+    output = _parse_ukeplan_table(ukeplan_rows)
 
     if not output:
-        logger.warning("Parsing fullført, men ingen aktiviteter ble funnet. Ukedager: %s", found_days)
+        raise ValueError("Ingen ukedager funnet i PDF-tabellen. PDF-malen kan ha endret seg.")
 
+    logger.info("Fant ukedager: %s", list(output.keys()))
     return output, tables
 
 
@@ -886,11 +790,6 @@ def truncate_text(text: str, max_length: int = 500) -> str:
     if not text or len(text) <= max_length:
         return text
     return text[:max_length - 3].rsplit(' ', 1)[0] + "..."
-
-
-DAYS_NO = ["Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag", "Søndag"]
-WEEKEND = {"Lørdag", "Søndag"}
-OPENEPAPERLINK_WIDTH = 20
 
 
 def _format_day_plan(ukeplan: dict, day: str) -> str:
