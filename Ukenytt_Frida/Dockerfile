@@ -14,7 +14,7 @@ RUN apk add --no-cache \
     fontconfig \
     ttf-dejavu
 
-ENV ADDON_VERSION="1.0.32"
+ENV ADDON_VERSION="1.0.33"
 
 # Installer pdfplumber og waitress via pip
 RUN pip3 install --no-cache-dir --break-system-packages pdfplumber waitress
@@ -37,4 +37,4 @@ LABEL \
     io.hass.name="Ukenytt" \
     io.hass.description="Mottar ukenytt-PDF via HTTP og konverterer til Home Assistant sensorer" \
     io.hass.type="addon" \
-    io.hass.version="1.0.32"
+    io.hass.version="1.0.33"

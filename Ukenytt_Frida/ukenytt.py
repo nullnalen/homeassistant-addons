@@ -51,7 +51,7 @@ except (json.JSONDecodeError, TypeError, ValueError) as _cfg_err:
 
 # Versjon satt av Dockerfile via ADDON_VERSION env-var, fallback til hardkodet
 # (synkroniseres med config.yaml ved hvert release via Dockerfile LABEL)
-ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.32")
+ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.33")
 
 # Konstanter
 MAX_INFO_LENGTH = 500
@@ -622,8 +622,9 @@ def _parse_ukeplan_table(rows: list[list]) -> dict:
         if fredag_lekser:
             torsdag_lekser = output["Torsdag"].setdefault("lekser", [])
             for item in fredag_lekser:
+                tagged = item + " [Frist fredag]"
                 if item not in torsdag_lekser and not any(item in l for l in torsdag_lekser):
-                    torsdag_lekser.append(item)
+                    torsdag_lekser.append(tagged)
             output["Fredag"]["lekser"] = []
 
     return output
