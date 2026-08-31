@@ -51,7 +51,7 @@ except (json.JSONDecodeError, TypeError, ValueError) as _cfg_err:
 
 # Versjon satt av Dockerfile via ADDON_VERSION env-var, fallback til hardkodet
 # (synkroniseres med config.yaml ved hvert release via Dockerfile LABEL)
-ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.30")
+ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.31")
 
 # Konstanter
 MAX_INFO_LENGTH = 500
@@ -482,6 +482,26 @@ def _parse_ukeplan_table(rows: list[list]) -> dict:
         return result
 
     def _extract_lekser(cells):
+        # Kolonne 6 (fag_col+2) inneholder alltid utruncert tekst i Kirkevoll-malen.
+        # Newlines i kolonne 6 er linjeskift inni én sammenhengende lekse-celle — join til én streng.
+        preferred_col = fag_col + 2
+        if preferred_col < len(cells) and cells[preferred_col] and not _DAY_RE.search(cells[preferred_col]) and not _TIME_RE.search(cells[preferred_col]):
+            raw = cells[preferred_col]
+            # Slå linjeskift inni cellen sammen til ett mellomrom, deretter splitt på linjeskift
+            # som skiller faktisk separate lekser (i Frida-varianten kan cellen ha "Lekse1\nLekse2")
+            # Vi antar at en ny lekse starter med stor bokstav og forrige avsluttes med punktum.
+            lines = [l.strip() for l in raw.split("\n") if l.strip()]
+            merged = []
+            for line in lines:
+                if line in _LEKSE_NOISE:
+                    continue
+                if (merged and not merged[-1].endswith((".", "!", "?"))
+                        and not re.match(r'^[A-ZÆØÅ][a-zæøå]+:', line)):
+                    merged[-1] = merged[-1] + " " + line
+                else:
+                    merged.append(line)
+            if merged:
+                return merged
         lekse_text = ""
         for ci in range(fag_col + 1, len(cells)):
             val = cells[ci]
@@ -508,23 +528,36 @@ def _parse_ukeplan_table(rows: list[list]) -> dict:
         day, day_cell = _find_day_in_row(cells)
 
         if day:
-            current_day = day
-            tid_data = _extract_time_range(day_cell) or {"tid": None, "start_tid": None, "slutt_tid": None}
-            output[current_day] = {**tid_data, "fag": list(buffered_fag), "lekser": list(buffered_lekser)}
-            buffered_fag.clear()
-            buffered_lekser.clear()
-
+            if day not in output:
+                # Første gang vi ser denne dagen — initialiser
+                current_day = day
+                tid_data = _extract_time_range(day_cell) or {"tid": None, "start_tid": None, "slutt_tid": None}
+                output[current_day] = {**tid_data, "fag": list(buffered_fag), "lekser": list(buffered_lekser)}
+                buffered_fag.clear()
+                buffered_lekser.clear()
+            else:
+                # Duplikat-dag-rad (f.eks. col1 gjentar dagsnavn) — bare akkumler
+                current_day = day
             for item in _extract_fag(cells):
                 if item not in output[current_day]["fag"]:
                     output[current_day]["fag"].append(item)
+            lekser = output[current_day]["lekser"]
+            prev_trunc = bool(lekser and not lekser[-1].endswith((".", "!", "?")))
             for item in _extract_lekser(cells):
-                if item not in output[current_day]["lekser"]:
-                    output[current_day]["lekser"].append(item)
+                if item in _LEKSE_NOISE:
+                    continue
+                is_new_cat = bool(re.match(r'^[A-ZÆØÅ][a-zæøå]+:', item))
+                if prev_trunc and not is_new_cat and not any(item in l for l in lekser):
+                    lekser[-1] = lekser[-1] + " " + item
+                elif item not in lekser and not any(item in l for l in lekser):
+                    lekser.append(item)
+                prev_trunc = bool(lekser and not lekser[-1].endswith((".", "!", "?")))
             continue
 
         # Ingen dag funnet på denne raden
         if is_henrik_variant:
-            # Henrik-variant: raden rett FØR neste dag-rad tilhører den kommende dagen
+            # Henrik-variant: rader uten dagsnavn som kommer FØR neste dag-rad tilhører
+            # den kommende dagen. Vi akkumulerer over flere slike rader (lekser kan strekke seg over 3-4 rader).
             next_has_day = (
                 i + 1 < len(norm_rows)
                 and _find_day_in_row(norm_rows[i + 1])[0] is not None
@@ -532,6 +565,20 @@ def _parse_ukeplan_table(rows: list[list]) -> dict:
             if next_has_day:
                 buffered_fag = _extract_fag(cells)
                 buffered_lekser = _extract_lekser(cells)
+                continue
+            # Rader som tilhører en kommende dag men ikke er direkte før den — akkumler i buffer
+            # Sjekk om vi er i en sekvens av rader som buffer mot neste dag
+            future_has_day = any(
+                _find_day_in_row(norm_rows[j])[0] is not None
+                for j in range(i + 1, min(i + 6, len(norm_rows)))
+            )
+            if future_has_day and current_day is None:
+                for item in _extract_fag(cells):
+                    if item not in buffered_fag:
+                        buffered_fag.append(item)
+                for item in _extract_lekser(cells):
+                    if item not in buffered_lekser:
+                        buffered_lekser.append(item)
                 continue
 
         if current_day is None:
@@ -547,12 +594,37 @@ def _parse_ukeplan_table(rows: list[list]) -> dict:
                         break
 
         # Akkumler fag og lekser for current_day
-        for item in _extract_fag(cells):
+        new_fag = _extract_fag(cells)
+        for item in new_fag:
             if item not in output[current_day]["fag"]:
                 output[current_day]["fag"].append(item)
-        for item in _extract_lekser(cells):
-            if item not in output[current_day]["lekser"]:
-                output[current_day]["lekser"].append(item)
+        lekser = output[current_day]["lekser"]
+        new_lekser = _extract_lekser(cells)
+        # Detekter tekstfortsettelsesrader: siste lekse er truncert (slutter ikke med . ! ?)
+        # og ny item er ikke en ny selvstendig kategori (starter med "Norsk:", "Matte:" e.l.)
+        prev_lekse_truncated = bool(lekser and not lekser[-1].endswith((".", "!", "?")))
+        for item in new_lekser:
+            if item in _LEKSE_NOISE:
+                continue
+            is_new_category = bool(re.match(r'^[A-ZÆØÅ][a-zæøå]+:', item))
+            # Slå sammen hvis forrige lekse er truncert og item ikke er en ny kategori.
+            # Gjelder uavhengig av om raden også har fag (Henrik-varianten har fag på continuation-rader).
+            if (prev_lekse_truncated and len(new_lekser) == 1 and not is_new_category):
+                lekser[-1] = lekser[-1] + " " + item
+            elif item not in lekser and not any(item in l for l in lekser):
+                lekser.append(item)
+            prev_lekse_truncated = bool(lekser and not lekser[-1].endswith((".", "!", "?")))
+
+    # Fredag-lekser flyttes til torsdag: lekser som skal gjøres hjemme og leveres fredag
+    # må være ferdige senest torsdag kveld.
+    if "Fredag" in output and "Torsdag" in output:
+        fredag_lekser = output["Fredag"].get("lekser", [])
+        if fredag_lekser:
+            torsdag_lekser = output["Torsdag"].setdefault("lekser", [])
+            for item in fredag_lekser:
+                if item not in torsdag_lekser and not any(item in l for l in torsdag_lekser):
+                    torsdag_lekser.append(item)
+            output["Fredag"]["lekser"] = []
 
     return output
 
