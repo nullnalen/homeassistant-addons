@@ -1,0 +1,71 @@
+name: "Finn no Baat"
+description: "Addon traverserer finn på jakt etter båter og lagrer historikk i database"
+version: "1.0"
+slug: "finn_no_baat"
+init: false
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+startup: services
+ingress: true
+ingress_port: 8102
+panel_icon: "mdi:sail-boat"
+ports:
+  8102/tcp: 8102
+ports_description:
+  8102/tcp: "Båt web UI"
+options:
+  databasehost: "database host"
+  databaseusername: "database username"
+  databasepassword: "database password"
+  databasename: "finn_no"
+  databaseport: "3306"
+  dry_run: false
+  price_from: 150000
+  price_to: 600000
+  year_from: 2005
+  length_feet_from: 18
+  length_feet_to: 24
+  boat_classes:
+    - "3827"
+    - "2184"
+  motor_types:
+    - "2"
+  fuels:
+    - "1"
+  locations:
+    - "22042"
+    - "20003"
+    - "20007"
+    - "22034"
+    - "20061"
+    - "20009"
+    - "20008"
+    - "20002"
+  sort: "PUBLISHED_DESC"
+  scrape_interval: 6
+schema:
+  databasehost: "str"
+  databaseusername: "str"
+  databasepassword: "str"
+  databasename: "str"
+  databaseport: "str"
+  dry_run: "bool"
+  price_from: "int"
+  price_to: "int"
+  year_from: "int"
+  length_feet_from: "int?"
+  length_feet_to: "int?"
+  boat_classes:
+    - "str"
+  motor_types:
+    - "str"
+  fuels:
+    - "str"
+  locations:
+    - "str"
+  sort: "str"
+  scrape_interval: "int"

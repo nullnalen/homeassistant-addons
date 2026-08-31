@@ -1,0 +1,15 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Finn.no Baat Add-on: Starter webserver og scraper
+# ==============================================================================
+
+bashio::log.info "Starter Finn.no Baat add-on..."
+
+mkdir -p /data
+
+export SUPERVISOR_OPTIONS=$(</data/options.json)
+
+bashio::log.info "Starter webserver på port 8102..."
+
+exec python3 -u /usr/bin/baat_web.py

@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Architecture review — Finn_no_Bobil</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+  </script>
+  <style>
+    .band { border-left: 4px solid; }
+    .deep-box { background: linear-gradient(135deg, #0f172a, #1e293b); }
+  </style>
+</head>
+<body class="bg-stone-50 text-slate-800 font-sans">
+<main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+
+  <header class="border-b border-slate-200 pb-6">
+    <p class="text-xs uppercase tracking-widest text-slate-400 mb-1">Architecture review</p>
+    <h1 class="text-3xl font-serif font-semibold text-slate-900">Finn_no_Bobil</h1>
+    <p class="text-sm text-slate-400 mt-1">bobil_v2.py · bobil_web.py · 2026-05-27</p>
+    <div class="flex gap-6 mt-4 text-xs text-slate-500">
+      <span class="flex items-center gap-1.5"><span class="inline-block w-8 h-0.5 border border-slate-400 border-dashed"></span> seam</span>
+      <span class="flex items-center gap-1.5"><span class="inline-block w-8 h-0.5 bg-red-500"></span> leakage</span>
+      <span class="flex items-center gap-1.5"><span class="inline-block w-4 h-4 border-2 border-slate-700 bg-slate-800 rounded-sm"></span> deep module</span>
+      <span class="flex items-center gap-1.5"><span class="inline-block w-4 h-4 border border-slate-300 rounded-sm bg-white"></span> shallow module</span>
+    </div>
+  </header>
+
+  <section id="candidates" class="space-y-12">
+
+    <!-- CANDIDATE 1 -->
+    <article class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <div class="px-6 pt-6 pb-4">
+        <div class="flex items-start justify-between gap-4 mb-3">
+          <h2 class="text-xl font-serif font-semibold text-slate-900">1. Deepen the database write module</h2>
+          <div class="flex gap-2 shrink-0">
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">Strong</span>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">ports &amp; adapters</span>
+          </div>
+        </div>
+        <p class="font-mono text-xs text-slate-400 mb-4">bobil_v2.py · lines 375–684</p>
+        <p class="text-sm text-slate-700 mb-1"><strong>Problem.</strong> <code>update_database()</code> er 310 linjer med 7 ansvar bak én interface. Ingen locality.</p>
+        <p class="text-sm text-slate-700 mb-4"><strong>Solution.</strong> Trekk ut <em>ChangeDetector</em> og <em>BobilRepository</em> med smale interfaces. Scraperen kaller hver gjennom én seam.</p>
+      </div>
+      <div class="grid grid-cols-2 gap-0 border-t border-slate-100">
+        <div class="p-5 border-r border-slate-100">
+          <p class="text-xs uppercase tracking-wider text-slate-400 mb-3">Before — shallow (7 bands)</p>
+          <div class="space-y-1 text-xs font-mono">
+            <div class="band border-red-300 bg-red-50 px-3 py-1.5 rounded-r">hent eksisterende DB-rad</div>
+            <div class="band border-orange-300 bg-orange-50 px-3 py-1.5 rounded-r">normaliser &amp; formater</div>
+            <div class="band border-yellow-300 bg-yellow-50 px-3 py-1.5 rounded-r">detect felt-for-felt endringer</div>
+            <div class="band border-lime-300 bg-lime-50 px-3 py-1.5 rounded-r">logg diffs til konsoll</div>
+            <div class="band border-green-300 bg-green-50 px-3 py-1.5 rounded-r">bygg dynamisk SVV SQL</div>
+            <div class="band border-teal-300 bg-teal-50 px-3 py-1.5 rounded-r">INSERT / UPDATE bobil</div>
+            <div class="band border-sky-300 bg-sky-50 px-3 py-1.5 rounded-r">logg prisendringer + notify HA</div>
+          </div>
+          <p class="text-xs text-slate-400 mt-3">Alle syv bak én funksjon. Endre én, bryt de andre.</p>
+        </div>
+        <div class="p-5 deep-box">
+          <p class="text-xs uppercase tracking-wider text-slate-400 mb-3">After — deep (3 moduler)</p>
+          <div class="space-y-2 text-xs font-mono">
+            <div class="bg-slate-700 border border-slate-500 rounded px-3 py-2 text-slate-200">
+              <div class="text-slate-400 text-xs mb-1">ChangeDetector</div>
+              detect(old, new) → ChangeSet
+            </div>
+            <div class="bg-slate-700 border border-slate-500 rounded px-3 py-2 text-slate-200">
+              <div class="text-slate-400 text-xs mb-1">BobilRepository</div>
+              upsert(ad, changes) → None
+            </div>
+            <div class="bg-slate-700 border border-slate-500 rounded px-3 py-2 text-slate-200">
+              <div class="text-slate-400 text-xs mb-1">PriceLog</div>
+              record(finnkode, old, new) → None
+            </div>
+          </div>
+          <p class="text-xs text-slate-400 mt-3">ChangeDetector testbar med plain dicts. Ingen MariaDB.</p>
+        </div>
+      </div>
+      <div class="px-6 py-4 border-t border-slate-100">
+        <ul class="text-sm text-slate-600 space-y-1">
+          <li>→ <strong>locality:</strong> prisendring-logikk konsentreres i én modul, ikke spredd over 3 callsites</li>
+          <li>→ <strong>leverage:</strong> ChangeDetector gjenbrukbar fra web-laget uten å røre DB</li>
+          <li>→ interface krymper fra 310 linjer til 3 smale seams</li>
+          <li>→ ChangeDetector testbar med plain dicts — ingen MariaDB nødvendig</li>
+        </ul>
+      </div>
+    </article>
+
+    <!-- CANDIDATE 2 -->
+    <article class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <div class="px-6 pt-6 pb-4">
+        <div class="flex items-start justify-between gap-4 mb-3">
+          <h2 class="text-xl font-serif font-semibold text-slate-900">2. Collapse SVV-integrasjon til én dyp modul</h2>
+          <div class="flex gap-2 shrink-0">
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">Strong</span>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">in-process</span>
+          </div>
+        </div>
+        <p class="font-mono text-xs text-slate-400 mb-4">bobil_v2.py · lines 1519–1714</p>
+        <p class="text-sm text-slate-700 mb-1"><strong>Problem.</strong> SVV-integrasjon er spredd over 4 funksjoner og 200 linjer. Å forstå flyten krever bouncing mellom alle fire.</p>
+        <p class="text-sm text-slate-700 mb-4"><strong>Solution.</strong> Én dyp <em>VegvesenEnricher</em>-modul: <code>enrich(ads) → ads</code>. Alle fire funksjoner blir private implementation.</p>
+      </div>
+      <div class="grid grid-cols-2 gap-0 border-t border-slate-100">
+        <div class="p-5 border-r border-slate-100">
+          <p class="text-xs uppercase tracking-wider text-slate-400 mb-3">Before — call graph</p>
+          <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <pre class="mermaid">
+flowchart TD
+  main --> enrich_ads_with_vegvesen
+  enrich_ads_with_vegvesen --> get_finnkoder_med_svv_data
+  enrich_ads_with_vegvesen --> extract_regnr_from_ad
+  enrich_ads_with_vegvesen --> fetch_vegvesen_data
+  fetch_vegvesen_data --> parse_vegvesen_data
+  classDef sh fill:#fef9c3,stroke:#ca8a04
+  class enrich_ads_with_vegvesen,get_finnkoder_med_svv_data,extract_regnr_from_ad,fetch_vegvesen_data,parse_vegvesen_data sh
+            </pre>
+          </div>
+        </div>
+        <div class="p-5 deep-box">
+          <p class="text-xs uppercase tracking-wider text-slate-400 mb-3">After — collapsed</p>
+          <div class="rounded-lg border border-slate-600 p-4 text-center" style="background:#1e293b">
+            <p class="text-slate-300 font-mono text-sm font-semibold mb-2">VegvesenEnricher</p>
+            <p class="text-slate-400 font-mono text-xs mb-4">enrich(ads: list[dict]) → list[dict]</p>
+            <div class="text-slate-600 text-xs font-mono text-left space-y-0.5">
+              <div>· _load_cache()</div>
+              <div>· _extract_regnr(ad)</div>
+              <div>· _fetch(regnr)</div>
+              <div>· _parse(response)</div>
+            </div>
+          </div>
+          <p class="text-xs text-slate-400 mt-3">Én seam. Fire funksjoner blir private.</p>
+        </div>
+      </div>
+      <div class="px-6 py-4 border-t border-slate-100">
+        <ul class="text-sm text-slate-600 space-y-1">
+          <li>→ <strong>locality:</strong> all SVV cache, regnr-ekstraksjon og parsing på ett sted</li>
+          <li>→ <strong>leverage:</strong> <code>main()</code> kaller én funksjon istedenfor fire</li>
+          <li>→ adapter: bytt ekte API med in-memory fixture uten å røre callsites</li>
+        </ul>
+      </div>
+    </article>
+
+    <!-- CANDIDATE 3 -->
+    <article class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <div class="px-6 pt-6 pb-4">
+        <div class="flex items-start justify-between gap-4 mb-3">
+          <h2 class="text-xl font-serif font-semibold text-slate-900">3. Én autoritativ regnr-ekstraktor</h2>
+          <div class="flex gap-2 shrink-0">
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">Worth exploring</span>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">in-process</span>
+          </div>
+        </div>
+        <p class="font-mono text-xs text-slate-400 mb-4">bobil_v2.py · lines 252, 899–913, 1643–1667, 1265</p>
+        <p class="text-sm text-slate-700 mb-1"><strong>Problem.</strong> Kjennemerke-ekstraksjon skjer på 4 steder med forskjellige normaliseringsregler og fallback-kjeder.</p>
+        <p class="text-sm text-slate-700 mb-4"><strong>Solution.</strong> Én <code>extract_regnr(ad) → str</code> med dokumentert fallback-kjede. Alle 4 callsites blir én-linjere.</p>
+      </div>
+      <div class="grid grid-cols-2 gap-0 border-t border-slate-100">
+        <div class="p-5 border-r border-slate-100">
+          <p class="text-xs uppercase tracking-wider text-slate-400 mb-3">Before — 4 implementasjoner</p>
+          <div class="space-y-2">
+            <div class="flex items-center gap-2"><span class="text-xs font-mono bg-red-100 text-red-700 px-2 py-0.5 rounded w-20 text-center shrink-0">line 252</span><span class="text-xs text-slate-600">Finn JSON <code>.get("licence_plate")</code></span></div>
+            <div class="flex items-center gap-2"><span class="text-xs font-mono bg-red-100 text-red-700 px-2 py-0.5 rounded w-20 text-center shrink-0">line 903</span><span class="text-xs text-slate-600">autodb <code>typedata.regNo</code> + 3 fallbacks</span></div>
+            <div class="flex items-center gap-2"><span class="text-xs font-mono bg-red-100 text-red-700 px-2 py-0.5 rounded w-20 text-center shrink-0">line 1649</span><span class="text-xs text-slate-600">ad dict: <code>Kjennemerke → Understellsnummer</code></span></div>
+            <div class="flex items-center gap-2"><span class="text-xs font-mono bg-red-100 text-red-700 px-2 py-0.5 rounded w-20 text-center shrink-0">line 1265</span><span class="text-xs text-slate-600">Brreg: separat normalisering</span></div>
+          </div>
+        </div>
+        <div class="p-5 deep-box">
+          <p class="text-xs uppercase tracking-wider text-slate-400 mb-3">After — én interface</p>
+          <div class="rounded-lg border border-slate-600 p-4" style="background:#1e293b">
+            <p class="text-slate-300 font-mono text-sm font-semibold">extract_regnr(ad)</p>
+            <p class="text-slate-500 font-mono text-xs mt-1 mb-3">→ str  (normalisert, uppercase, ingen mellomrom)</p>
+            <div class="text-slate-600 text-xs font-mono space-y-0.5">
+              <div>1. ad["Kjennemerke"]</div>
+              <div>2. typedata.regNo</div>
+              <div>3. ad["licence_plate"]</div>
+              <div>4. ad["Understellsnummer"]</div>
+            </div>
+          </div>
+          <p class="text-xs text-slate-400 mt-3">Deletion test: slette 3 av 4 konsentrerer kompleksiteten her.</p>
+        </div>
+      </div>
+      <div class="px-6 py-4 border-t border-slate-100">
+        <ul class="text-sm text-slate-600 space-y-1">
+          <li>→ <strong>locality:</strong> normaliseringsfeil konsentreres i én modul</li>
+          <li>→ <strong>leverage:</strong> 4 callsites blir én-linjere</li>
+          <li>→ testbar med plain dicts</li>
+        </ul>
+      </div>
+    </article>
+
+    <!-- CANDIDATE 4 -->
+    <article class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <div class="px-6 pt-6 pb-4">
+        <div class="flex items-start justify-between gap-4 mb-3">
+          <h2 class="text-xl font-serif font-semibold text-slate-900">4. Deepen tabellrenderer for listing-visninger</h2>
+          <div class="flex gap-2 shrink-0">
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">Worth exploring</span>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">in-process</span>
+          </div>
+        </div>
+        <p class="font-mono text-xs text-slate-400 mb-4">bobil_web.py · lines 1527–1911</p>
+        <p class="text-sm text-slate-700 mb-1"><strong>Problem.</strong> Tre view-funksjoner bygger nesten identiske HTML-tabellrader via string-concatenation. Kolonne-endring krever redigering på 3 steder.</p>
+        <p class="text-sm text-slate-700 mb-4"><strong>Solution.</strong> Én dyp <em>BobilTableRenderer</em>: <code>render_row(ad, columns) → str</code>. Views deklarerer hvilke kolonner de trenger.</p>
+      </div>
+      <div class="grid grid-cols-2 gap-0 border-t border-slate-100">
+        <div class="p-5 border-r border-slate-100">
+          <p class="text-xs uppercase tracking-wider text-slate-400 mb-3">Before — mass diagram (interface ≈ impl)</p>
+          <div class="space-y-3">
+            <div><p class="text-xs text-slate-400 mb-1">prisendringer view</p><div class="flex gap-1 items-center"><div class="h-5 bg-amber-400 rounded" style="width:88%"></div><span class="text-xs text-slate-400">88%</span></div></div>
+            <div><p class="text-xs text-slate-400 mb-1">sokresultater view</p><div class="flex gap-1 items-center"><div class="h-5 bg-amber-400 rounded" style="width:85%"></div><span class="text-xs text-slate-400">85%</span></div></div>
+            <div><p class="text-xs text-slate-400 mb-1">detaljer view</p><div class="flex gap-1 items-center"><div class="h-5 bg-amber-400 rounded" style="width:90%"></div><span class="text-xs text-slate-400">90%</span></div></div>
+          </div>
+          <p class="text-xs text-slate-400 mt-2">Interface nesten like bred som implementation — grunt.</p>
+        </div>
+        <div class="p-5 deep-box">
+          <p class="text-xs uppercase tracking-wider text-slate-400 mb-3">After — deep</p>
+          <div class="space-y-3">
+            <div><p class="text-xs text-slate-400 mb-1">view interface (kolonneliste)</p><div class="flex gap-1 items-center"><div class="h-5 bg-emerald-600 rounded" style="width:18%"></div><span class="text-xs text-slate-400">18%</span></div></div>
+            <div class="h-14 bg-slate-700 border border-slate-500 rounded flex items-center justify-center mt-2">
+              <p class="text-slate-300 font-mono text-xs">BobilTableRenderer.render_row()</p>
+            </div>
+          </div>
+          <p class="text-xs text-slate-400 mt-2">Én interface absorberer 3 implementasjoner.</p>
+        </div>
+      </div>
+      <div class="px-6 py-4 border-t border-slate-100">
+        <ul class="text-sm text-slate-600 space-y-1">
+          <li>→ <strong>locality:</strong> kolonne-HTML endres ett sted</li>
+          <li>→ <strong>leverage:</strong> nye views får full rendering gratis</li>
+          <li>→ slett 3 nesten-identiske string-concatenation-løkker</li>
+        </ul>
+      </div>
+    </article>
+
+    <!-- CANDIDATE 5 -->
+    <article class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <div class="px-6 pt-6 pb-4">
+        <div class="flex items-start justify-between gap-4 mb-3">
+          <h2 class="text-xl font-serif font-semibold text-slate-900">5. Finn + AutoDB bak en SourceAdapter seam</h2>
+          <div class="flex gap-2 shrink-0">
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">Worth exploring</span>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">ports &amp; adapters</span>
+          </div>
+        </div>
+        <p class="font-mono text-xs text-slate-400 mb-4">bobil_v2.py · lines 149–346 (Finn) + 804–979 (AutoDB)</p>
+        <p class="text-sm text-slate-700 mb-1"><strong>Problem.</strong> To kilder med separate fetch+parse-pipelines uten felles interface. En tredje kilde koster ~200 linjer duplikat.</p>
+        <p class="text-sm text-slate-700 mb-4"><strong>Solution.</strong> <em>SourceAdapter</em> seam: <code>fetch_all(opts) → list[NormalisedAd]</code>. To adaptere = ekte seam, ikke hypotetisk.</p>
+      </div>
+      <div class="grid grid-cols-2 gap-0 border-t border-slate-100">
+        <div class="p-5 border-r border-slate-100">
+          <p class="text-xs uppercase tracking-wider text-slate-400 mb-3">Before</p>
+          <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <pre class="mermaid">
+flowchart LR
+  main --> fetch_all_pages
+  main --> fetch_and_enrich_autodb
+  fetch_all_pages --> parse_finn
+  fetch_and_enrich_autodb --> parse_autodb_ad
+  classDef lk stroke:#dc2626,stroke-width:2px
+  class fetch_all_pages,fetch_and_enrich_autodb lk
+            </pre>
+          </div>
+        </div>
+        <div class="p-5 deep-box">
+          <p class="text-xs uppercase tracking-wider text-slate-400 mb-3">After</p>
+          <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <pre class="mermaid">
+flowchart LR
+  main --> SA["SourceAdapter\n.fetch_all()"]
+  SA --> FA["FinnAdapter"]
+  SA --> AA["AutodbAdapter"]
+  classDef dp fill:#0f172a,stroke:#334155,color:#94a3b8
+  class SA dp
+            </pre>
+          </div>
+        </div>
+      </div>
+      <div class="px-6 py-4 border-t border-slate-100">
+        <ul class="text-sm text-slate-600 space-y-1">
+          <li>→ to adaptere rettferdiggjør seamen — ikke hypotetisk</li>
+          <li>→ <strong>leverage:</strong> <code>main()</code> kaller én interface uavhengig av antall kilder</li>
+          <li>→ ny kilde koster ~30 linjer, ikke ~200</li>
+        </ul>
+      </div>
+    </article>
+
+    <!-- CANDIDATE 6 -->
+    <article class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <div class="px-6 pt-6 pb-4">
+        <div class="flex items-start justify-between gap-4 mb-3">
+          <h2 class="text-xl font-serif font-semibold text-slate-900">6. Konsolider scoring-implementasjonen</h2>
+          <div class="flex gap-2 shrink-0">
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-200 text-slate-700">Speculative</span>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">in-process</span>
+          </div>
+        </div>
+        <p class="font-mono text-xs text-slate-400 mb-4">bobil_web.py · lines 461–550, 872–879</p>
+        <p class="text-sm text-slate-700 mb-1"><strong>Problem.</strong> Tre scoring-implementasjoner: 15-reglers algoritme, én-linje i detaljvisningen, og keyword-liste som dupliserer NLP-mønstre fra bobil_v2.py.</p>
+        <p class="text-sm text-slate-700 mb-4"><strong>Solution.</strong> Én <em>Scorer</em>-modul: <code>score(ad: dict) → int</code>. Alle tre callsites bruker den.</p>
+      </div>
+      <div class="px-6 py-4 border-t border-slate-100">
+        <ul class="text-sm text-slate-600 space-y-1">
+          <li>→ <strong>locality:</strong> scoring-regelendring berører én modul</li>
+          <li>→ testbar med plain dicts — ingen DB eller HTTP</li>
+          <li>→ spekulativ: lav hast inntil reglene divergerer videre</li>
+        </ul>
+      </div>
+    </article>
+
+  </section>
+
+  <!-- Top recommendation -->
+  <section id="top-recommendation" class="bg-slate-900 rounded-xl p-8 text-white">
+    <p class="text-xs uppercase tracking-widest text-slate-400 mb-2">Top recommendation</p>
+    <h2 class="text-2xl font-serif font-semibold mb-3">Start med kandidat 1 — deepen database write module</h2>
+    <p class="text-slate-300 text-sm leading-relaxed">
+      <code class="bg-slate-800 px-1.5 py-0.5 rounded text-slate-200 text-xs">update_database()</code> er den høyeste-friksjon-modulen i kodebasen: 310 linjer, 7 ansvar, ingen locality. Å trekke ut <em>ChangeDetector</em> alene låser opp tester som ikke trenger database, gjør prisendring-logikken gjenbrukbar i web-laget, og gir resten av refaktoreringen en ren intern seam å ankre til.
+    </p>
+    <a href="#candidates" class="inline-block mt-4 text-xs text-slate-400 hover:text-white underline">↑ alle kandidater</a>
+  </section>
+
+</main>
+</body>
+</html>
