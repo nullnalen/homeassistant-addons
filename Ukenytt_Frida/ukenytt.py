@@ -51,7 +51,7 @@ except (json.JSONDecodeError, TypeError, ValueError) as _cfg_err:
 
 # Versjon satt av Dockerfile via ADDON_VERSION env-var, fallback til hardkodet
 # (synkroniseres med config.yaml ved hvert release via Dockerfile LABEL)
-ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.31")
+ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.32")
 
 # Konstanter
 MAX_INFO_LENGTH = 500
@@ -629,6 +629,83 @@ def _parse_ukeplan_table(rows: list[list]) -> dict:
     return output
 
 
+def _extract_emoji_map(page) -> dict[float, str]:
+    """Leser emoji-ikoner fra PDF-siden ved å analysere SegoeUIEmoji-chars og farger.
+
+    Kirkevoll-malen bruker to emoji-varianter som begge rendres med SegoeUIEmoji-font:
+    - 🌜 halvmåne: har en lilla/mørk farge (R<0.3, B>0.2) blant sine tegn-farger
+    - ☀️ sol: kun oransje/gule farger (R>0.8, G>0.4, B<0.3)
+
+    Returnerer dict av {top_posisjon: emoji_streng} for emoji-chars i lekse-kolonnen (x0 > 195).
+    """
+    emoji_by_top: dict[float, list] = {}
+    for c in page.chars:
+        if "Emoji" not in c.get("fontname", ""):
+            continue
+        if c.get("x0", 0) < 195:
+            continue
+        top = round(c["top"])
+        color = c.get("non_stroking_color") or c.get("stroking_color") or (0, 0, 0)
+        emoji_by_top.setdefault(top, []).append(color)
+
+    result = {}
+    for top, colors in emoji_by_top.items():
+        has_purple = any(
+            len(c) == 3 and c[0] < 0.4 and c[2] > 0.15
+            for c in colors
+        )
+        result[top] = "🌜" if has_purple else "☀️"
+
+    logger.info("Emoji-kart fra PDF: %s", result)
+    return result
+
+
+def _apply_emoji_to_ukeplan(ukeplan: dict, page) -> dict:
+    """Setter inn emoji-prefiks på lekser som pdfplumber ikke klarte å lese.
+
+    Bruker y-posisjoner fra emoji-kartet og ord-posisjoner fra siden til å matche
+    hvilken lekse-linje som har et emoji-ikon foran seg.
+    """
+    emoji_map = _extract_emoji_map(page)
+    if not emoji_map:
+        return ukeplan
+
+    # Bygg map: top-posisjon -> hele linjetekst (for lekse-kolonnen, x0 > 195)
+    words = page.extract_words(x_tolerance=3, y_tolerance=3)
+    line_text: dict[int, str] = {}  # top -> samlet tekst på den linjen
+    for w in words:
+        if w["x0"] < 195:
+            continue
+        text = w["text"].strip()
+        if not text or text in ("HJEMME", "PÅ SKOLEN"):
+            continue
+        top = round(w["top"])
+        line_text[top] = (line_text.get(top, "") + " " + text).strip()
+
+    # For hvert emoji-ikon, finn leksen med nærmeste top-posisjon (innen 8 px)
+    # Hopp over lekser som allerede starter med emoji (Unicode-emojier fra pdfplumber)
+    emoji_chars = set("🌜☀️🌛🌙⭐🌟💫✨🔥")
+    for day_data in ukeplan.values():
+        lekser = day_data.get("lekser", [])
+        for idx, lekse in enumerate(lekser):
+            if lekse and lekse[0] in emoji_chars:
+                continue  # allerede har emoji
+            # Finn top-posisjon ved å matche lekseteksten mot linje-tekst
+            clean_lekse = lekse.strip()
+            lekse_top = next(
+                (top for top, line in line_text.items()
+                 if clean_lekse[:20] in line or line[:20] in clean_lekse[:25]),
+                None
+            )
+            if lekse_top is None:
+                continue
+            closest = min(emoji_map.keys(), key=lambda t: abs(t - lekse_top), default=None)
+            if closest is not None and abs(closest - lekse_top) < 8:
+                lekser[idx] = emoji_map[closest] + lekse
+
+    return ukeplan
+
+
 def parse_pdf(file_path: Path) -> tuple[dict, list]:
     """Parser PDF med pdfplumber og returnerer rik ukeplan-dict.
 
@@ -652,21 +729,26 @@ def parse_pdf(file_path: Path) -> tuple[dict, list]:
                 raise ValueError("PDF-en er tom")
             page1 = pdf.pages[0]
             tables = page1.extract_tables()
+
+            if not tables:
+                raise ValueError("Ingen tabeller funnet i PDF-en")
+
+            ukeplan_rows = tables[0]
+            logger.info("Ukeplan-tabell: %d rader, %d kolonner", len(ukeplan_rows), len(ukeplan_rows[0]) if ukeplan_rows else 0)
+
+            output = _parse_ukeplan_table(ukeplan_rows)
+
+            if not output:
+                raise ValueError("Ingen ukedager funnet i PDF-tabellen. PDF-malen kan ha endret seg.")
+
+            # Legg til emoji-prefiks på lekser (🌜/☀️) som pdfplumber ikke klarte å lese som tekst
+            output = _apply_emoji_to_ukeplan(output, page1)
+
+    except ValueError:
+        raise
     except Exception as e:
         logger.error("Feil ved lesing av PDF: %s", e)
         raise ValueError(f"Kunne ikke lese PDF: {e}") from e
-
-    if not tables:
-        raise ValueError("Ingen tabeller funnet i PDF-en")
-
-    # Tabell 0 er alltid ukeplan-tabellen
-    ukeplan_rows = tables[0]
-    logger.info("Ukeplan-tabell: %d rader, %d kolonner", len(ukeplan_rows), len(ukeplan_rows[0]) if ukeplan_rows else 0)
-
-    output = _parse_ukeplan_table(ukeplan_rows)
-
-    if not output:
-        raise ValueError("Ingen ukedager funnet i PDF-tabellen. PDF-malen kan ha endret seg.")
 
     logger.info("Fant ukedager: %s", list(output.keys()))
     return output, tables
