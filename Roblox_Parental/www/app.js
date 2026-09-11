@@ -538,9 +538,13 @@
         actions.appendChild(makeBlockBtn(g.universe_id, g.name, childId));
       }
 
-      detail.appendChild(thumbEl);
+      const topRow = document.createElement("div");
+      topRow.className = "game-detail-top";
+      topRow.appendChild(thumbEl);
+      topRow.appendChild(detailInfo);
+
+      detail.appendChild(topRow);
       detail.appendChild(screenshotsEl);
-      detail.appendChild(detailInfo);
       detail.appendChild(actions);
 
       row.addEventListener("click", () => {

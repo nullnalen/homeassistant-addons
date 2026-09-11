@@ -318,16 +318,21 @@ main {
 /* Utvidbart detalj-panel */
 .game-detail {
   background: var(--surface);
-  padding: 14px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Øverste rad: ikon + meta-info side om side */
+.game-detail-top {
   display: flex;
   gap: 14px;
   align-items: flex-start;
-  border-top: 1px solid var(--border);
-  flex-wrap: wrap;
+  padding: 14px 16px 10px;
 }
 .game-detail-thumb {
-  width: 80px;
-  height: 80px;
+  width: 72px;
+  height: 72px;
   border-radius: var(--radius-sm);
   overflow: hidden;
   flex-shrink: 0;
@@ -390,26 +395,28 @@ main {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  width: 100%;
-  padding-top: 10px;
+  padding: 10px 16px 14px;
   border-top: 1px solid var(--border);
-  margin-top: 4px;
 }
 
-/* Screenshots */
+/* Screenshots — full bredde under topp-raden */
 .game-screenshots {
   display: flex;
   gap: 6px;
   overflow-x: auto;
-  padding: 0 16px 10px;
+  padding: 0 16px 12px;
   scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
+.game-screenshots.hidden { display: none; }
 .screenshot-img {
-  height: 90px;
+  height: 110px;
+  width: auto;
   border-radius: 6px;
   cursor: zoom-in;
   flex-shrink: 0;
   transition: opacity 0.15s;
+  display: block;
 }
 .screenshot-img:hover { opacity: 0.85; }
 
