@@ -789,6 +789,24 @@
     setupTabs();
     initSetup();
 
+    document.getElementById("export-list-btn").addEventListener("click", async () => {
+      const btn = document.getElementById("export-list-btn");
+      btn.disabled = true;
+      btn.textContent = "Henter…";
+      try {
+        const resp = await fetch(apiUrl("/api/report/all"));
+        const text = await resp.text();
+        await navigator.clipboard.writeText(text);
+        showToast("Spilliste kopiert til utklippstavlen", "ok");
+        btn.textContent = "Kopiert ✓";
+        setTimeout(() => { btn.textContent = "Kopier liste"; btn.disabled = false; }, 2500);
+      } catch (e) {
+        showToast("Kopiering feilet: " + e.message, "err");
+        btn.textContent = "Kopier liste";
+        btn.disabled = false;
+      }
+    });
+
     const status = await fetchJson("/api/setup/status");
     if (!status.configured) {
       showSetup();

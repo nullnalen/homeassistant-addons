@@ -621,6 +621,22 @@ main {
   border-color: var(--blue);
   margin-left: auto;
 }
+.btn-export {
+  background: var(--surface2);
+  color: var(--text-muted);
+  border-color: var(--border);
+  font-size: 12px;
+  padding: 4px 10px;
+}
+.btn-export:hover { color: var(--text); border-color: var(--text-muted); }
+
+.games-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.games-header h2 { margin-bottom: 0; }
 
 /* Notat */
 .note-wrap {

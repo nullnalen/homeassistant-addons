@@ -390,6 +390,103 @@ def api_set_note():
     return jsonify({"ok": True})
 
 
+@app.route("/api/report/all")
+def api_report_all():
+    """Eksporterer alle spill som en kompakt markdown-liste for AI-analyse."""
+    state = load_state()
+    approved = load_approved()
+    notes = load_notes()
+    now = __import__("datetime").datetime.now().strftime("%Y-%m-%d")
+
+    # Samle unike spill på tvers av alle barn, med samlet skjermtid
+    seen: dict[int, dict] = {}
+    child_minutes: dict[int, dict[str, int]] = {}
+    name_cache = {int(k): v for k, v in state.get("name_cache", {}).items()}
+
+    for child_key, child in state.get("children", {}).items():
+        child_name = name_cache.get(int(child_key), f"Barn {child_key}")
+        for g in child.get("top_universes", []):
+            uid = g.get("universe_id")
+            if not uid:
+                continue
+            if uid not in seen:
+                seen[uid] = dict(g)
+                details = state.get("details_cache", {}).get(str(uid), {})
+                for field in ("content_descriptors", "age_rating", "minimum_age",
+                              "like_ratio", "creator_name", "creator_type",
+                              "creator_verified", "name_history", "ai_verdict",
+                              "ai_summary", "ai_concerns", "visits", "playing"):
+                    if seen[uid].get(field) is None:
+                        seen[uid][field] = details.get(field)
+            child_minutes.setdefault(uid, {})[child_name] = g.get("minutes", 0)
+
+    # Sorter etter total skjermtid
+    games = sorted(seen.values(), key=lambda g: sum(child_minutes.get(g["universe_id"], {}).values()), reverse=True)
+
+    maturity_map = {"minimal": "Minimal", "moderate": "Moderat", "restricted": "Begrenset", "unrated": "Ikke vurdert av Roblox"}
+    verdict_map = {"gronn": "✅ Greit", "gul": "⚠️ Foreldres skjønn", "rod": "❌ Ikke anbefalt"}
+
+    lines = [
+        f"# Roblox spilliste — {now}",
+        f"Totalt {len(games)} spill. Eksportert fra Roblox Foreldrekontroll (HA-addon).",
+        "",
+        "**Foreslått spørsmål:** Se over denne listen og hjelp meg å prioritere hvilke spill jeg bør vurdere nærmere. Marker spill med bekymringsfulle deskriptorer, lav AI-vurdering, eller uverifisert utvikler.",
+        "",
+        "---",
+        "",
+    ]
+
+    for g in games:
+        uid = g["universe_id"]
+        name = g.get("name") or str(uid)
+        status = "Godkjent" if uid in approved else ("Blokkert" if g.get("blocked") else "Ikke vurdert")
+        mins = sum(child_minutes.get(uid, {}).values())
+        h, m = divmod(mins, 60)
+        time_str = f"{h}t {m}m" if h else f"{m}m"
+
+        lines.append(f"## {name}")
+
+        meta = [f"Status: {status}", f"Skjermtid: {time_str}"]
+        age = g.get("age_rating")
+        if age:
+            min_age = g.get("minimum_age")
+            meta.append(f"Aldersanbefaling: {maturity_map.get(age, age)}" + (f" ({min_age}+)" if min_age else ""))
+        creator = g.get("creator_name")
+        if creator:
+            ctype = "Gruppe" if g.get("creator_type") == "Group" else "Enkeltbruker"
+            verified = "verifisert" if g.get("creator_verified") else "ikke verifisert"
+            meta.append(f"Utvikler: {creator} ({ctype}, {verified})")
+        lr = g.get("like_ratio")
+        if lr is not None:
+            meta.append(f"Like-ratio: {lr}%")
+        nh = g.get("name_history") or []
+        if len(nh) >= 3:
+            meta.append(f"Navnehistorikk: {len(nh)} navnebytter")
+
+        lines.append("  ".join(f"_{x}_" for x in meta))
+
+        descriptors = g.get("content_descriptors") or []
+        if descriptors:
+            lines.append("Innhold: " + ", ".join(f"**{d}**" for d in descriptors))
+
+        verdict = g.get("ai_verdict")
+        if verdict:
+            lines.append(f"AI: {verdict_map.get(verdict, verdict)}" + (f" — {g['ai_summary']}" if g.get("ai_summary") else ""))
+            concerns = [c for c in (g.get("ai_concerns") or []) if c]
+            if concerns:
+                lines.append("Bekymringer: " + "; ".join(concerns))
+
+        note = notes.get(str(uid), "").strip()
+        if note:
+            lines.append(f"Notat: {note}")
+
+        lines.append("")
+
+    report_text = "\n".join(lines)
+    return Response(report_text, mimetype="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="spilliste_{now}.md"'})
+
+
 @app.route("/api/report/<int:universe_id>")
 def api_report(universe_id: int):
     """Genererer en strukturert foreldrevurderingsrapport for ett spill."""
