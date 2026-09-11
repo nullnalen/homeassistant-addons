@@ -544,7 +544,7 @@
             ${concernsHtml}
           </div>`;
       } else {
-        aiHtml = `<div class="ai-pending">AI-vurdering venter…</div>`;
+        aiHtml = `<div class="ai-pending">AI-vurdering venter… <button class="btn btn-ai-analyze" data-uid="${g.universe_id}">Analyser nå</button></div>`;
       }
 
       detailInfo.innerHTML = `
@@ -555,6 +555,23 @@
         ${g.description ? `<div class="game-detail-desc">${g.description}</div>` : ""}
         ${aiHtml}
       `;
+
+      // Analyser nå-knapp (delegert fra detailInfo siden den er innerHTML-satt)
+      detailInfo.addEventListener("click", async e => {
+        const btn = e.target.closest(".btn-ai-analyze");
+        if (!btn) return;
+        btn.disabled = true;
+        btn.textContent = "Analyserer…";
+        try {
+          const res = await postJson(`/api/ai/analyze/${btn.dataset.uid}`, {});
+          showToast("AI-analyse fullført", "ok");
+          await refresh();
+        } catch (err) {
+          showToast("AI-analyse feilet: " + err.message, "err");
+          btn.disabled = false;
+          btn.textContent = "Analyser nå";
+        }
+      });
 
       // Notat-felt (bygges som DOM, ikke innerHTML, for å håndtere events)
       const noteWrap = document.createElement("div");

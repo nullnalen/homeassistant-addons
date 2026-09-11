@@ -485,7 +485,22 @@ main {
   color: var(--text-muted);
   margin: 6px 0;
   font-style: italic;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
+.btn-ai-analyze {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-style: normal;
+}
+.btn-ai-analyze:hover { color: var(--text); border-color: var(--text-muted); }
+.btn-ai-analyze:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Lightbox */
 .lightbox {

@@ -17,7 +17,7 @@ import aiohttp
 import requests
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from roblox_ai import check_ollama_available
+from roblox_ai import analyze_game, check_ollama_available
 from roblox_api import RobloxApiError, RobloxAuthError, RobloxParentalClient
 from roblox_poller import RobloxPoller, load_approved, load_state, save_approved
 
@@ -601,6 +601,37 @@ def api_ai_status():
         "games_pending": total - analyzed,
         "verdicts": verdicts,
     })
+
+
+@app.route("/api/ai/analyze/<int:universe_id>", methods=["POST"])
+def api_ai_analyze(universe_id: int):
+    """Kjør AI-analyse for ett spill med en gang (brukerutløst)."""
+    state = load_state()
+    details = state.get("details_cache", {}).get(str(universe_id))
+    if not details:
+        return jsonify({"error": "Spill ikke funnet i cache"}), 404
+
+    async def _run():
+        if not await check_ollama_available():
+            return None
+        return await analyze_game(details)
+
+    loop = asyncio.new_event_loop()
+    result = loop.run_until_complete(_run())
+    loop.close()
+
+    if result is None:
+        return jsonify({"error": "Ollama ikke tilgjengelig eller analyse feilet"}), 503
+
+    details["ai_verdict"] = result["verdict"]
+    details["ai_summary"] = result["summary"]
+    details["ai_concerns"] = result["concerns"]
+    details["ai_safe_age"] = result["safe_age"]
+    state["details_cache"][str(universe_id)] = details
+    _save_state = __import__("roblox_poller", fromlist=["save_state"]).save_state
+    _save_state(state)
+
+    return jsonify({"ok": True, **result})
 
 
 @app.route("/api/image-proxy")
