@@ -454,20 +454,11 @@ class RobloxPoller:
             await asyncio.sleep(1)
 
         if updated:
-            # Skriv oppdatert cache til state
-            self._state["details_cache"] = {str(k): v for k, v in details.items()}
-            # Oppdater top_universes i children med ny AI-data
-            for child_key, child in self._state.get("children", {}).items():
-                for game in child.get("top_universes", []):
-                    uid = game.get("universe_id")
-                    if uid and uid in details:
-                        d = details[uid]
-                        game["ai_verdict"] = d.get("ai_verdict")
-                        game["ai_summary"] = d.get("ai_summary")
-                        game["ai_concerns"] = d.get("ai_concerns", [])
-                        game["ai_safe_age"] = d.get("ai_safe_age")
+            # Skriv oppdatert details_cache til state (nøkler som str)
+            self._state["details_cache"] = {str(k): v for k, v in client._details_cache.items()}
             save_state(self._state)
-            _LOGGER.info("AI-analyse fullført og lagret")
+            analyzed = sum(1 for d in client._details_cache.values() if d.get("ai_verdict"))
+            _LOGGER.info("AI-analyse fullført: %d/%d spill vurdert", analyzed, len(client._details_cache))
 
     async def _check_game_approval(self, child_id: int, universe_id: int, game_name: str | None) -> None:
         approved = load_approved()

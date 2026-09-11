@@ -197,14 +197,17 @@ def api_state():
                 else "approved" if game["approved"]
                 else "unknown"
             )
-            # Berik med ekstra info fra details_cache om det mangler
+            # Berik alltid med siste data fra details_cache (AI-analyse oppdaterer kun der)
             details = state.get("details_cache", {}).get(str(uid), {})
             for field in ("screenshots", "like_ratio", "up_votes", "down_votes",
                           "creator_name", "creator_type", "creator_verified",
                           "visits", "favorite_count", "created", "updated",
                           "name_history", "ai_verdict", "ai_summary", "ai_concerns", "ai_safe_age"):
-                if field not in game or game[field] is None:
-                    game[field] = details.get(field)
+                cache_val = details.get(field)
+                if cache_val is not None:
+                    game[field] = cache_val
+                elif field not in game:
+                    game[field] = None
 
         current_game = None
         if presence.get("in_game") and presence.get("universe_id"):
