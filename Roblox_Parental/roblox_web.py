@@ -12,20 +12,42 @@ import threading
 import time
 from pathlib import Path
 
+import aiohttp
 from flask import Flask, jsonify, request, send_from_directory
 
+from roblox_api import RobloxAuthError, RobloxParentalClient
 from roblox_poller import RobloxPoller, load_approved, load_state, save_approved
 
 _LOGGER = logging.getLogger(__name__)
 
+OPTIONS_FILE = Path("/data/options.json")
 STATE_FILE = Path("/data/state.json")
 APPROVED_FILE = Path("/data/approved_games.json")
 WWW_DIR = Path("/usr/bin/www")
 
 app = Flask(__name__, static_folder=str(WWW_DIR))
 
-# Ingress path prefix (satt av HA Supervisor)
-INGRESS_PATH = os.environ.get("INGRESS_PATH", "")
+# Poller-instans deles mellom trådene slik at reload fungerer
+_poller: RobloxPoller | None = None
+_poller_lock = threading.Lock()
+
+
+def read_options() -> dict:
+    if OPTIONS_FILE.exists():
+        try:
+            return json.loads(OPTIONS_FILE.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def write_options(opts: dict) -> None:
+    OPTIONS_FILE.write_text(json.dumps(opts, indent=2))
+
+
+def is_configured() -> bool:
+    opts = read_options()
+    return bool(opts.get("roblosecurity_cookie")) and bool(opts.get("child_user_ids"))
 
 
 @app.route("/")
@@ -38,108 +60,175 @@ def static_files(filename):
     return send_from_directory(str(WWW_DIR), filename)
 
 
+# --- Oppsett-API ---
+
+@app.route("/api/setup/status")
+def api_setup_status():
+    """Forteller frontend om addon er konfigurert."""
+    return jsonify({"configured": is_configured()})
+
+
+@app.route("/api/setup/fetch-children", methods=["POST"])
+def api_fetch_children():
+    """Valider cookie og hent liste over barn."""
+    body = request.get_json(force=True)
+    cookie = (body.get("cookie") or "").strip()
+    if not cookie:
+        return jsonify({"error": "Cookie er påkrevd"}), 400
+
+    async def _fetch():
+        client = RobloxParentalClient(cookie)
+        try:
+            me = await client.authenticate()
+            children = await client.get_children()
+            return me, children
+        finally:
+            await client.close()
+
+    try:
+        loop = asyncio.new_event_loop()
+        me, children = loop.run_until_complete(_fetch())
+        loop.close()
+    except RobloxAuthError:
+        return jsonify({"error": "Cookie er ugyldig eller utløpt"}), 401
+    except Exception as e:
+        return jsonify({"error": f"Tilkoblingsfeil: {e}"}), 502
+
+    return jsonify({
+        "parent": {"id": me.get("id"), "name": me.get("displayName", me.get("name"))},
+        "children": [
+            {"id": c["userId"], "name": c.get("displayName", c.get("name", str(c["userId"])))}
+            for c in children
+        ],
+    })
+
+
+@app.route("/api/setup/save", methods=["POST"])
+def api_setup_save():
+    """Lagre cookie + valgte barn til options.json og restart poller."""
+    body = request.get_json(force=True)
+    cookie = (body.get("cookie") or "").strip()
+    child_ids = body.get("child_ids")  # liste med int
+
+    if not cookie or not child_ids:
+        return jsonify({"error": "cookie og child_ids er påkrevd"}), 400
+
+    child_ids = [int(c) for c in child_ids]
+
+    opts = read_options()
+    opts["roblosecurity_cookie"] = cookie
+    opts["child_user_ids"] = child_ids
+    opts.setdefault("slow_poll_interval", 30)
+    opts.setdefault("fast_poll_interval", 2)
+    opts.setdefault("presence_enabled", True)
+    write_options(opts)
+
+    os.environ["ROBLOSECURITY_COOKIE"] = cookie
+    os.environ["CHILD_USER_IDS"] = ",".join(str(c) for c in child_ids)
+    _restart_poller()
+
+    return jsonify({"ok": True})
+
+
 # --- REST API ---
 
 @app.route("/api/state")
 def api_state():
-    """Returnerer full state: skjermtid, spill, presence, godkjente spill."""
+    """Returnerer full state per barn."""
+    if not is_configured():
+        return jsonify({"configured": False}), 200
+
     state = load_state()
     approved = load_approved()
-    child = state.get("child", {})
-    presence = state.get("presence", {})
+    opts = read_options()
+    child_ids = opts.get("child_user_ids", [])
 
-    top_universes = child.get("top_universes", [])
-    for game in top_universes:
-        uid = game.get("universe_id")
-        game["approved"] = uid in approved
-        if game["blocked"]:
-            game["status"] = "blocked"
-        elif game["approved"]:
-            game["status"] = "approved"
-        else:
-            game["status"] = "unknown"
+    children_data = state.get("children", {})
+    presences = state.get("presences", {})
+    name_cache = {int(k): v for k, v in state.get("name_cache", {}).items()}
 
-    # Aktiv presence med status
-    current_game = None
-    if presence.get("in_game") and presence.get("universe_id"):
-        uid = presence["universe_id"]
-        current_game = {
-            "universe_id": uid,
-            "name": presence.get("game_name") or str(uid),
-            "approved": uid in approved,
-            "blocked": uid in set(child.get("blocked_universe_ids", [])),
-        }
-        current_game["status"] = (
-            "blocked" if current_game["blocked"]
-            else "approved" if current_game["approved"]
-            else "unknown"
-        )
+    children_out = []
+    for child_id in child_ids:
+        key = str(child_id)
+        child = children_data.get(key, {})
+        presence = presences.get(key, {})
+
+        top_universes = child.get("top_universes", [])
+        for game in top_universes:
+            uid = game.get("universe_id")
+            game["approved"] = uid in approved
+            game["status"] = (
+                "blocked" if game["blocked"]
+                else "approved" if game["approved"]
+                else "unknown"
+            )
+
+        current_game = None
+        if presence.get("in_game") and presence.get("universe_id"):
+            uid = presence["universe_id"]
+            current_game = {
+                "universe_id": uid,
+                "name": presence.get("game_name") or name_cache.get(uid, str(uid)),
+                "approved": uid in approved,
+                "blocked": uid in set(child.get("blocked_universe_ids", [])),
+            }
+            current_game["status"] = (
+                "blocked" if current_game["blocked"]
+                else "approved" if current_game["approved"]
+                else "unknown"
+            )
+
+        children_out.append({
+            "child_id": child_id,
+            "display_name": name_cache.get(child_id, f"Barn {child_id}"),
+            "screentime_today": child.get("screentime_today", 0),
+            "screentime_week": child.get("screentime_week", 0),
+            "daily_limit": child.get("daily_limit"),
+            "age_level": child.get("age_level"),
+            "daily_data": child.get("daily_data", []),
+            "top_universes": top_universes,
+            "presence": {
+                "online": presence.get("online", False),
+                "in_game": presence.get("in_game", False),
+                "game_name": presence.get("game_name"),
+                "universe_id": presence.get("universe_id"),
+            },
+            "current_game": current_game,
+        })
 
     last_slow = state.get("last_slow_update")
-    last_fast = state.get("last_fast_update")
-
     return jsonify({
+        "configured": True,
         "auth_error": state.get("auth_error", False),
-        "screentime_today": child.get("screentime_today", 0),
-        "screentime_week": child.get("screentime_week", 0),
-        "daily_limit": child.get("daily_limit"),
-        "age_level": child.get("age_level"),
-        "daily_data": child.get("daily_data", []),
-        "top_universes": top_universes,
-        "presence": {
-            "online": presence.get("online", False),
-            "in_game": presence.get("in_game", False),
-            "game_name": presence.get("game_name"),
-            "universe_id": presence.get("universe_id"),
-        },
-        "current_game": current_game,
+        "children": children_out,
         "approved_count": len(approved),
         "last_slow_update": last_slow,
-        "last_fast_update": last_fast,
         "last_slow_update_ago": int(time.time() - last_slow) if last_slow else None,
     })
 
 
 @app.route("/api/games/approve", methods=["POST"])
 def api_approve():
-    """Godkjenn et spill (legg til i approved_games.json)."""
     body = request.get_json(force=True)
     universe_id = body.get("universe_id")
     if not universe_id:
         return jsonify({"error": "universe_id påkrevd"}), 400
-
     approved = load_approved()
     approved.add(int(universe_id))
     save_approved(approved)
-    _LOGGER.info("Godkjente spill %s", universe_id)
-    return jsonify({"ok": True, "approved": list(approved)})
+    return jsonify({"ok": True})
 
 
 @app.route("/api/games/unapprove", methods=["POST"])
 def api_unapprove():
-    """Fjern godkjenning for et spill."""
     body = request.get_json(force=True)
     universe_id = body.get("universe_id")
     if not universe_id:
         return jsonify({"error": "universe_id påkrevd"}), 400
-
     approved = load_approved()
     approved.discard(int(universe_id))
     save_approved(approved)
-    return jsonify({"ok": True, "approved": list(approved)})
-
-
-@app.route("/api/games/approved")
-def api_approved_list():
-    """Returnerer alle godkjente universe_id-er."""
-    approved = load_approved()
-    state = load_state()
-    name_cache = {int(k): v for k, v in state.get("name_cache", {}).items()}
-    result = [
-        {"universe_id": uid, "name": name_cache.get(uid, str(uid))}
-        for uid in sorted(approved)
-    ]
-    return jsonify({"approved": result})
+    return jsonify({"ok": True})
 
 
 @app.route("/api/health")
@@ -147,16 +236,26 @@ def api_health():
     state = load_state()
     return jsonify({
         "ok": not state.get("auth_error", False),
-        "auth_error": state.get("auth_error", False),
+        "configured": is_configured(),
         "version": os.environ.get("ADDON_VERSION", "1.0.0"),
     })
 
 
-def run_poller_thread() -> None:
-    """Kjør polling-loop i en egen trå med egen event loop."""
+# --- Poller-styring ---
+
+def _restart_poller() -> None:
+    global _poller
+    with _poller_lock:
+        if _poller is not None:
+            _poller.stop()
+        _poller = RobloxPoller()
+        t = threading.Thread(target=_run_poller, args=(_poller,), daemon=True, name="roblox-poller")
+        t.start()
+
+
+def _run_poller(poller: RobloxPoller) -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    poller = RobloxPoller()
     try:
         loop.run_until_complete(poller.run())
     except Exception as err:
@@ -171,10 +270,19 @@ if __name__ == "__main__":
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    # Start polling i bakgrunnen
-    poller_thread = threading.Thread(target=run_poller_thread, daemon=True, name="roblox-poller")
-    poller_thread.start()
-    _LOGGER.info("Poller-tråd startet")
+    # Les options.json og eksporter til env (s6-run gjør dette bare for faste felt)
+    opts = read_options()
+    if opts.get("roblosecurity_cookie"):
+        os.environ.setdefault("ROBLOSECURITY_COOKIE", opts["roblosecurity_cookie"])
+    if opts.get("child_user_ids"):
+        ids = opts["child_user_ids"]
+        os.environ.setdefault("CHILD_USER_IDS", ",".join(str(c) for c in ids))
+
+    if is_configured():
+        _restart_poller()
+        _LOGGER.info("Poller startet (konfigurert)")
+    else:
+        _LOGGER.info("Ikke konfigurert ennå — venter på oppsett via webgrensesnitt")
 
     port = int(os.environ.get("PORT", "8099"))
     _LOGGER.info("Webserver starter på port %d", port)

@@ -8,71 +8,106 @@
 </head>
 <body>
   <div id="app">
-    <header>
-      <div class="header-inner">
-        <div class="logo">
-          <span class="logo-icon">🎮</span>
-          <h1>Roblox Foreldrekontroll</h1>
-        </div>
-        <div class="status-bar">
-          <span id="presence-badge" class="badge badge-offline">Offline</span>
-          <span id="last-updated" class="last-updated"></span>
-        </div>
-      </div>
-    </header>
 
-    <div id="auth-error-banner" class="auth-error-banner hidden">
-      ⚠️ Cookie er utløpt eller ugyldig. Oppdater <strong>roblosecurity_cookie</strong> i addon-innstillingene.
+    <!-- ── OPPSETT-SKJERM ───────────────────────────────────────── -->
+    <div id="setup-view" class="hidden">
+      <div class="setup-card">
+        <div class="setup-logo">🎮</div>
+        <h1>Roblox Foreldrekontroll</h1>
+        <p class="setup-desc">Lim inn din <strong>.ROBLOSECURITY</strong>-cookie for å komme i gang.</p>
+
+        <div id="setup-error" class="setup-error hidden"></div>
+
+        <div class="form-group">
+          <label for="setup-cookie">Cookie (.ROBLOSECURITY)</label>
+          <input type="password" id="setup-cookie" placeholder="Lim inn cookie her…" autocomplete="off">
+        </div>
+
+        <button id="setup-fetch-btn" class="btn btn-primary">Hent barn</button>
+
+        <div id="setup-children" class="setup-children hidden"></div>
+
+        <button id="setup-save-btn" class="btn btn-primary hidden">Lagre og start</button>
+
+        <details class="setup-help">
+          <summary>Hvordan finner jeg cookien?</summary>
+          <ol>
+            <li>Logg inn på roblox.com i nettleseren</li>
+            <li>Åpne utviklerverktøy (F12) → Applikasjon → Cookies → roblox.com</li>
+            <li>Kopier verdien til <code>.ROBLOSECURITY</code></li>
+          </ol>
+        </details>
+      </div>
     </div>
 
-    <main>
-      <!-- Aktiv økt -->
-      <section id="current-game-section" class="card hidden">
-        <h2>Spiller nå</h2>
-        <div class="current-game">
-          <div class="game-icon">🕹️</div>
-          <div class="game-info">
-            <div id="current-game-name" class="game-name-large"></div>
-            <div id="current-game-status" class="game-status-tag"></div>
+    <!-- ── DASHBOARD ────────────────────────────────────────────── -->
+    <div id="main-view" class="hidden">
+      <header>
+        <div class="header-inner">
+          <div class="logo">
+            <span class="logo-icon">🎮</span>
+            <h1>Roblox Foreldrekontroll</h1>
           </div>
-          <div class="game-actions" id="current-game-actions"></div>
+          <div class="status-bar">
+            <span id="presence-badge" class="badge badge-offline">Offline</span>
+            <span id="last-updated" class="last-updated"></span>
+          </div>
         </div>
-      </section>
+      </header>
 
-      <!-- Skjermtid -->
-      <section class="card">
-        <h2>Skjermtid</h2>
-        <div class="screentime-grid">
-          <div class="screentime-box">
-            <div class="screentime-value" id="today-value">—</div>
-            <div class="screentime-label">I dag</div>
-            <div class="screentime-limit" id="today-limit"></div>
-          </div>
-          <div class="screentime-box">
-            <div class="screentime-value" id="week-value">—</div>
-            <div class="screentime-label">Denne uken</div>
-          </div>
-        </div>
-        <div class="week-chart" id="week-chart"></div>
-      </section>
+      <div id="auth-error-banner" class="auth-error-banner hidden">
+        ⚠️ Cookie er utløpt eller ugyldig. Gå til innstillinger og oppdater <strong>roblosecurity_cookie</strong>.
+      </div>
 
-      <!-- Faner: Alle spill / Godkjente / Blokkerte -->
-      <section class="card">
-        <h2>Spill denne uken</h2>
-        <div class="tabs">
-          <button class="tab active" data-tab="all">Alle</button>
-          <button class="tab" data-tab="approved">Godkjente</button>
-          <button class="tab" data-tab="blocked">Blokkerte</button>
-          <button class="tab" data-tab="unknown">Ukjente</button>
-        </div>
-        <div id="games-list" class="games-list"></div>
-        <div id="games-empty" class="empty-state hidden">Ingen spill i denne kategorien</div>
-      </section>
-    </main>
+      <!-- Barn-velger (vises bare ved flere barn) -->
+      <div id="child-tabs" class="child-tabs hidden"></div>
+
+      <main>
+        <section id="current-game-section" class="card hidden">
+          <h2>Spiller nå</h2>
+          <div class="current-game">
+            <div class="game-icon">🕹️</div>
+            <div class="game-info">
+              <div id="current-game-name" class="game-name-large"></div>
+              <div id="current-game-status" class="game-status-tag"></div>
+            </div>
+            <div class="game-actions" id="current-game-actions"></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Skjermtid</h2>
+          <div class="screentime-grid">
+            <div class="screentime-box">
+              <div class="screentime-value" id="today-value">—</div>
+              <div class="screentime-label">I dag</div>
+              <div class="screentime-limit" id="today-limit"></div>
+            </div>
+            <div class="screentime-box">
+              <div class="screentime-value" id="week-value">—</div>
+              <div class="screentime-label">Denne uken</div>
+            </div>
+          </div>
+          <div class="week-chart" id="week-chart"></div>
+        </section>
+
+        <section class="card">
+          <h2>Spill denne uken</h2>
+          <div class="tabs">
+            <button class="tab active" data-tab="all">Alle</button>
+            <button class="tab" data-tab="approved">Godkjente</button>
+            <button class="tab" data-tab="blocked">Blokkerte</button>
+            <button class="tab" data-tab="unknown">Ukjente</button>
+          </div>
+          <div id="games-list" class="games-list"></div>
+          <div id="games-empty" class="empty-state hidden">Ingen spill i denne kategorien</div>
+        </section>
+      </main>
+    </div>
+
   </div>
 
   <div id="toast" class="toast hidden"></div>
-
   <script src="app.js"></script>
 </body>
 </html>

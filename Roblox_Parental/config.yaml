@@ -20,14 +20,15 @@ ports_description:
   8099/tcp: "Roblox foreldrekontroll webgrensesnitt"
 options:
   roblosecurity_cookie: ""
-  child_user_id: 0
+  child_user_ids: []
   slow_poll_interval: 30
   fast_poll_interval: 2
   presence_enabled: true
   ha_token: ""
 schema:
   roblosecurity_cookie: "str"
-  child_user_id: "int"
+  child_user_ids:
+    - "int"
   slow_poll_interval: "int"
   fast_poll_interval: "int"
   presence_enabled: "bool"
