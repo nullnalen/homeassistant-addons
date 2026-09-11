@@ -482,7 +482,7 @@
         img.alt = "Screenshot";
         img.loading = "lazy";
         img.className = "screenshot-img";
-        img.addEventListener("click", () => openLightbox(proxiedScreenshots[i], g.name, proxiedScreenshots));
+        img.addEventListener("click", e => { e.stopPropagation(); openLightbox(proxiedScreenshots[i], g.name, proxiedScreenshots); });
         screenshotsEl.appendChild(img);
       });
 
@@ -665,8 +665,6 @@
       lb.addEventListener("click", e => {
         if (e.target === lb) lb.classList.add("hidden");
       });
-      document.getElementById("lightbox-prev", lb).addEventListener
-        ? void 0 : null;
       document.body.appendChild(lb);
 
       document.getElementById("lightbox-prev").addEventListener("click", e => {

@@ -419,7 +419,7 @@ def api_report(universe_id: int):
                   "name_history", "ai_verdict", "ai_summary", "ai_concerns",
                   "ai_safe_age", "description", "genre", "playing",
                   "age_rating", "minimum_age", "content_descriptors", "name"):
-        if not game.get(field):
+        if game.get(field) is None:
             game[field] = details.get(field)
 
     name = game.get("name") or f"Universe {universe_id}"
