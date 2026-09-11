@@ -353,41 +353,65 @@ class RobloxPoller:
         details = await client.resolve_game_details(universe_ids)
         blocked_ids = await client.get_blocked(child_id)
 
-        top_universes = [
-            {
-                "universe_id": int(u["universeId"]),
-                **{k: details.get(int(u["universeId"]), {}).get(k, v) for k, v in [
-                    ("name", str(u["universeId"])),
-                    ("description", ""),
-                    ("playing", 0),
-                    ("visits", 0),
-                    ("genre", ""),
-                    ("created", ""),
-                    ("updated", ""),
-                    ("creator_name", ""),
-                    ("creator_type", ""),
-                    ("creator_verified", False),
-                    ("favorite_count", 0),
-                    ("thumbnail_url", None),
-                    ("screenshots", []),
-                    ("age_rating", None),
-                    ("minimum_age", None),
-                    ("content_descriptors", []),
-                    ("like_ratio", None),
-                    ("up_votes", None),
-                    ("down_votes", None),
-                    ("name_history", []),
-                    ("ai_verdict", None),
-                    ("ai_summary", None),
-                    ("ai_concerns", []),
-                    ("ai_safe_age", None),
-                ]},
-                "minutes": u.get("weeklyMinutes", 0),
-                "blocked": int(u["universeId"]) in blocked_ids,
-            }
-            for u in top_universes_raw
-            if "universeId" in u
-        ]
+        # Oppdater kjent spillhistorikk — akkumulerer på tvers av uker
+        known = self._state.setdefault("children", {}).setdefault(str(child_id), {}).get("known_universes", {})
+        now_ts = int(time.time())
+        for u in top_universes_raw:
+            uid_str = str(int(u["universeId"])) if "universeId" in u else None
+            if not uid_str:
+                continue
+            mins_this_week = u.get("weeklyMinutes", 0)
+            if uid_str in known:
+                known[uid_str]["minutes_this_week"] = mins_this_week
+                known[uid_str]["last_seen"] = now_ts
+            else:
+                known[uid_str] = {"minutes_this_week": mins_this_week, "last_seen": now_ts, "first_seen": now_ts}
+
+        # Bygg spilliste fra full historikk (ikke bare denne uken)
+        all_uid_strs = list(known.keys())
+        all_uids = [int(u) for u in all_uid_strs]
+        if all_uids:
+            await client.resolve_game_details(all_uids)
+
+        top_universes = []
+        for uid_str in all_uid_strs:
+            uid = int(uid_str)
+            d = details.get(uid) or client._details_cache.get(uid, {})
+            entry = known[uid_str]
+            top_universes.append({
+                "universe_id": uid,
+                "name": d.get("name") or uid_str,
+                "description": d.get("description", ""),
+                "playing": d.get("playing", 0),
+                "visits": d.get("visits", 0),
+                "genre": d.get("genre", ""),
+                "created": d.get("created", ""),
+                "updated": d.get("updated", ""),
+                "creator_name": d.get("creator_name", ""),
+                "creator_type": d.get("creator_type", ""),
+                "creator_verified": d.get("creator_verified", False),
+                "favorite_count": d.get("favorite_count", 0),
+                "thumbnail_url": d.get("thumbnail_url"),
+                "screenshots": d.get("screenshots", []),
+                "age_rating": d.get("age_rating"),
+                "minimum_age": d.get("minimum_age"),
+                "content_descriptors": d.get("content_descriptors", []),
+                "like_ratio": d.get("like_ratio"),
+                "up_votes": d.get("up_votes"),
+                "down_votes": d.get("down_votes"),
+                "name_history": d.get("name_history", []),
+                "ai_verdict": d.get("ai_verdict"),
+                "ai_summary": d.get("ai_summary"),
+                "ai_concerns": d.get("ai_concerns", []),
+                "ai_safe_age": d.get("ai_safe_age"),
+                "minutes": entry.get("minutes_this_week", 0),
+                "last_seen": entry.get("last_seen"),
+                "first_seen": entry.get("first_seen"),
+                "blocked": uid in blocked_ids,
+            })
+
+        # Sorter: spilt denne uken øverst, deretter sist sett
+        top_universes.sort(key=lambda g: (-(g["minutes"] or 0), -(g.get("last_seen") or 0)))
 
         settings = await client.get_child_settings(child_id)
         daily_limit = (settings.get("dailyScreenTimeLimit") or {}).get("currentValue")
@@ -398,6 +422,7 @@ class RobloxPoller:
             "screentime_week": week_minutes,
             "daily_data": daily_data,
             "top_universes": top_universes,
+            "known_universes": known,
             "blocked_universe_ids": list(blocked_ids),
             "daily_limit": daily_limit,
             "age_level": age_level,

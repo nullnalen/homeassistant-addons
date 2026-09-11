@@ -48,6 +48,14 @@
     return `${Math.floor(s / 3600)}t siden`;
   }
 
+  function daysAgo(ts) {
+    if (!ts) return "ukjent tid siden";
+    const days = Math.floor((Date.now() / 1000 - ts) / 86400);
+    if (days === 0) return "i dag";
+    if (days === 1) return "i går";
+    return `${days} dager siden`;
+  }
+
   function showToast(msg, type = "ok") {
     const el = document.getElementById("toast");
     el.textContent = msg;
@@ -466,9 +474,12 @@
         ? `<div class="game-row-tags">${descriptors.map(d => `<span class="game-row-tag">${d}</span>`).join("")}</div>`
         : "";
 
+      const timeInfo = g.minutes > 0
+        ? `${formatMinutes(g.minutes)} denne uken`
+        : g.last_seen ? `Sist sett ${daysAgo(g.last_seen)}` : "Ikke spilt denne uken";
       info.innerHTML = `
         <div class="game-row-name ${g.status === "blocked" ? "game-row-name-blocked" : ""}">${blockedPrefix}${g.name}</div>
-        <div class="game-row-meta">${formatMinutes(g.minutes)} denne uken  •  ${statusLabel[g.status] || g.status}${g.playing ? `  •  ${g.playing.toLocaleString("no")} spiller nå` : ""}</div>
+        <div class="game-row-meta">${timeInfo}  •  ${statusLabel[g.status] || g.status}${g.playing ? `  •  ${g.playing.toLocaleString("no")} spiller nå` : ""}</div>
         ${descriptorHtml}
       `;
 
