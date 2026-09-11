@@ -1,0 +1,18 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+
+bashio::log.info "Starter Roblox Foreldrekontroll addon..."
+
+mkdir -p /data
+
+export ROBLOSECURITY_COOKIE=$(bashio::config 'roblosecurity_cookie')
+export CHILD_USER_ID=$(bashio::config 'child_user_id')
+export SLOW_POLL_INTERVAL=$(bashio::config 'slow_poll_interval')
+export FAST_POLL_INTERVAL=$(bashio::config 'fast_poll_interval')
+export PRESENCE_ENABLED=$(bashio::config 'presence_enabled')
+export HA_TOKEN=$(bashio::config 'ha_token' '')
+export INGRESS_PATH=$(bashio::addon.ingress_entry)
+
+bashio::log.info "Starter webserver og poller..."
+
+exec python3 -u /usr/bin/roblox_web.py
