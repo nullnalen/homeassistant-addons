@@ -80,9 +80,15 @@ def is_configured() -> bool:
     return bool(auth.get("roblosecurity_cookie")) and bool(auth.get("child_user_ids"))
 
 
+_ADDON_VERSION = os.environ.get("ADDON_VERSION", "0")
+
+
 @app.route("/")
 def index():
-    resp = send_from_directory(str(WWW_DIR), "index.html")
+    html = (WWW_DIR / "index.html").read_text()
+    html = html.replace('src="app.js"', f'src="app.js?v={_ADDON_VERSION}"')
+    html = html.replace('href="style.css"', f'href="style.css?v={_ADDON_VERSION}"')
+    resp = app.response_class(html, mimetype="text/html")
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -90,9 +96,7 @@ def index():
 @app.route("/<path:filename>")
 def static_files(filename):
     resp = send_from_directory(str(WWW_DIR), filename)
-    # JS og CSS: tillat cache men valider alltid mot server (ETag)
-    if filename.endswith((".js", ".css")):
-        resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
