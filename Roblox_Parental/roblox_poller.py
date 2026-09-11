@@ -443,9 +443,11 @@ class RobloxPoller:
                 details[uid]["ai_summary"] = result["summary"]
                 details[uid]["ai_concerns"] = result["concerns"]
                 details[uid]["ai_safe_age"] = result["safe_age"]
+                concerns_str = ", ".join(result["concerns"]) if result["concerns"] else "ingen"
                 _LOGGER.info(
-                    "AI-vurdert '%s': %s — %s",
-                    game_data.get("name"), result["verdict"], result["summary"][:60],
+                    "AI-vurdert '%s': %s (fra %s år) | %s | bekymringer: %s",
+                    game_data.get("name"), result["verdict"], result["safe_age"],
+                    result["summary"], concerns_str,
                 )
                 updated = True
             # Liten pause mellom kall så vi ikke overbelaster Ollama

@@ -1,6 +1,6 @@
 name: "Roblox Foreldrekontroll"
 description: "Overvåk barnets Roblox-bruk: skjermtid, spillhistorikk og godkjenning/blokkering av spill"
-version: "1.0.15"
+version: "1.0.16"
 slug: "roblox_parental"
 url: "https://github.com/nullnalen/homeassistant-addons"
 init: false
