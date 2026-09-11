@@ -43,12 +43,31 @@ def read_options() -> dict:
 
 
 def read_auth() -> dict:
-    """Les cookie og child_user_ids fra separat fil som HA aldri rører."""
+    """Les cookie og child_user_ids fra separat fil som HA aldri rører.
+    Migrerer automatisk fra options.json hvis roblox_auth.json mangler."""
     if AUTH_FILE.exists():
         try:
             return json.loads(AUTH_FILE.read_text())
         except Exception:
             pass
+
+    # Migrasjon: hent fra options.json og skriv til auth-filen
+    opts = read_options()
+    cookie = opts.get("roblosecurity_cookie", "")
+    child_ids = opts.get("child_user_ids", [])
+    if cookie and child_ids:
+        _LOGGER.info("Migrerer cookie og child_user_ids fra options.json til roblox_auth.json")
+        write_auth(cookie, [int(c) for c in child_ids])
+        return {"roblosecurity_cookie": cookie, "child_user_ids": child_ids}
+
+    # Siste utvei: les fra env (satt av polleren ved oppstart)
+    cookie = os.environ.get("ROBLOSECURITY_COOKIE", "")
+    raw_ids = os.environ.get("CHILD_USER_IDS", "")
+    child_ids = [int(x) for x in raw_ids.replace(" ", "").split(",") if x.isdigit()]
+    if cookie and child_ids:
+        write_auth(cookie, child_ids)
+        return {"roblosecurity_cookie": cookie, "child_user_ids": child_ids}
+
     return {}
 
 

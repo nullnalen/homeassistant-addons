@@ -476,7 +476,10 @@
         document.querySelectorAll(".tab[data-tab]").forEach(b => b.classList.remove("active"));
         btn.classList.add("active");
         currentTab = btn.dataset.tab;
-        if (state) renderGamesList(state.children?.[activeChildIndex]?.top_universes || []);
+        if (state) {
+          const child = state.children?.[activeChildIndex];
+          renderGamesList(child?.top_universes || [], child?.child_id);
+        }
       });
     });
   }
