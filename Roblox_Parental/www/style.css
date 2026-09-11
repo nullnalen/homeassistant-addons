@@ -259,6 +259,9 @@ main {
   margin-right: 4px;
   vertical-align: middle;
 }
+.dot-approved { background: var(--green); }
+.dot-blocked { background: var(--red); }
+.dot-unknown { background: var(--text-muted); }
 .games-list { display: flex; flex-direction: column; gap: 8px; }
 
 .game-wrap {
@@ -287,15 +290,38 @@ main {
 .game-row-clickable:hover { background: var(--surface); }
 .game-row[aria-expanded="true"] { background: var(--surface); }
 
-.game-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
+.game-row-thumb {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  overflow: hidden;
   flex-shrink: 0;
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
 }
-.dot-approved { background: var(--green); }
-.dot-blocked { background: var(--red); }
-.dot-unknown { background: var(--text-muted); }
+.game-row-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.game-row-thumb-placeholder { color: var(--text-muted); }
+
+.game-row-blocked {
+  background: var(--red-bg) !important;
+  border-left: 3px solid var(--red);
+}
+.game-row-blocked:hover { background: rgba(224, 82, 82, 0.18) !important; }
+.game-row-name-blocked {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--red);
+  text-decoration-thickness: 1.5px;
+}
+.game-row-blocked-icon { font-size: 13px; }
 
 .game-row-info { flex: 1; min-width: 0; }
 .game-row-name {

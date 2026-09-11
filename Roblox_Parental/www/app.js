@@ -437,16 +437,30 @@
       row.className = "game-row game-row-clickable";
       row.setAttribute("aria-expanded", "false");
 
-      const dot = document.createElement("div");
-      dot.className = `game-dot dot-${g.status}`;
+      if (g.status === "blocked") row.classList.add("game-row-blocked");
+
+      // Thumbnail i raden
+      const rowThumb = document.createElement("div");
+      rowThumb.className = "game-row-thumb";
+      if (g.thumbnail_url) {
+        const img = document.createElement("img");
+        img.src = imgUrl(g.thumbnail_url);
+        img.alt = "";
+        img.loading = "lazy";
+        rowThumb.appendChild(img);
+      } else {
+        rowThumb.classList.add("game-row-thumb-placeholder");
+        rowThumb.textContent = "🎮";
+      }
 
       const info = document.createElement("div");
       info.className = "game-row-info";
       const ageTag = g.age_rating
         ? `  •  <span style="color:${MATURITY_COLOR[g.age_rating] || "var(--text-muted)"}">${MATURITY_LABEL[g.age_rating] || g.age_rating}${g.minimum_age > 0 && g.age_rating !== "unrated" ? ` ${g.minimum_age}+` : ""}</span>`
         : "";
+      const blockedPrefix = g.status === "blocked" ? "<span class='game-row-blocked-icon' title='Håndheves av Roblox — barnet kan ikke starte spillet'>🚫</span> " : "";
       info.innerHTML = `
-        <div class="game-row-name">${g.name}</div>
+        <div class="game-row-name ${g.status === "blocked" ? "game-row-name-blocked" : ""}">${blockedPrefix}${g.name}</div>
         <div class="game-row-meta">${formatMinutes(g.minutes)} denne uken  •  ${statusLabel[g.status] || g.status}${ageTag}${g.playing ? `  •  ${g.playing.toLocaleString("no")} spiller nå` : ""}</div>
       `;
 
@@ -454,7 +468,7 @@
       chevron.className = "game-row-chevron";
       chevron.textContent = "▸";
 
-      row.appendChild(dot);
+      row.appendChild(rowThumb);
       row.appendChild(info);
       row.appendChild(chevron);
 
