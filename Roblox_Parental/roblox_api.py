@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 import aiohttp
@@ -36,6 +37,8 @@ URL_AGE_RECOMMENDATIONS = f"{BASE_URL}/experience-guidelines-service/v1beta1/mul
 URL_UNIVERSE_FROM_PLACE = "https://apis.roblox.com/universes/v1/places/{place_id}/universe"
 
 USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
+
+DETAILS_CACHE_TTL = 7 * 24 * 3600  # 7 dager
 
 
 class RobloxAuthError(Exception):
@@ -164,13 +167,12 @@ class RobloxParentalClient:
 
     async def resolve_game_details(self, universe_ids: list[int]) -> dict[int, dict]:
         """Henter navn, beskrivelse, spillertall, sjanger, votes, creator og screenshots."""
-        missing_info = [uid for uid in universe_ids if uid not in self._details_cache]
-        # Re-hent spill som mangler creator-info (stale cache fra før feltet fantes)
-        stale_creator = [
+        now = time.time()
+        missing_info = [
             uid for uid in universe_ids
-            if uid in self._details_cache and not self._details_cache[uid].get("creator_name")
+            if uid not in self._details_cache
+            or now - self._details_cache[uid].get("cached_at", 0) > DETAILS_CACHE_TTL
         ]
-        missing_info = list(dict.fromkeys(missing_info + stale_creator))
         missing_thumb = [uid for uid in universe_ids if uid in self._details_cache and self._details_cache[uid].get("thumbnail_url") is None]
 
         chunk_size = 50
@@ -182,6 +184,7 @@ class RobloxParentalClient:
                     for game in data.get("data", []):
                         uid = int(game["id"])
                         creator = game.get("creator") or {}
+                        existing = self._details_cache.get(uid, {})
                         self._details_cache[uid] = {
                             "name": game.get("name", str(uid)),
                             "description": (game.get("description") or "").strip()[:500],
@@ -195,19 +198,20 @@ class RobloxParentalClient:
                             "creator_type": creator.get("type", ""),
                             "creator_verified": creator.get("hasVerifiedBadge", False),
                             "favorite_count": game.get("favoritedCount", 0),
-                            "thumbnail_url": None,
-                            "screenshots": [],
+                            "thumbnail_url": existing.get("thumbnail_url"),
+                            "screenshots": existing.get("screenshots", []),
                             "age_rating": None,
                             "minimum_age": None,
                             "content_descriptors": [],
                             "like_ratio": None,
                             "up_votes": None,
                             "down_votes": None,
-                            "name_history": [],
-                            "ai_verdict": None,
-                            "ai_summary": None,
-                            "ai_concerns": [],
-                            "ai_safe_age": None,
+                            "name_history": existing.get("name_history", []),
+                            "ai_verdict": existing.get("ai_verdict"),
+                            "ai_summary": existing.get("ai_summary"),
+                            "ai_concerns": existing.get("ai_concerns", []),
+                            "ai_safe_age": existing.get("ai_safe_age"),
+                            "cached_at": now,
                         }
                         self._name_cache[uid] = self._details_cache[uid]["name"]
                 except RobloxApiError as err:
