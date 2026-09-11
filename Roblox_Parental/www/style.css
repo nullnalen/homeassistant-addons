@@ -448,6 +448,12 @@ main {
   color: var(--text-muted);
   margin: 4px 0;
 }
+.status-hint {
+  font-size: 11px;
+  opacity: 0.5;
+  cursor: help;
+  font-style: normal;
+}
 .creator-verified { color: var(--green); font-weight: 600; }
 .creator-unverified { color: var(--text-muted); font-size: 11px; }
 .name-history-warning {

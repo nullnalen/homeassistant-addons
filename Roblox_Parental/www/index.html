@@ -60,7 +60,7 @@
       </div>
 
       <div id="enforce-allowlist-banner" class="enforce-allowlist-banner hidden">
-        🛡️ Hvitelistehåndhevelse er aktiv — ukjente spill blokkeres automatisk i Roblox.
+        🛡️ Hvitelistehåndhevelse er aktiv — spill du ikke har godkjent blokkeres automatisk i Roblox.
       </div>
 
       <!-- Barn-velger (vises bare ved flere barn) -->
@@ -108,12 +108,12 @@
             <button class="tab active" data-tab="all">Alle</button>
             <button class="tab" data-tab="approved">Godkjente</button>
             <button class="tab" data-tab="blocked">Blokkerte</button>
-            <button class="tab" data-tab="unknown">Ukjente</button>
+            <button class="tab" data-tab="unknown">Ikke vurdert</button>
           </div>
           <div class="games-legend">
-            <span><span class="legend-dot dot-approved"></span>Godkjent</span>
-            <span><span class="legend-dot dot-blocked"></span>Blokkert</span>
-            <span><span class="legend-dot dot-unknown"></span>Ukjent</span>
+            <span title="Din markering — Roblox håndhever ikke dette"><span class="legend-dot dot-approved"></span>Godkjent</span>
+            <span title="Håndheves av Roblox — barnet kan ikke starte spillet"><span class="legend-dot dot-blocked"></span>Blokkert</span>
+            <span title="Du har ikke tatt stilling til dette spillet ennå"><span class="legend-dot dot-unknown"></span>Ikke vurdert</span>
           </div>
           <div id="games-list" class="games-list"></div>
           <div id="games-empty" class="empty-state hidden">Ingen spill i denne kategorien</div>

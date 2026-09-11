@@ -192,14 +192,14 @@
       const actionsEl = document.getElementById("current-game-actions");
       actionsEl.innerHTML = "";
       if (child.current_game.status === "approved") {
-        statusEl.textContent = "✓ Godkjent";
+        statusEl.innerHTML = "✓ Godkjent <span class='status-hint' title='Din markering — Roblox håndhever ikke dette'>ⓘ</span>";
         statusEl.style.color = "var(--green)";
         actionsEl.appendChild(makeUnapproveBtn(child.current_game.universe_id));
       } else if (child.current_game.status === "blocked") {
-        statusEl.textContent = "✗ Blokkert";
+        statusEl.innerHTML = "✗ Blokkert <span class='status-hint' title='Håndheves av Roblox — barnet kan ikke starte spillet'>ⓘ</span>";
         statusEl.style.color = "var(--red)";
       } else {
-        statusEl.textContent = "? Ikke godkjent";
+        statusEl.textContent = "Ikke vurdert";
         statusEl.style.color = "var(--yellow)";
         actionsEl.appendChild(makeApproveBtn(child.current_game.universe_id, child.current_game.name));
       }
@@ -251,7 +251,7 @@
       const row = document.createElement("div");
       row.className = "now-playing-row";
       const statusColor = g.status === "approved" ? "var(--green)" : g.status === "blocked" ? "var(--red)" : "var(--yellow)";
-      const statusText = { approved: "Godkjent", blocked: "Blokkert", unknown: "Ikke godkjent" }[g.status] || "";
+      const statusText = { approved: "Godkjent", blocked: "Blokkert", unknown: "Ikke vurdert" }[g.status] || "";
       row.innerHTML = `
         <span class="now-playing-name">${c.display_name}</span>
         <span class="now-playing-game">${g.name}</span>
@@ -422,7 +422,11 @@
     }
     empty.classList.add("hidden");
 
-    const statusLabel = { approved: "Godkjent", blocked: "Blokkert", unknown: "Ukjent" };
+    const statusLabel = {
+      approved: "<span title='Din markering — Roblox håndhever ikke dette'>Godkjent ⓘ</span>",
+      blocked:  "<span title='Håndheves av Roblox — barnet kan ikke starte spillet'>Blokkert ⓘ</span>",
+      unknown:  "Ikke vurdert",
+    };
 
     filtered.forEach(g => {
       const wrap = document.createElement("div");
