@@ -439,9 +439,12 @@
 
       if (g.status === "blocked") row.classList.add("game-row-blocked");
 
-      // Thumbnail i raden
+      // Thumbnail med AI-fargestripe langs venstre kant
       const rowThumb = document.createElement("div");
       rowThumb.className = "game-row-thumb";
+      if (g.ai_verdict) {
+        rowThumb.style.boxShadow = `inset 3px 0 0 ${AI_VERDICT_COLOR[g.ai_verdict] || "transparent"}`;
+      }
       if (g.thumbnail_url) {
         const img = document.createElement("img");
         img.src = imgUrl(g.thumbnail_url);
@@ -455,13 +458,18 @@
 
       const info = document.createElement("div");
       info.className = "game-row-info";
-      const ageTag = g.age_rating
-        ? `  •  <span style="color:${MATURITY_COLOR[g.age_rating] || "var(--text-muted)"}">${MATURITY_LABEL[g.age_rating] || g.age_rating}${g.minimum_age > 0 && g.age_rating !== "unrated" ? ` ${g.minimum_age}+` : ""}</span>`
-        : "";
       const blockedPrefix = g.status === "blocked" ? "<span class='game-row-blocked-icon' title='Håndheves av Roblox — barnet kan ikke starte spillet'>🚫</span> " : "";
+
+      // Deskriptor-chips (Violence, Fear osv.)
+      const descriptors = g.content_descriptors || [];
+      const descriptorHtml = descriptors.length
+        ? `<div class="game-row-tags">${descriptors.map(d => `<span class="game-row-tag">${d}</span>`).join("")}</div>`
+        : "";
+
       info.innerHTML = `
         <div class="game-row-name ${g.status === "blocked" ? "game-row-name-blocked" : ""}">${blockedPrefix}${g.name}</div>
-        <div class="game-row-meta">${formatMinutes(g.minutes)} denne uken  •  ${statusLabel[g.status] || g.status}${ageTag}${g.playing ? `  •  ${g.playing.toLocaleString("no")} spiller nå` : ""}</div>
+        <div class="game-row-meta">${formatMinutes(g.minutes)} denne uken  •  ${statusLabel[g.status] || g.status}${g.playing ? `  •  ${g.playing.toLocaleString("no")} spiller nå` : ""}</div>
+        ${descriptorHtml}
       `;
 
       const chevron = document.createElement("div");
