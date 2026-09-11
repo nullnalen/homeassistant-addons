@@ -1,6 +1,6 @@
 name: "Roblox Foreldrekontroll"
 description: "Overvåk barnets Roblox-bruk: skjermtid, spillhistorikk og godkjenning/blokkering av spill"
-version: "1.0.12"
+version: "1.0.14"
 slug: "roblox_parental"
 url: "https://github.com/nullnalen/homeassistant-addons"
 init: false
@@ -22,9 +22,17 @@ options:
   slow_poll_interval: 30
   fast_poll_interval: 2
   presence_enabled: true
+  enforce_allowlist: false
+  ollama_enabled: true
+  ollama_url: "http://192.168.1.28:11434"
+  ollama_model: "llama3.1:8b"
   ha_token: ""
 schema:
   slow_poll_interval: "int"
   fast_poll_interval: "int"
   presence_enabled: "bool"
+  enforce_allowlist: "bool"
+  ollama_enabled: "bool"
+  ollama_url: "str"
+  ollama_model: "str"
   ha_token: "str?"

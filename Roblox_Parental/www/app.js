@@ -163,6 +163,10 @@
     const authBanner = document.getElementById("auth-error-banner");
     s.auth_error ? authBanner.classList.remove("hidden") : authBanner.classList.add("hidden");
 
+    // Håndhevingsbanner
+    const enforceBanner = document.getElementById("enforce-allowlist-banner");
+    s.enforce_allowlist ? enforceBanner.classList.remove("hidden") : enforceBanner.classList.add("hidden");
+
     // Presence badge (for aktivt barn i tab)
     const badge = document.getElementById("presence-badge");
     const p = child.presence || {};
@@ -230,6 +234,8 @@
 
   const MATURITY_LABEL = { minimal: "Minimal", moderate: "Moderat", restricted: "Begrenset" };
   const MATURITY_COLOR = { minimal: "var(--green)", moderate: "var(--yellow)", restricted: "var(--red)" };
+  const AI_VERDICT_LABEL = { gronn: "✓ Greit for barn", gul: "⚠ Foreldres skjønn", rod: "✗ Ikke anbefalt" };
+  const AI_VERDICT_COLOR = { gronn: "var(--green)", gul: "var(--yellow)", rod: "var(--red)" };
 
   function renderNowPlaying(children) {
     const sec = document.getElementById("now-playing-section");
@@ -436,12 +442,32 @@
         thumbEl.textContent = "🎮";
       }
 
+      // Screenshots
+      const screenshots = g.screenshots || [];
+      const screenshotsEl = document.createElement("div");
+      screenshotsEl.className = "game-screenshots" + (screenshots.length ? "" : " hidden");
+      screenshots.forEach(url => {
+        const img = document.createElement("img");
+        img.src = url;
+        img.alt = "Screenshot";
+        img.loading = "lazy";
+        img.className = "screenshot-img";
+        img.addEventListener("click", () => openLightbox(url, g.name));
+        screenshotsEl.appendChild(img);
+      });
+
       const detailInfo = document.createElement("div");
       detailInfo.className = "game-detail-info";
-      const meta = [
+
+      // Meta-linje
+      const metaParts = [
         g.genre ? `Sjanger: ${g.genre}` : "",
         g.playing ? `${g.playing.toLocaleString("no")} spiller nå` : "",
-      ].filter(Boolean).join("  •  ");
+        g.visits ? `${(g.visits / 1e6).toFixed(1)}M besøk` : "",
+      ].filter(Boolean);
+      const meta = metaParts.join("  •  ");
+
+      // Aldersanbefaling
       const ageColor = MATURITY_COLOR[g.age_rating] || "var(--text-muted)";
       const ageLabel = MATURITY_LABEL[g.age_rating] || "";
       const ageHtml = ageLabel
@@ -450,10 +476,52 @@
       const descriptorsHtml = (g.content_descriptors || []).length
         ? `<div class="content-descriptors">${g.content_descriptors.map(d => `<span class="descriptor-tag">${d}</span>`).join("")}</div>`
         : "";
+
+      // Like-ratio
+      const likeHtml = g.like_ratio != null
+        ? `<div class="like-ratio"><span class="like-bar-wrap"><span class="like-bar" style="width:${g.like_ratio}%"></span></span><span class="like-label">${g.like_ratio}% liker</span></div>`
+        : "";
+
+      // Creator-info
+      const creatorVerified = g.creator_verified ? ' <span class="creator-verified" title="Verifisert">✓</span>' : "";
+      const creatorType = g.creator_type === "Group" ? "Gruppe" : "Bruker";
+      const creatorHtml = g.creator_name
+        ? `<div class="creator-info">${creatorType}: ${g.creator_name}${creatorVerified}</div>`
+        : "";
+
+      // Navnehistorikk-advarsel
+      const nameHistoryCount = (g.name_history || []).length;
+      const nameHistoryHtml = nameHistoryCount >= 3
+        ? `<div class="name-history-warning">⚠ ${nameHistoryCount} navnebytter registrert</div>`
+        : "";
+
+      // AI-vurdering
+      let aiHtml = "";
+      if (g.ai_verdict) {
+        const vc = AI_VERDICT_COLOR[g.ai_verdict] || "var(--text-muted)";
+        const vl = AI_VERDICT_LABEL[g.ai_verdict] || g.ai_verdict;
+        const concerns = (g.ai_concerns || []).filter(Boolean);
+        const concernsHtml = concerns.length
+          ? `<ul class="ai-concerns">${concerns.map(c => `<li>${c}</li>`).join("")}</ul>`
+          : "";
+        const safeAge = g.ai_safe_age ? ` · Fra ${g.ai_safe_age} år` : "";
+        aiHtml = `
+          <div class="ai-verdict" style="border-color:${vc}20;background:${vc}10">
+            <span class="ai-verdict-label" style="color:${vc}">${vl}${safeAge}</span>
+            ${g.ai_summary ? `<div class="ai-summary">${g.ai_summary}</div>` : ""}
+            ${concernsHtml}
+          </div>`;
+      } else {
+        aiHtml = `<div class="ai-pending">AI-vurdering venter…</div>`;
+      }
+
       detailInfo.innerHTML = `
         ${meta ? `<div class="game-detail-meta">${meta}</div>` : ""}
+        ${likeHtml}
         ${ageHtml || descriptorsHtml ? `<div class="age-row">${ageHtml}${descriptorsHtml}</div>` : ""}
+        ${creatorHtml}${nameHistoryHtml}
         ${g.description ? `<div class="game-detail-desc">${g.description}</div>` : ""}
+        ${aiHtml}
       `;
 
       const actions = document.createElement("div");
@@ -471,6 +539,7 @@
       }
 
       detail.appendChild(thumbEl);
+      detail.appendChild(screenshotsEl);
       detail.appendChild(detailInfo);
       detail.appendChild(actions);
 
@@ -485,6 +554,21 @@
       wrap.appendChild(detail);
       list.appendChild(wrap);
     });
+  }
+
+  function openLightbox(url, title) {
+    let lb = document.getElementById("lightbox");
+    if (!lb) {
+      lb = document.createElement("div");
+      lb.id = "lightbox";
+      lb.className = "lightbox";
+      lb.innerHTML = '<div class="lightbox-inner"><img id="lightbox-img"><div id="lightbox-title"></div></div>';
+      lb.addEventListener("click", () => lb.classList.add("hidden"));
+      document.body.appendChild(lb);
+    }
+    document.getElementById("lightbox-img").src = url;
+    document.getElementById("lightbox-title").textContent = title || "";
+    lb.classList.remove("hidden");
   }
 
   function renderFriends(friends) {

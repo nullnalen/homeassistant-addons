@@ -17,6 +17,7 @@ from typing import Any
 
 import aiohttp
 
+from roblox_ai import analyze_game, check_ollama_available
 from roblox_api import (
     RobloxApiError,
     RobloxAuthError,
@@ -138,7 +139,12 @@ class RobloxPoller:
         self._slow_interval = int(os.environ.get("SLOW_POLL_INTERVAL", "30")) * 60
         self._fast_interval = int(os.environ.get("FAST_POLL_INTERVAL", "2")) * 60
         self._presence_enabled = os.environ.get("PRESENCE_ENABLED", "true").lower() == "true"
+        self._enforce_allowlist = os.environ.get("ENFORCE_ALLOWLIST", "false").lower() == "true"
         self._ha_token = os.environ.get("HA_TOKEN", "")
+
+        self._ollama_url = os.environ.get("OLLAMA_URL", "http://192.168.1.28:11434")
+        self._ollama_model = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
+        self._ollama_enabled = os.environ.get("OLLAMA_ENABLED", "true").lower() == "true"
 
         self._state = load_state()
         self._client: RobloxParentalClient | None = None
@@ -200,6 +206,11 @@ class RobloxPoller:
                 self._state["details_cache"] = {str(k): v for k, v in client.details_cache.items()}
                 self._state["auth_error"] = False
                 self._state["last_slow_update"] = time.time()
+                save_state(self._state)
+
+                # AI-analyse: kjør for spill som mangler vurdering
+                if self._ollama_enabled:
+                    await self._run_ai_analysis(client)
 
                 friends_data = {}
                 for child_id in self._child_ids:
@@ -349,11 +360,27 @@ class RobloxPoller:
                     ("name", str(u["universeId"])),
                     ("description", ""),
                     ("playing", 0),
+                    ("visits", 0),
                     ("genre", ""),
+                    ("created", ""),
+                    ("updated", ""),
+                    ("creator_name", ""),
+                    ("creator_type", ""),
+                    ("creator_verified", False),
+                    ("favorite_count", 0),
                     ("thumbnail_url", None),
+                    ("screenshots", []),
                     ("age_rating", None),
                     ("minimum_age", None),
                     ("content_descriptors", []),
+                    ("like_ratio", None),
+                    ("up_votes", None),
+                    ("down_votes", None),
+                    ("name_history", []),
+                    ("ai_verdict", None),
+                    ("ai_summary", None),
+                    ("ai_concerns", []),
+                    ("ai_safe_age", None),
                 ]},
                 "minutes": u.get("weeklyMinutes", 0),
                 "blocked": int(u["universeId"]) in blocked_ids,
@@ -391,6 +418,55 @@ class RobloxPoller:
         elif limit and today < limit:
             self._last_limit_notified[child_id] = False
 
+    async def _run_ai_analysis(self, client: RobloxParentalClient) -> None:
+        """Kjør AI-vurdering for spill som mangler den. Oppdaterer details_cache og state."""
+        details = client.details_cache
+        # Finn spill som ikke har fått AI-vurdering ennå
+        needs_analysis = [
+            uid for uid, d in details.items()
+            if d.get("ai_verdict") is None and d.get("name")
+        ]
+        if not needs_analysis:
+            return
+
+        if not await check_ollama_available():
+            _LOGGER.debug("Ollama ikke tilgjengelig — hopper over AI-analyse")
+            return
+
+        _LOGGER.info("AI-analyse: %d spill mangler vurdering", len(needs_analysis))
+        updated = False
+        for uid in needs_analysis:
+            game_data = details.get(uid, {})
+            result = await analyze_game(game_data)
+            if result:
+                details[uid]["ai_verdict"] = result["verdict"]
+                details[uid]["ai_summary"] = result["summary"]
+                details[uid]["ai_concerns"] = result["concerns"]
+                details[uid]["ai_safe_age"] = result["safe_age"]
+                _LOGGER.info(
+                    "AI-vurdert '%s': %s — %s",
+                    game_data.get("name"), result["verdict"], result["summary"][:60],
+                )
+                updated = True
+            # Liten pause mellom kall så vi ikke overbelaster Ollama
+            await asyncio.sleep(1)
+
+        if updated:
+            # Skriv oppdatert cache til state
+            self._state["details_cache"] = {str(k): v for k, v in details.items()}
+            # Oppdater top_universes i children med ny AI-data
+            for child_key, child in self._state.get("children", {}).items():
+                for game in child.get("top_universes", []):
+                    uid = game.get("universe_id")
+                    if uid and uid in details:
+                        d = details[uid]
+                        game["ai_verdict"] = d.get("ai_verdict")
+                        game["ai_summary"] = d.get("ai_summary")
+                        game["ai_concerns"] = d.get("ai_concerns", [])
+                        game["ai_safe_age"] = d.get("ai_safe_age")
+            save_state(self._state)
+            _LOGGER.info("AI-analyse fullført og lagret")
+
     async def _check_game_approval(self, child_id: int, universe_id: int, game_name: str | None) -> None:
         approved = load_approved()
         children_data = self._state.get("children", {})
@@ -408,6 +484,35 @@ class RobloxPoller:
                 "Blokkert Roblox-spill startet",
                 f"Barnet startet '{display_name}' som er blokkert. Sjekk blokkering.",
             )
+            return
+
+        # Spillet er ikke godkjent og ikke allerede blokkert
+        if self._enforce_allowlist:
+            _LOGGER.info(
+                "Håndhever hviteliste: blokkerer '%s' (%d) for barn %d",
+                display_name, universe_id, child_id,
+            )
+            try:
+                client = self._get_client()
+                await client.block_experience(child_id, universe_id)
+                # Oppdater lokal state så UI viser det med en gang
+                child_state = self._state.setdefault("children", {}).setdefault(str(child_id), {})
+                blocked = child_state.setdefault("blocked_universe_ids", [])
+                if universe_id not in blocked:
+                    blocked.append(universe_id)
+                save_state(self._state)
+                await send_ha_notification(
+                    self._ha_token,
+                    "Roblox-spill automatisk blokkert",
+                    f"'{display_name}' ble blokkert automatisk — ikke på godkjentlisten.",
+                )
+            except Exception as err:
+                _LOGGER.error("Klarte ikke blokkere '%s': %s", display_name, err)
+                await send_ha_notification(
+                    self._ha_token,
+                    "Blokkering feilet",
+                    f"Klarte ikke blokkere '{display_name}': {err}",
+                )
             return
 
         last_notified = self._last_notified_universe.get(child_id)

@@ -9,7 +9,11 @@ mkdir -p /data
 export SLOW_POLL_INTERVAL=$(bashio::config 'slow_poll_interval')
 export FAST_POLL_INTERVAL=$(bashio::config 'fast_poll_interval')
 export PRESENCE_ENABLED=$(bashio::config 'presence_enabled')
+export ENFORCE_ALLOWLIST=$(bashio::config 'enforce_allowlist')
 export HA_TOKEN=$(bashio::config 'ha_token' '')
+export OLLAMA_URL=$(bashio::config 'ollama_url' 'http://192.168.1.28:11434')
+export OLLAMA_MODEL=$(bashio::config 'ollama_model' 'llama3.2:3b')
+export OLLAMA_ENABLED=$(bashio::config 'ollama_enabled' 'true')
 export INGRESS_PATH=$(bashio::addon.ingress_entry)
 
 bashio::log.info "Starter webserver og poller..."

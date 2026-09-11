@@ -81,6 +81,15 @@ header {
   font-size: 14px;
 }
 
+.enforce-allowlist-banner {
+  background: var(--blue-bg);
+  border-bottom: 1px solid var(--blue);
+  color: var(--blue);
+  padding: 10px 20px;
+  text-align: center;
+  font-size: 14px;
+}
+
 main {
   max-width: 860px;
   margin: 0 auto;
@@ -386,6 +395,105 @@ main {
   border-top: 1px solid var(--border);
   margin-top: 4px;
 }
+
+/* Screenshots */
+.game-screenshots {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 0 16px 10px;
+  scrollbar-width: thin;
+}
+.screenshot-img {
+  height: 90px;
+  border-radius: 6px;
+  cursor: zoom-in;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+.screenshot-img:hover { opacity: 0.85; }
+
+/* Like-bar */
+.like-ratio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+.like-bar-wrap {
+  flex: 1;
+  height: 6px;
+  background: var(--red-bg);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.like-bar {
+  height: 100%;
+  background: var(--green);
+  border-radius: 3px;
+  transition: width 0.4s;
+}
+.like-label { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+
+/* Creator */
+.creator-info {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 4px 0;
+}
+.creator-verified { color: var(--green); font-weight: 700; }
+.name-history-warning {
+  font-size: 12px;
+  color: var(--yellow);
+  margin: 2px 0 4px;
+}
+
+/* AI-vurdering */
+.ai-verdict {
+  margin: 8px 0 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid;
+}
+.ai-verdict-label {
+  font-size: 13px;
+  font-weight: 700;
+  display: block;
+  margin-bottom: 4px;
+}
+.ai-summary {
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.ai-concerns {
+  margin: 4px 0 0 16px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.ai-concerns li { margin-bottom: 2px; }
+.ai-pending {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 6px 0;
+  font-style: italic;
+}
+
+/* Lightbox */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  cursor: zoom-out;
+}
+.lightbox.hidden { display: none; }
+.lightbox-inner { text-align: center; max-width: 95vw; }
+.lightbox-inner img { max-width: 95vw; max-height: 80vh; border-radius: 8px; }
+#lightbox-title { color: #fff; margin-top: 10px; font-size: 14px; opacity: 0.8; }
 
 .btn {
   padding: 5px 12px;

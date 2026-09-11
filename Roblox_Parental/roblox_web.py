@@ -15,6 +15,7 @@ from pathlib import Path
 import aiohttp
 from flask import Flask, jsonify, request, send_from_directory
 
+from roblox_ai import check_ollama_available
 from roblox_api import RobloxApiError, RobloxAuthError, RobloxParentalClient
 from roblox_poller import RobloxPoller, load_approved, load_state, save_approved
 
@@ -196,6 +197,14 @@ def api_state():
                 else "approved" if game["approved"]
                 else "unknown"
             )
+            # Berik med ekstra info fra details_cache om det mangler
+            details = state.get("details_cache", {}).get(str(uid), {})
+            for field in ("screenshots", "like_ratio", "up_votes", "down_votes",
+                          "creator_name", "creator_type", "creator_verified",
+                          "visits", "favorite_count", "created", "updated",
+                          "name_history", "ai_verdict", "ai_summary", "ai_concerns", "ai_safe_age"):
+                if field not in game or game[field] is None:
+                    game[field] = details.get(field)
 
         current_game = None
         if presence.get("in_game") and presence.get("universe_id"):
@@ -234,9 +243,11 @@ def api_state():
         })
 
     last_slow = state.get("last_slow_update")
+    enforce_allowlist = os.environ.get("ENFORCE_ALLOWLIST", "false").lower() == "true"
     return jsonify({
         "configured": True,
         "auth_error": state.get("auth_error", False),
+        "enforce_allowlist": enforce_allowlist,
         "children": children_out,
         "approved_count": len(approved),
         "last_slow_update": last_slow,
@@ -371,6 +382,37 @@ def api_debug_state():
         "games_per_child": out,
         "friend_counts": friends,
         "details_cache_size": len(state.get("details_cache", {})),
+    })
+
+
+@app.route("/api/ai/status")
+def api_ai_status():
+    """Sjekker om Ollama er tilgjengelig og viser analyse-statistikk."""
+    state = load_state()
+    details = state.get("details_cache", {})
+    total = len(details)
+    analyzed = sum(1 for d in details.values() if d.get("ai_verdict"))
+    verdicts: dict[str, int] = {}
+    for d in details.values():
+        v = d.get("ai_verdict")
+        if v:
+            verdicts[v] = verdicts.get(v, 0) + 1
+
+    async def _check():
+        return await check_ollama_available()
+
+    loop = asyncio.new_event_loop()
+    available = loop.run_until_complete(_check())
+    loop.close()
+
+    return jsonify({
+        "ollama_available": available,
+        "ollama_url": os.environ.get("OLLAMA_URL", ""),
+        "ollama_model": os.environ.get("OLLAMA_MODEL", ""),
+        "games_total": total,
+        "games_analyzed": analyzed,
+        "games_pending": total - analyzed,
+        "verdicts": verdicts,
     })
 
 
