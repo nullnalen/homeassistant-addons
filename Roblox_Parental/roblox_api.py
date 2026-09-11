@@ -165,6 +165,12 @@ class RobloxParentalClient:
     async def resolve_game_details(self, universe_ids: list[int]) -> dict[int, dict]:
         """Henter navn, beskrivelse, spillertall, sjanger, votes, creator og screenshots."""
         missing_info = [uid for uid in universe_ids if uid not in self._details_cache]
+        # Re-hent spill som mangler creator-info (stale cache fra før feltet fantes)
+        stale_creator = [
+            uid for uid in universe_ids
+            if uid in self._details_cache and not self._details_cache[uid].get("creator_name")
+        ]
+        missing_info = list(dict.fromkeys(missing_info + stale_creator))
         missing_thumb = [uid for uid in universe_ids if uid in self._details_cache and self._details_cache[uid].get("thumbnail_url") is None]
 
         chunk_size = 50

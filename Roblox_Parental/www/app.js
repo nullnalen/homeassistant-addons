@@ -513,10 +513,12 @@
         : "";
 
       // Creator-info
-      const creatorVerified = g.creator_verified ? ' <span class="creator-verified" title="Verifisert">✓</span>' : "";
-      const creatorType = g.creator_type === "Group" ? "Gruppe" : "Bruker";
+      const creatorVerified = g.creator_verified
+        ? ' <span class="creator-verified" title="Verifisert av Roblox">✓ Verifisert</span>'
+        : ' <span class="creator-unverified" title="Ikke verifisert av Roblox">Ikke verifisert</span>';
+      const creatorType = g.creator_type === "Group" ? "Gruppe" : "Enkeltbruker";
       const creatorHtml = g.creator_name
-        ? `<div class="creator-info">${creatorType}: ${g.creator_name}${creatorVerified}</div>`
+        ? `<div class="creator-info">${creatorType}: <strong>${g.creator_name}</strong>${creatorVerified}</div>`
         : "";
 
       // Navnehistorikk-advarsel
