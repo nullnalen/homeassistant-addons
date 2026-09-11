@@ -157,12 +157,13 @@
     const child = children[activeChildIndex];
 
     renderChildTabs(children);
+    renderNowPlaying(children);
 
     // Auth-banner
     const authBanner = document.getElementById("auth-error-banner");
     s.auth_error ? authBanner.classList.remove("hidden") : authBanner.classList.add("hidden");
 
-    // Presence badge
+    // Presence badge (for aktivt barn i tab)
     const badge = document.getElementById("presence-badge");
     const p = child.presence || {};
     if (p.in_game) {
@@ -176,7 +177,7 @@
       badge.className = "badge badge-offline";
     }
 
-    // Aktiv økt
+    // Aktivt spill for valgt barn (godkjenn/avblokker-knapp)
     const sec = document.getElementById("current-game-section");
     if (child.current_game) {
       sec.classList.remove("hidden");
@@ -225,6 +226,36 @@
     // Sist oppdatert
     document.getElementById("last-updated").textContent =
       s.last_slow_update ? `Oppdatert ${timeAgo(s.last_slow_update)}` : "";
+  }
+
+  const MATURITY_LABEL = { minimal: "Minimal", moderate: "Moderat", restricted: "Begrenset" };
+  const MATURITY_COLOR = { minimal: "var(--green)", moderate: "var(--yellow)", restricted: "var(--red)" };
+
+  function renderNowPlaying(children) {
+    const sec = document.getElementById("now-playing-section");
+    const list = document.getElementById("now-playing-list");
+    const playing = children.filter(c => c.presence?.in_game && c.current_game);
+    if (!playing.length) { sec.classList.add("hidden"); return; }
+    sec.classList.remove("hidden");
+    list.innerHTML = "";
+    playing.forEach(c => {
+      const g = c.current_game;
+      const row = document.createElement("div");
+      row.className = "now-playing-row";
+      const statusColor = g.status === "approved" ? "var(--green)" : g.status === "blocked" ? "var(--red)" : "var(--yellow)";
+      const statusText = { approved: "Godkjent", blocked: "Blokkert", unknown: "Ikke godkjent" }[g.status] || "";
+      row.innerHTML = `
+        <span class="now-playing-name">${c.display_name}</span>
+        <span class="now-playing-game">${g.name}</span>
+        <span class="now-playing-status" style="color:${statusColor}">${statusText}</span>
+      `;
+      if (g.status !== "approved") {
+        const btn = makeApproveBtn(g.universe_id, g.name, c.child_id);
+        btn.style.marginLeft = "auto";
+        row.appendChild(btn);
+      }
+      list.appendChild(row);
+    });
   }
 
   function renderWeekChart(dailyData, limit) {
@@ -411,8 +442,17 @@
         g.genre ? `Sjanger: ${g.genre}` : "",
         g.playing ? `${g.playing.toLocaleString("no")} spiller nå` : "",
       ].filter(Boolean).join("  •  ");
+      const ageColor = MATURITY_COLOR[g.age_rating] || "var(--text-muted)";
+      const ageLabel = MATURITY_LABEL[g.age_rating] || "";
+      const ageHtml = ageLabel
+        ? `<span class="age-badge" style="background:${ageColor}20;color:${ageColor};border-color:${ageColor}">${ageLabel}${g.minimum_age > 0 ? ` · ${g.minimum_age}+` : ""}</span>`
+        : "";
+      const descriptorsHtml = (g.content_descriptors || []).length
+        ? `<div class="content-descriptors">${g.content_descriptors.map(d => `<span class="descriptor-tag">${d}</span>`).join("")}</div>`
+        : "";
       detailInfo.innerHTML = `
         ${meta ? `<div class="game-detail-meta">${meta}</div>` : ""}
+        ${ageHtml || descriptorsHtml ? `<div class="age-row">${ageHtml}${descriptorsHtml}</div>` : ""}
         ${g.description ? `<div class="game-detail-desc">${g.description}</div>` : ""}
       `;
 

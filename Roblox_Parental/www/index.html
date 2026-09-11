@@ -63,8 +63,15 @@
       <div id="child-tabs" class="child-tabs hidden"></div>
 
       <main>
-        <section id="current-game-section" class="card hidden">
+        <!-- Alle barn som spiller nå (vises alltid når noen er in-game) -->
+        <section id="now-playing-section" class="card hidden">
           <h2>Spiller nå</h2>
+          <div id="now-playing-list"></div>
+        </section>
+
+        <!-- Aktivt spill for valgt barn (beholdes for godkjenn-knapp) -->
+        <section id="current-game-section" class="card hidden">
+          <h2>Aktivt spill</h2>
           <div class="current-game">
             <div class="game-icon">🕹️</div>
             <div class="game-info">
@@ -98,6 +105,11 @@
             <button class="tab" data-tab="approved">Godkjente</button>
             <button class="tab" data-tab="blocked">Blokkerte</button>
             <button class="tab" data-tab="unknown">Ukjente</button>
+          </div>
+          <div class="games-legend">
+            <span><span class="legend-dot dot-approved"></span>Godkjent</span>
+            <span><span class="legend-dot dot-blocked"></span>Blokkert</span>
+            <span><span class="legend-dot dot-unknown"></span>Ukjent</span>
           </div>
           <div id="games-list" class="games-list"></div>
           <div id="games-empty" class="empty-state hidden">Ingen spill i denne kategorien</div>

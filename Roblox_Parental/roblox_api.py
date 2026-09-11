@@ -28,6 +28,7 @@ URL_FRIENDS = f"{FRIENDS_URL}/v1/users/{{user_id}}/friends/find"
 URL_PROFILES = f"{BASE_URL}/user-profile-api/v1/user/profiles/get-profiles"
 THUMBNAILS_URL = "https://thumbnails.roblox.com"
 URL_GAME_THUMBNAILS = f"{THUMBNAILS_URL}/v1/batch"
+URL_AGE_RECOMMENDATIONS = f"{BASE_URL}/experience-guidelines-service/v1beta1/multi-age-recommendation"
 
 USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
 
@@ -161,8 +162,8 @@ class RobloxParentalClient:
         missing_info = [uid for uid in universe_ids if uid not in self._details_cache]
         missing_thumb = [uid for uid in universe_ids if uid in self._details_cache and self._details_cache[uid].get("thumbnail_url") is None]
 
+        chunk_size = 50
         if missing_info:
-            chunk_size = 50
             for i in range(0, len(missing_info), chunk_size):
                 chunk = missing_info[i: i + chunk_size]
                 try:
@@ -176,10 +177,36 @@ class RobloxParentalClient:
                             "genre": game.get("genre", ""),
                             "root_place_id": game.get("rootPlaceId"),
                             "thumbnail_url": None,
+                            "age_rating": None,
+                            "minimum_age": None,
+                            "content_descriptors": [],
                         }
                         self._name_cache[uid] = self._details_cache[uid]["name"]
                 except RobloxApiError as err:
                     _LOGGER.warning("Klarte ikke slå opp spillinfo: %s", err)
+
+            # Hent aldersanbefaling for nye spill
+            age_ids = [uid for uid in missing_info if uid in self._details_cache]
+            for i in range(0, len(age_ids), chunk_size):
+                chunk = age_ids[i: i + chunk_size]
+                try:
+                    adata = await self._post(URL_AGE_RECOMMENDATIONS, {"universeIds": chunk})
+                    for entry in adata.get("ageRecommendationDetailsByUniverse", []):
+                        uid = entry.get("universeId")
+                        if not uid or uid not in self._details_cache:
+                            continue
+                        summary = (entry.get("ageRecommendationDetails") or {}).get("ageRecommendationSummary") or {}
+                        rec = summary.get("ageRecommendation") or {}
+                        descriptors = [
+                            d["descriptorDisplayName"]
+                            for d in (entry.get("ageRecommendationDetails") or {}).get("experienceDescriptorUsages", {}).get("items", [])
+                            if d.get("contains") and d.get("descriptorDisplayName")
+                        ]
+                        self._details_cache[uid]["age_rating"] = rec.get("contentMaturity")
+                        self._details_cache[uid]["minimum_age"] = rec.get("minimumAge")
+                        self._details_cache[uid]["content_descriptors"] = descriptors
+                except RobloxApiError as err:
+                    _LOGGER.warning("Klarte ikke hente aldersanbefaling: %s", err)
 
         # Hent thumbnails via POST /v1/batch for nye + de som mangler thumbnail
         thumb_ids_set = set(missing_info) | set(missing_thumb)
@@ -212,7 +239,8 @@ class RobloxParentalClient:
                     except RobloxApiError as err:
                         _LOGGER.warning("Klarte ikke hente thumbnails: %s", err)
 
-        return {uid: self._details_cache.get(uid, {"name": str(uid), "description": "", "playing": 0, "genre": "", "root_place_id": None, "thumbnail_url": None}) for uid in universe_ids}
+        _default = {"name": "", "description": "", "playing": 0, "genre": "", "root_place_id": None, "thumbnail_url": None, "age_rating": None, "minimum_age": None, "content_descriptors": []}
+        return {uid: self._details_cache.get(uid, {**_default, "name": str(uid)}) for uid in universe_ids}
 
     async def get_presence(self, child_id: int) -> dict:
         data = await self._post(URL_PRESENCE, {"userIds": [child_id]})

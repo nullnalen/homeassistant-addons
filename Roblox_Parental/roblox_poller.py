@@ -345,11 +345,16 @@ class RobloxPoller:
         top_universes = [
             {
                 "universe_id": int(u["universeId"]),
-                "name": details.get(int(u["universeId"]), {}).get("name", str(u["universeId"])),
-                "description": details.get(int(u["universeId"]), {}).get("description", ""),
-                "playing": details.get(int(u["universeId"]), {}).get("playing", 0),
-                "genre": details.get(int(u["universeId"]), {}).get("genre", ""),
-                "thumbnail_url": details.get(int(u["universeId"]), {}).get("thumbnail_url"),
+                **{k: details.get(int(u["universeId"]), {}).get(k, v) for k, v in [
+                    ("name", str(u["universeId"])),
+                    ("description", ""),
+                    ("playing", 0),
+                    ("genre", ""),
+                    ("thumbnail_url", None),
+                    ("age_rating", None),
+                    ("minimum_age", None),
+                    ("content_descriptors", []),
+                ]},
                 "minutes": u.get("weeklyMinutes", 0),
                 "blocked": int(u["universeId"]) in blocked_ids,
             }
