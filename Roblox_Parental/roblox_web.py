@@ -63,12 +63,18 @@ def is_configured() -> bool:
 
 @app.route("/")
 def index():
-    return send_from_directory(str(WWW_DIR), "index.html")
+    resp = send_from_directory(str(WWW_DIR), "index.html")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.route("/<path:filename>")
 def static_files(filename):
-    return send_from_directory(str(WWW_DIR), filename)
+    resp = send_from_directory(str(WWW_DIR), filename)
+    # JS og CSS: tillat cache men valider alltid mot server (ETag)
+    if filename.endswith((".js", ".css")):
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 # --- Oppsett-API ---
@@ -316,6 +322,33 @@ def api_friends(child_id: int):
     state = load_state()
     friends = state.get("friends", {}).get(str(child_id), [])
     return jsonify({"friends": friends, "child_id": child_id})
+
+
+@app.route("/api/debug/state")
+def api_debug_state():
+    """Rå state.json — for feilsøking. Viser om thumbnail/description faktisk er hentet."""
+    state = load_state()
+    children = state.get("children", {})
+    out = {}
+    for child_id, child in children.items():
+        universes = child.get("top_universes", [])
+        out[child_id] = [
+            {
+                "name": g.get("name"),
+                "has_thumbnail": bool(g.get("thumbnail_url")),
+                "has_description": bool(g.get("description")),
+                "genre": g.get("genre"),
+                "playing": g.get("playing"),
+            }
+            for g in universes
+        ]
+    friends = {k: len(v) for k, v in state.get("friends", {}).items()}
+    return jsonify({
+        "last_slow_update": state.get("last_slow_update"),
+        "games_per_child": out,
+        "friend_counts": friends,
+        "details_cache_size": len(state.get("details_cache", {})),
+    })
 
 
 @app.route("/api/health")
