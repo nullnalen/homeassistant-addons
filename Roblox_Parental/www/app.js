@@ -217,7 +217,10 @@
     renderWeekChart(child.daily_data, child.daily_limit);
 
     // Spilliste
-    renderGamesList(child.top_universes || []);
+    renderGamesList(child.top_universes || [], child.child_id);
+
+    // Venner
+    renderFriends(child.friends || []);
 
     // Sist oppdatert
     document.getElementById("last-updated").textContent =
@@ -258,18 +261,24 @@
     });
   }
 
-  function makeApproveBtn(universeId, name) {
+  function makeApproveBtn(universeId, name, childId) {
     const btn = document.createElement("button");
     btn.className = "btn btn-approve";
     btn.textContent = "Godkjenn";
     btn.onclick = async () => {
       btn.disabled = true;
       try {
+        // Avblokker i Roblox-API hvis spillet er blokkert
+        const child = state.children?.[activeChildIndex];
+        const game = child?.top_universes?.find(g => g.universe_id === universeId);
+        if (game?.blocked && childId) {
+          await postJson("/api/games/unblock", { universe_id: universeId, child_id: childId });
+        }
         await postJson("/api/games/approve", { universe_id: universeId });
         showToast(`'${name || universeId}' godkjent`, "ok");
         await refresh();
-      } catch {
-        showToast("Feil ved godkjenning", "err");
+      } catch (e) {
+        showToast("Feil ved godkjenning: " + e.message, "err");
         btn.disabled = false;
       }
     };
@@ -294,7 +303,48 @@
     return btn;
   }
 
-  function renderGamesList(universes) {
+  function makeBlockBtn(universeId, name, childId) {
+    const btn = document.createElement("button");
+    btn.className = "btn btn-block";
+    btn.textContent = "Blokker";
+    btn.onclick = async () => {
+      btn.disabled = true;
+      btn.textContent = "Blokkerer…";
+      try {
+        await postJson("/api/games/block", { universe_id: universeId, child_id: childId });
+        await postJson("/api/games/unapprove", { universe_id: universeId });
+        showToast(`'${name || universeId}' blokkert`, "ok");
+        await refresh();
+      } catch (e) {
+        showToast("Feil ved blokkering: " + e.message, "err");
+        btn.disabled = false;
+        btn.textContent = "Blokker";
+      }
+    };
+    return btn;
+  }
+
+  function makeUnblockBtn(universeId, name, childId) {
+    const btn = document.createElement("button");
+    btn.className = "btn btn-unblock";
+    btn.textContent = "Avblokker";
+    btn.onclick = async () => {
+      btn.disabled = true;
+      btn.textContent = "Avblokkerer…";
+      try {
+        await postJson("/api/games/unblock", { universe_id: universeId, child_id: childId });
+        showToast(`'${name || universeId}' avblokkert`, "ok");
+        await refresh();
+      } catch (e) {
+        showToast("Feil ved avblokkering: " + e.message, "err");
+        btn.disabled = false;
+        btn.textContent = "Avblokker";
+      }
+    };
+    return btn;
+  }
+
+  function renderGamesList(universes, childId) {
     const list = document.getElementById("games-list");
     const empty = document.getElementById("games-empty");
     list.innerHTML = "";
@@ -325,22 +375,44 @@
 
       const actions = document.createElement("div");
       actions.className = "game-row-actions";
-      if (g.status !== "approved") {
-        actions.appendChild(makeApproveBtn(g.universe_id, g.name));
-      } else {
-        actions.appendChild(makeUnapproveBtn(g.universe_id));
-      }
 
-      const blockBtn = document.createElement("button");
-      blockBtn.className = "btn btn-block-placeholder";
-      blockBtn.textContent = "Blokker";
-      blockBtn.title = "Blokkering via API ikke tilgjengelig ennå — bruk Roblox-appen";
-      blockBtn.disabled = true;
-      actions.appendChild(blockBtn);
+      if (g.status === "blocked") {
+        actions.appendChild(makeUnblockBtn(g.universe_id, g.name, childId));
+        actions.appendChild(makeApproveBtn(g.universe_id, g.name, childId));
+      } else if (g.status === "approved") {
+        actions.appendChild(makeUnapproveBtn(g.universe_id));
+        actions.appendChild(makeBlockBtn(g.universe_id, g.name, childId));
+      } else {
+        actions.appendChild(makeApproveBtn(g.universe_id, g.name, childId));
+        actions.appendChild(makeBlockBtn(g.universe_id, g.name, childId));
+      }
 
       row.appendChild(dot);
       row.appendChild(info);
       row.appendChild(actions);
+      list.appendChild(row);
+    });
+  }
+
+  function renderFriends(friends) {
+    const section = document.getElementById("friends-section");
+    const list = document.getElementById("friends-list");
+    const empty = document.getElementById("friends-empty");
+    const count = document.getElementById("friends-count");
+
+    count.textContent = friends.length;
+    list.innerHTML = "";
+
+    if (!friends.length) {
+      empty.classList.remove("hidden");
+      return;
+    }
+    empty.classList.add("hidden");
+
+    friends.forEach(f => {
+      const row = document.createElement("div");
+      row.className = "friend-row";
+      row.innerHTML = `<span class="friend-avatar">${f.name.charAt(0).toUpperCase()}</span><span class="friend-name">${f.name}</span>`;
       list.appendChild(row);
     });
   }

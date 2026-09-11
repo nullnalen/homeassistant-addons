@@ -15,7 +15,7 @@ from pathlib import Path
 import aiohttp
 from flask import Flask, jsonify, request, send_from_directory
 
-from roblox_api import RobloxAuthError, RobloxParentalClient
+from roblox_api import RobloxApiError, RobloxAuthError, RobloxParentalClient
 from roblox_poller import RobloxPoller, load_approved, load_state, save_approved
 
 _LOGGER = logging.getLogger(__name__)
@@ -179,6 +179,8 @@ def api_state():
                 else "unknown"
             )
 
+        friends = state.get("friends", {}).get(str(child_id), [])
+
         children_out.append({
             "child_id": child_id,
             "display_name": name_cache.get(child_id, f"Barn {child_id}"),
@@ -195,6 +197,7 @@ def api_state():
                 "universe_id": presence.get("universe_id"),
             },
             "current_game": current_game,
+            "friends": friends,
         })
 
     last_slow = state.get("last_slow_update")
@@ -230,6 +233,87 @@ def api_unapprove():
     approved.discard(int(universe_id))
     save_approved(approved)
     return jsonify({"ok": True})
+
+
+@app.route("/api/games/block", methods=["POST"])
+def api_block():
+    """Blokker et spill via Roblox foreldrekontroll-API."""
+    body = request.get_json(force=True)
+    universe_id = body.get("universe_id")
+    child_id = body.get("child_id")
+    if not universe_id or not child_id:
+        return jsonify({"error": "universe_id og child_id påkrevd"}), 400
+
+    opts = read_options()
+    cookie = opts.get("roblosecurity_cookie", "")
+    if not cookie:
+        return jsonify({"error": "Ikke konfigurert"}), 400
+
+    async def _block():
+        client = RobloxParentalClient(cookie)
+        try:
+            await client.block_experience(int(child_id), int(universe_id))
+        finally:
+            await client.close()
+
+    try:
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(_block())
+        loop.close()
+    except RobloxAuthError:
+        return jsonify({"error": "Cookie ugyldig eller utløpt"}), 401
+    except RobloxApiError as e:
+        return jsonify({"error": str(e)}), 502
+
+    # Fjern fra godkjent-liste hvis den var der
+    approved = load_approved()
+    approved.discard(int(universe_id))
+    save_approved(approved)
+
+    _LOGGER.info("Blokkerte spill universe_id=%s for barn %s", universe_id, child_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/games/unblock", methods=["POST"])
+def api_unblock():
+    """Avblokker et spill via Roblox foreldrekontroll-API."""
+    body = request.get_json(force=True)
+    universe_id = body.get("universe_id")
+    child_id = body.get("child_id")
+    if not universe_id or not child_id:
+        return jsonify({"error": "universe_id og child_id påkrevd"}), 400
+
+    opts = read_options()
+    cookie = opts.get("roblosecurity_cookie", "")
+    if not cookie:
+        return jsonify({"error": "Ikke konfigurert"}), 400
+
+    async def _unblock():
+        client = RobloxParentalClient(cookie)
+        try:
+            await client.unblock_experience(int(child_id), int(universe_id))
+        finally:
+            await client.close()
+
+    try:
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(_unblock())
+        loop.close()
+    except RobloxAuthError:
+        return jsonify({"error": "Cookie ugyldig eller utløpt"}), 401
+    except RobloxApiError as e:
+        return jsonify({"error": str(e)}), 502
+
+    _LOGGER.info("Avblokkerte spill universe_id=%s for barn %s", universe_id, child_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/friends/<int:child_id>")
+def api_friends(child_id: int):
+    """Henter venneliste med navn for et barn."""
+    state = load_state()
+    friends = state.get("friends", {}).get(str(child_id), [])
+    return jsonify({"friends": friends, "child_id": child_id})
 
 
 @app.route("/api/health")

@@ -20,8 +20,12 @@ URL_WEEKLY_SCREENTIME = f"{BASE_URL}/parental-controls-api/v1/parental-controls/
 URL_TOP_UNIVERSES = f"{BASE_URL}/parental-controls-api/v1/parental-controls/get-top-weekly-screentime-by-universe"
 URL_BLOCKED_EXPERIENCES = f"{BASE_URL}/experience-blocking-api/v1/get-blocked-experiences"
 URL_CHILD_SETTINGS = f"{BASE_URL}/parental-controls-api/v1/parental-controls/child-settings"
+URL_GRANT_CONSENT = f"{BASE_URL}/parental-controls-api/v1/parental-controls/grant-consent"
 URL_GAMES = f"{GAMES_URL}/v1/games"
 URL_PRESENCE = f"{PRESENCE_URL}/v1/presence/users"
+FRIENDS_URL = "https://friends.roblox.com"
+URL_FRIENDS = f"{FRIENDS_URL}/v1/users/{{user_id}}/friends/find"
+URL_PROFILES = f"{BASE_URL}/user-profile-api/v1/user/profiles/get-profiles"
 
 USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
 
@@ -164,6 +168,46 @@ class RobloxParentalClient:
         data = await self._post(URL_PRESENCE, {"userIds": [child_id]})
         users = data.get("userPresences", [])
         return users[0] if users else {}
+
+    async def block_experience(self, child_id: int, universe_id: int) -> None:
+        await self._post(URL_GRANT_CONSENT, {
+            "childUserId": child_id,
+            "consentType": "ManageExperience",
+            "details": {"experienceManagementAction": "Block", "universeId": universe_id},
+        })
+
+    async def unblock_experience(self, child_id: int, universe_id: int) -> None:
+        await self._post(URL_GRANT_CONSENT, {
+            "childUserId": child_id,
+            "consentType": "ManageExperience",
+            "details": {"experienceManagementAction": "Unblock", "universeId": universe_id},
+        })
+
+    async def get_friends(self, user_id: int) -> list[int]:
+        url = URL_FRIENDS.format(user_id=user_id)
+        data = await self._get(url)
+        return [item["id"] for item in data.get("PageItems", []) if "id" in item]
+
+    async def get_profiles(self, user_ids: list[int]) -> dict[int, str]:
+        """Henter visningsnavn for en liste med user_ids i én batch."""
+        if not user_ids:
+            return {}
+        data = await self._post(URL_PROFILES, {
+            "userIds": user_ids,
+            "fields": ["names.combinedName"],
+        })
+        return {
+            p["userId"]: p.get("names", {}).get("combinedName", str(p["userId"]))
+            for p in data.get("profileDetails", [])
+        }
+
+    async def get_friends_with_names(self, user_id: int) -> list[dict]:
+        """Henter venneliste med navn i to kall."""
+        friend_ids = await self.get_friends(user_id)
+        if not friend_ids:
+            return []
+        names = await self.get_profiles(friend_ids)
+        return [{"id": uid, "name": names.get(uid, str(uid))} for uid in friend_ids]
 
     @property
     def name_cache(self) -> dict[int, str]:

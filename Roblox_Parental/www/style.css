@@ -272,12 +272,41 @@ main {
   color: var(--text-muted);
   border-color: var(--border);
 }
-.btn-block-placeholder {
-  background: var(--surface);
-  color: var(--text-muted);
-  border-color: var(--border);
-  opacity: 0.5;
+.btn-block {
+  background: var(--red-bg);
+  color: var(--red);
+  border-color: var(--red);
 }
+.btn-unblock {
+  background: var(--yellow-bg);
+  color: var(--yellow);
+  border-color: var(--yellow);
+}
+
+/* Friends list */
+.friends-list { display: flex; flex-direction: column; gap: 8px; }
+.friend-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--surface2);
+  border-radius: var(--radius-sm);
+}
+.friend-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--blue-bg);
+  color: var(--blue);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.friend-name { font-size: 14px; }
 
 .empty-state {
   text-align: center;

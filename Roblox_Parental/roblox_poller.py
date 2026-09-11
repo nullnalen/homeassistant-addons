@@ -159,6 +159,18 @@ class RobloxPoller:
                 self._state["name_cache"] = {str(k): v for k, v in client.name_cache.items()}
                 self._state["auth_error"] = False
                 self._state["last_slow_update"] = time.time()
+
+                # Hent venneliste for hvert barn (oppdateres hver slow-poll)
+                friends_data = {}
+                for child_id in self._child_ids:
+                    try:
+                        friends = await client.get_friends_with_names(child_id)
+                        friends_data[str(child_id)] = friends
+                        _LOGGER.info("Barn %d har %d venner", child_id, len(friends))
+                    except RobloxApiError as err:
+                        _LOGGER.warning("Klarte ikke hente venner for barn %d: %s", child_id, err)
+                self._state["friends"] = friends_data
+
                 save_state(self._state)
 
                 for child_id, child_data in children_data.items():
