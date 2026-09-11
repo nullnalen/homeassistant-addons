@@ -9,7 +9,9 @@ import asyncio
 import json
 import logging
 import os
+import random
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +34,13 @@ PRESENCE_OFFLINE = 0
 PRESENCE_ONLINE = 1
 PRESENCE_IN_GAME = 2
 PRESENCE_IN_STUDIO = 3
+
+# Nattmodus: stopp fast poll i disse timene (lokal tid)
+NIGHT_HOUR_START = 23
+NIGHT_HOUR_END = 7
+
+# Eksponentiell backoff: maks ventetid i sekunder
+MAX_BACKOFF = 60 * 60  # 1 time
 
 
 def load_state() -> dict:
@@ -70,6 +79,23 @@ def save_approved(approved: set[int]) -> None:
     APPROVED_FILE.write_text(json.dumps({"approved": list(approved)}))
 
 
+def _jitter(interval: float, pct: float = 0.2) -> float:
+    """Legg til ±pct tilfeldig variasjon så kall ikke er robotaktig regelmessige."""
+    return interval * (1 + random.uniform(-pct, pct))
+
+
+def _is_night() -> bool:
+    hour = datetime.now().hour
+    if NIGHT_HOUR_START > NIGHT_HOUR_END:
+        return hour >= NIGHT_HOUR_START or hour < NIGHT_HOUR_END
+    return NIGHT_HOUR_START <= hour < NIGHT_HOUR_END
+
+
+def _any_child_online(state: dict) -> bool:
+    presences = state.get("presences", {})
+    return any(p.get("online", False) for p in presences.values())
+
+
 async def send_ha_notification(
     ha_token: str,
     title: str,
@@ -106,7 +132,6 @@ async def send_ha_notification(
 class RobloxPoller:
     def __init__(self) -> None:
         self._cookie = os.environ.get("ROBLOSECURITY_COOKIE", "")
-        # Støtter kommaseparert liste fra env: "123,456" eller enkelt tall
         raw_ids = os.environ.get("CHILD_USER_IDS", os.environ.get("CHILD_USER_ID", ""))
         self._child_ids: list[int] = [int(x) for x in raw_ids.replace(" ", "").split(",") if x.isdigit()]
         self._stopped = False
@@ -122,6 +147,10 @@ class RobloxPoller:
         self._last_notified_universe: dict[int, int | None] = {}
         self._last_limit_notified: dict[int, bool] = {}
 
+        # Backoff-tracking per loop
+        self._slow_consecutive_errors = 0
+        self._fast_consecutive_errors = 0
+
     def _get_client(self) -> RobloxParentalClient:
         if self._client is None:
             name_cache = {int(k): v for k, v in self._state.get("name_cache", {}).items()}
@@ -130,13 +159,17 @@ class RobloxPoller:
         return self._client
 
     def _rebuild_client(self) -> None:
-        """Rebuild client med oppdatert cookie (etter at bruker har oppdatert config)."""
         new_cookie = os.environ.get("ROBLOSECURITY_COOKIE", "")
         if new_cookie != self._cookie:
             self._cookie = new_cookie
             if self._client:
                 asyncio.create_task(self._client.close())
             self._client = None
+
+    def _backoff(self, consecutive_errors: int, base_interval: float) -> float:
+        """Eksponentiell backoff med jitter. Første feil = 1x, andre = 2x, osv. opp til MAX_BACKOFF."""
+        wait = min(base_interval * (2 ** consecutive_errors), MAX_BACKOFF)
+        return _jitter(wait, 0.15)
 
     async def run_slow(self) -> None:
         """Poller skjermtid, spilliste, blokkerte spill og innstillinger for alle barn."""
@@ -145,6 +178,12 @@ class RobloxPoller:
             if not self._cookie or not self._child_ids:
                 _LOGGER.warning("Cookie eller child_user_ids ikke satt — venter...")
                 await asyncio.sleep(60)
+                continue
+
+            # Hopp over slow poll om natten hvis ingen er online
+            if _is_night() and not _any_child_online(self._state):
+                _LOGGER.debug("Nattmodus — hopper over slow poll")
+                await asyncio.sleep(_jitter(self._slow_interval))
                 continue
 
             try:
@@ -162,7 +201,6 @@ class RobloxPoller:
                 self._state["auth_error"] = False
                 self._state["last_slow_update"] = time.time()
 
-                # Hent venneliste for hvert barn (oppdateres hver slow-poll)
                 friends_data = {}
                 for child_id in self._child_ids:
                     try:
@@ -184,19 +222,25 @@ class RobloxPoller:
                     )
                     await self._check_slow_alerts(int(child_id), child_data)
 
+                self._slow_consecutive_errors = 0
+
             except RobloxAuthError as err:
                 _LOGGER.error("Auth-feil: %s — oppdater cookie i addon-konfig", err)
                 self._state["auth_error"] = True
                 save_state(self._state)
-                await asyncio.sleep(self._slow_interval * 2)
+                # Auth-feil: ikke prøv igjen for aggressivt, vent lenge
+                self._slow_consecutive_errors += 1
+                await asyncio.sleep(self._backoff(self._slow_consecutive_errors, self._slow_interval))
                 continue
 
             except RobloxRateLimitError:
-                _LOGGER.warning("Rate limited — venter dobbelt intervall")
-                await asyncio.sleep(self._slow_interval * 2)
+                self._slow_consecutive_errors += 1
+                wait = self._backoff(self._slow_consecutive_errors, self._slow_interval)
+                _LOGGER.warning("Rate limited (slow) — venter %.0f s", wait)
+                await asyncio.sleep(wait)
                 continue
 
-            await asyncio.sleep(self._slow_interval)
+            await asyncio.sleep(_jitter(self._slow_interval))
 
     async def run_fast(self) -> None:
         """Poller presence for alle barn."""
@@ -204,6 +248,12 @@ class RobloxPoller:
             self._rebuild_client()
             if not self._cookie or not self._child_ids or not self._presence_enabled:
                 await asyncio.sleep(self._fast_interval)
+                continue
+
+            # Nattmodus: stopp fast poll helt om natten
+            if _is_night():
+                _LOGGER.debug("Nattmodus — pauser presence-poll")
+                await asyncio.sleep(60)
                 continue
 
             try:
@@ -251,22 +301,28 @@ class RobloxPoller:
                 _LOGGER.error("Auth-feil i fast poll: %s", err)
                 self._state["auth_error"] = True
                 save_state(self._state)
-                await asyncio.sleep(self._fast_interval * 5)
+                self._fast_consecutive_errors += 1
+                await asyncio.sleep(self._backoff(self._fast_consecutive_errors, self._fast_interval))
                 continue
 
             except RobloxRateLimitError:
-                await asyncio.sleep(self._fast_interval * 3)
-                continue
-
-            except RobloxRateLimitError:
-                await asyncio.sleep(self._fast_interval * 3)
+                self._fast_consecutive_errors += 1
+                wait = self._backoff(self._fast_consecutive_errors, self._fast_interval)
+                _LOGGER.warning("Rate limited (fast) — venter %.0f s", wait)
+                await asyncio.sleep(wait)
                 continue
 
             self._state["presences"] = presences
             self._state["name_cache"] = {str(k): v for k, v in client.name_cache.items()}
             save_state(self._state)
 
-            await asyncio.sleep(self._fast_interval)
+            self._fast_consecutive_errors = 0
+
+            # Hvis ingen barn er online: poll sjeldnere (sparer API-kall)
+            if not any(p.get("online", False) for p in presences.values()):
+                await asyncio.sleep(_jitter(self._fast_interval * 3))
+            else:
+                await asyncio.sleep(_jitter(self._fast_interval))
 
     async def _fetch_slow(self, client: RobloxParentalClient, child_id: int) -> dict:
         screentime_days = await client.get_weekly_screentime(child_id)
@@ -316,7 +372,6 @@ class RobloxPoller:
         }
 
     async def _check_slow_alerts(self, child_id: int, child_data: dict) -> None:
-        """Varsle om dagsgrense er nådd."""
         today = child_data.get("screentime_today", 0)
         limit = child_data.get("daily_limit")
         notified = self._last_limit_notified.get(child_id, False)
@@ -332,7 +387,6 @@ class RobloxPoller:
             self._last_limit_notified[child_id] = False
 
     async def _check_game_approval(self, child_id: int, universe_id: int, game_name: str | None) -> None:
-        """Sjekk om spillet er godkjent, varsle forelder hvis ukjent."""
         approved = load_approved()
         children_data = self._state.get("children", {})
         blocked_ids = set(children_data.get(str(child_id), {}).get("blocked_universe_ids", []))
