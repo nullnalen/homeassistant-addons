@@ -27,7 +27,7 @@ FRIENDS_URL = "https://friends.roblox.com"
 URL_FRIENDS = f"{FRIENDS_URL}/v1/users/{{user_id}}/friends/find"
 URL_PROFILES = f"{BASE_URL}/user-profile-api/v1/user/profiles/get-profiles"
 THUMBNAILS_URL = "https://thumbnails.roblox.com"
-URL_GAME_THUMBNAILS = f"{THUMBNAILS_URL}/v1/games/multiget/thumbnails"
+URL_GAME_THUMBNAILS = f"{THUMBNAILS_URL}/v1/batch"
 
 USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
 
@@ -158,11 +158,13 @@ class RobloxParentalClient:
 
     async def resolve_game_details(self, universe_ids: list[int]) -> dict[int, dict]:
         """Henter navn, beskrivelse, spillertall, sjanger og thumbnail for en liste spill."""
-        to_fetch = [uid for uid in universe_ids if uid not in self._details_cache]
-        if to_fetch:
+        missing_info = [uid for uid in universe_ids if uid not in self._details_cache]
+        missing_thumb = [uid for uid in universe_ids if uid in self._details_cache and self._details_cache[uid].get("thumbnail_url") is None]
+
+        if missing_info:
             chunk_size = 50
-            for i in range(0, len(to_fetch), chunk_size):
-                chunk = to_fetch[i: i + chunk_size]
+            for i in range(0, len(missing_info), chunk_size):
+                chunk = missing_info[i: i + chunk_size]
                 try:
                     data = await self._get(URL_GAMES, params={"universeIds": ",".join(str(u) for u in chunk)})
                     for game in data.get("data", []):
@@ -179,24 +181,34 @@ class RobloxParentalClient:
                 except RobloxApiError as err:
                     _LOGGER.warning("Klarte ikke slå opp spillinfo: %s", err)
 
-            # Hent thumbnails for de samme
-            thumb_ids = [uid for uid in to_fetch if uid in self._details_cache]
+        # Hent thumbnails via POST /v1/batch for nye + de som mangler thumbnail
+        thumb_ids_set = set(missing_info) | set(missing_thumb)
+        if thumb_ids_set:
+            chunk_size = 50
+            thumb_ids = [uid for uid in thumb_ids_set if uid in self._details_cache]
             if thumb_ids:
                 for i in range(0, len(thumb_ids), chunk_size):
                     chunk = thumb_ids[i: i + chunk_size]
-                    try:
-                        tdata = await self._get(URL_GAME_THUMBNAILS, params={
-                            "universeIds": ",".join(str(u) for u in chunk),
+                    batch = [
+                        {
+                            "requestId": f"{uid}::GameIcon:256x256:webp:regular:::false:false",
+                            "type": "GameIcon",
+                            "targetId": uid,
+                            "token": "",
+                            "format": "webp",
                             "size": "256x256",
-                            "format": "Png",
-                            "isCircular": "false",
-                        })
+                            "version": "",
+                        }
+                        for uid in chunk
+                    ]
+                    try:
+                        tdata = await self._post(URL_GAME_THUMBNAILS, batch)
                         for entry in tdata.get("data", []):
-                            uid = int(entry["universeId"])
-                            thumbs = entry.get("thumbnails", [])
-                            if thumbs and thumbs[0].get("state") == "Completed":
-                                if uid in self._details_cache:
-                                    self._details_cache[uid]["thumbnail_url"] = thumbs[0].get("imageUrl")
+                            if entry.get("state") == "Completed":
+                                req_id = entry.get("requestId", "")
+                                uid = int(req_id.split("::")[0]) if "::" in req_id else None
+                                if uid and uid in self._details_cache:
+                                    self._details_cache[uid]["thumbnail_url"] = entry.get("imageUrl")
                     except RobloxApiError as err:
                         _LOGGER.warning("Klarte ikke hente thumbnails: %s", err)
 
