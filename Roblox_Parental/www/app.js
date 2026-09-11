@@ -554,6 +554,37 @@
         ${aiHtml}
       `;
 
+      // Notat-felt (bygges som DOM, ikke innerHTML, for å håndtere events)
+      const noteWrap = document.createElement("div");
+      noteWrap.className = "note-wrap";
+      const noteLabel = document.createElement("div");
+      noteLabel.className = "note-label";
+      noteLabel.textContent = "Mitt notat";
+      const noteArea = document.createElement("textarea");
+      noteArea.className = "note-area";
+      noteArea.placeholder = "Skriv dine tanker om dette spillet…";
+      noteArea.value = g.note || "";
+      noteArea.rows = 2;
+      const noteSave = document.createElement("button");
+      noteSave.className = "btn btn-note-save";
+      noteSave.textContent = "Lagre";
+      noteSave.addEventListener("click", async () => {
+        noteSave.disabled = true;
+        noteSave.textContent = "Lagrer…";
+        try {
+          await postJson("/api/games/note", { universe_id: g.universe_id, note: noteArea.value });
+          noteSave.textContent = "Lagret ✓";
+          setTimeout(() => { noteSave.textContent = "Lagre"; noteSave.disabled = false; }, 2000);
+        } catch {
+          noteSave.textContent = "Feil";
+          noteSave.disabled = false;
+        }
+      });
+      noteWrap.appendChild(noteLabel);
+      noteWrap.appendChild(noteArea);
+      noteWrap.appendChild(noteSave);
+      detailInfo.appendChild(noteWrap);
+
       const actions = document.createElement("div");
       actions.className = "game-detail-actions";
 

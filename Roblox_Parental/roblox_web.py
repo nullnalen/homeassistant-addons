@@ -27,6 +27,7 @@ OPTIONS_FILE = Path("/data/options.json")
 AUTH_FILE = Path("/data/roblox_auth.json")
 STATE_FILE = Path("/data/state.json")
 APPROVED_FILE = Path("/data/approved_games.json")
+NOTES_FILE = Path("/data/game_notes.json")
 IMAGE_CACHE_DIR = Path("/data/image_cache")
 WWW_DIR = Path("/usr/bin/www")
 
@@ -75,6 +76,19 @@ def read_auth() -> dict:
         return {"roblosecurity_cookie": cookie, "child_user_ids": child_ids}
 
     return {}
+
+
+def load_notes() -> dict[str, str]:
+    if NOTES_FILE.exists():
+        try:
+            return json.loads(NOTES_FILE.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def save_notes(notes: dict[str, str]) -> None:
+    NOTES_FILE.write_text(json.dumps(notes, ensure_ascii=False, indent=2))
 
 
 def write_auth(cookie: str, child_ids: list[int]) -> None:
@@ -181,6 +195,7 @@ def api_state():
 
     state = load_state()
     approved = load_approved()
+    notes = load_notes()
     child_ids = read_auth().get("child_user_ids", [])
 
     children_data = state.get("children", {})
@@ -213,6 +228,7 @@ def api_state():
                     game[field] = cache_val
                 elif field not in game:
                     game[field] = None
+            game["note"] = notes.get(str(uid), "")
 
         current_game = None
         if presence.get("in_game") and presence.get("universe_id"):
@@ -358,11 +374,28 @@ def api_unblock():
     return jsonify({"ok": True})
 
 
+@app.route("/api/games/note", methods=["POST"])
+def api_set_note():
+    body = request.get_json(force=True)
+    universe_id = body.get("universe_id")
+    note = (body.get("note") or "").strip()
+    if not universe_id:
+        return jsonify({"error": "universe_id påkrevd"}), 400
+    notes = load_notes()
+    if note:
+        notes[str(universe_id)] = note
+    else:
+        notes.pop(str(universe_id), None)
+    save_notes(notes)
+    return jsonify({"ok": True})
+
+
 @app.route("/api/report/<int:universe_id>")
 def api_report(universe_id: int):
     """Genererer en strukturert foreldrevurderingsrapport for ett spill."""
     state = load_state()
     approved = load_approved()
+    notes = load_notes()
 
     # Finn spillet på tvers av alle barn
     game = None
@@ -462,6 +495,12 @@ def api_report(universe_id: int):
     # Status
     status = "Godkjent" if universe_id in approved else ("Blokkert" if game.get("blocked") else "Ikke vurdert")
     lines += ["", f"## Status i foreldrekontroll: {status}"]
+
+    # Foreldernotat
+    parent_note = notes.get(str(universe_id), "").strip()
+    if parent_note:
+        lines += ["", "## Forelderens notat"]
+        lines.append(parent_note)
 
     # AI-vurdering
     ai_verdict = game.get("ai_verdict")
