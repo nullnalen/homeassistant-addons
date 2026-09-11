@@ -118,9 +118,10 @@ def api_setup_save():
     opts = read_options()
     opts["roblosecurity_cookie"] = cookie
     opts["child_user_ids"] = child_ids
-    opts.setdefault("slow_poll_interval", 30)
-    opts.setdefault("fast_poll_interval", 2)
-    opts.setdefault("presence_enabled", True)
+    # Behold poll-innstillinger fra HA Options hvis de er satt
+    opts.setdefault("slow_poll_interval", int(os.environ.get("SLOW_POLL_INTERVAL", 30)))
+    opts.setdefault("fast_poll_interval", int(os.environ.get("FAST_POLL_INTERVAL", 2)))
+    opts.setdefault("presence_enabled", os.environ.get("PRESENCE_ENABLED", "true").lower() == "true")
     write_options(opts)
 
     os.environ["ROBLOSECURITY_COOKIE"] = cookie
@@ -272,11 +273,12 @@ if __name__ == "__main__":
 
     # Les options.json og eksporter til env (s6-run gjør dette bare for faste felt)
     opts = read_options()
+    # Poll-intervaller kommer fra HA Options via env (s6-run),
+    # men kan også ligge i /data/options.json fra tidligere oppsett
     if opts.get("roblosecurity_cookie"):
         os.environ.setdefault("ROBLOSECURITY_COOKIE", opts["roblosecurity_cookie"])
     if opts.get("child_user_ids"):
-        ids = opts["child_user_ids"]
-        os.environ.setdefault("CHILD_USER_IDS", ",".join(str(c) for c in ids))
+        os.environ.setdefault("CHILD_USER_IDS", ",".join(str(c) for c in opts["child_user_ids"]))
 
     if is_configured():
         _restart_poller()

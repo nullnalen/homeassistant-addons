@@ -1,6 +1,6 @@
 name: "Roblox Foreldrekontroll"
 description: "Overvåk barnets Roblox-bruk: skjermtid, spillhistorikk og godkjenning/blokkering av spill"
-version: "1.0.1"
+version: "1.0.2"
 slug: "roblox_parental"
 url: "https://github.com/nullnalen/homeassistant-addons"
 init: false
@@ -19,16 +19,11 @@ ports:
 ports_description:
   8099/tcp: "Roblox foreldrekontroll webgrensesnitt"
 options:
-  roblosecurity_cookie: ""
-  child_user_ids: []
   slow_poll_interval: 30
   fast_poll_interval: 2
   presence_enabled: true
   ha_token: ""
 schema:
-  roblosecurity_cookie: "str"
-  child_user_ids:
-    - "int"
   slow_poll_interval: "int"
   fast_poll_interval: "int"
   presence_enabled: "bool"
