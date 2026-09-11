@@ -21,6 +21,7 @@ from roblox_poller import RobloxPoller, load_approved, load_state, save_approved
 _LOGGER = logging.getLogger(__name__)
 
 OPTIONS_FILE = Path("/data/options.json")
+AUTH_FILE = Path("/data/roblox_auth.json")
 STATE_FILE = Path("/data/state.json")
 APPROVED_FILE = Path("/data/approved_games.json")
 WWW_DIR = Path("/usr/bin/www")
@@ -41,13 +42,23 @@ def read_options() -> dict:
     return {}
 
 
-def write_options(opts: dict) -> None:
-    OPTIONS_FILE.write_text(json.dumps(opts, indent=2))
+def read_auth() -> dict:
+    """Les cookie og child_user_ids fra separat fil som HA aldri rører."""
+    if AUTH_FILE.exists():
+        try:
+            return json.loads(AUTH_FILE.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def write_auth(cookie: str, child_ids: list[int]) -> None:
+    AUTH_FILE.write_text(json.dumps({"roblosecurity_cookie": cookie, "child_user_ids": child_ids}, indent=2))
 
 
 def is_configured() -> bool:
-    opts = read_options()
-    return bool(opts.get("roblosecurity_cookie")) and bool(opts.get("child_user_ids"))
+    auth = read_auth()
+    return bool(auth.get("roblosecurity_cookie")) and bool(auth.get("child_user_ids"))
 
 
 @app.route("/")
@@ -105,7 +116,7 @@ def api_fetch_children():
 
 @app.route("/api/setup/save", methods=["POST"])
 def api_setup_save():
-    """Lagre cookie + valgte barn til options.json og restart poller."""
+    """Lagre cookie + valgte barn til roblox_auth.json (ikke options.json) og restart poller."""
     body = request.get_json(force=True)
     cookie = (body.get("cookie") or "").strip()
     child_ids = body.get("child_ids")  # liste med int
@@ -115,14 +126,8 @@ def api_setup_save():
 
     child_ids = [int(c) for c in child_ids]
 
-    opts = read_options()
-    opts["roblosecurity_cookie"] = cookie
-    opts["child_user_ids"] = child_ids
-    # Behold poll-innstillinger fra HA Options hvis de er satt
-    opts.setdefault("slow_poll_interval", int(os.environ.get("SLOW_POLL_INTERVAL", 30)))
-    opts.setdefault("fast_poll_interval", int(os.environ.get("FAST_POLL_INTERVAL", 2)))
-    opts.setdefault("presence_enabled", os.environ.get("PRESENCE_ENABLED", "true").lower() == "true")
-    write_options(opts)
+    # Cookie og barn lagres i egen fil som HA aldri overskriver
+    write_auth(cookie, child_ids)
 
     os.environ["ROBLOSECURITY_COOKIE"] = cookie
     os.environ["CHILD_USER_IDS"] = ",".join(str(c) for c in child_ids)
@@ -141,8 +146,7 @@ def api_state():
 
     state = load_state()
     approved = load_approved()
-    opts = read_options()
-    child_ids = opts.get("child_user_ids", [])
+    child_ids = read_auth().get("child_user_ids", [])
 
     children_data = state.get("children", {})
     presences = state.get("presences", {})
@@ -244,8 +248,7 @@ def api_block():
     if not universe_id or not child_id:
         return jsonify({"error": "universe_id og child_id påkrevd"}), 400
 
-    opts = read_options()
-    cookie = opts.get("roblosecurity_cookie", "")
+    cookie = read_auth().get("roblosecurity_cookie", "")
     if not cookie:
         return jsonify({"error": "Ikke konfigurert"}), 400
 
@@ -283,8 +286,7 @@ def api_unblock():
     if not universe_id or not child_id:
         return jsonify({"error": "universe_id og child_id påkrevd"}), 400
 
-    opts = read_options()
-    cookie = opts.get("roblosecurity_cookie", "")
+    cookie = read_auth().get("roblosecurity_cookie", "")
     if not cookie:
         return jsonify({"error": "Ikke konfigurert"}), 400
 
@@ -355,14 +357,12 @@ if __name__ == "__main__":
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    # Les options.json og eksporter til env (s6-run gjør dette bare for faste felt)
-    opts = read_options()
-    # Poll-intervaller kommer fra HA Options via env (s6-run),
-    # men kan også ligge i /data/options.json fra tidligere oppsett
-    if opts.get("roblosecurity_cookie"):
-        os.environ.setdefault("ROBLOSECURITY_COOKIE", opts["roblosecurity_cookie"])
-    if opts.get("child_user_ids"):
-        os.environ.setdefault("CHILD_USER_IDS", ",".join(str(c) for c in opts["child_user_ids"]))
+    # Les cookie og barn fra roblox_auth.json (HA rører aldri denne filen)
+    auth = read_auth()
+    if auth.get("roblosecurity_cookie"):
+        os.environ.setdefault("ROBLOSECURITY_COOKIE", auth["roblosecurity_cookie"])
+    if auth.get("child_user_ids"):
+        os.environ.setdefault("CHILD_USER_IDS", ",".join(str(c) for c in auth["child_user_ids"]))
 
     if is_configured():
         _restart_poller()
