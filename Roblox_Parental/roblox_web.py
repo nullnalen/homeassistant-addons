@@ -358,6 +358,146 @@ def api_unblock():
     return jsonify({"ok": True})
 
 
+@app.route("/api/report/<int:universe_id>")
+def api_report(universe_id: int):
+    """Genererer en strukturert foreldrevurderingsrapport for ett spill."""
+    state = load_state()
+    approved = load_approved()
+
+    # Finn spillet på tvers av alle barn
+    game = None
+    child_minutes: dict[str, int] = {}
+    for child_key, child in state.get("children", {}).items():
+        for g in child.get("top_universes", []):
+            if g.get("universe_id") == universe_id:
+                if game is None:
+                    game = dict(g)
+                child_minutes[child_key] = g.get("minutes", 0)
+
+    # Berik fra details_cache
+    details = state.get("details_cache", {}).get(str(universe_id), {})
+    if game is None:
+        game = dict(details) if details else {}
+        game["universe_id"] = universe_id
+
+    for field in ("screenshots", "like_ratio", "up_votes", "down_votes",
+                  "creator_name", "creator_type", "creator_verified",
+                  "visits", "favorite_count", "created", "updated",
+                  "name_history", "ai_verdict", "ai_summary", "ai_concerns",
+                  "ai_safe_age", "description", "genre", "playing",
+                  "age_rating", "minimum_age", "content_descriptors", "name"):
+        if not game.get(field):
+            game[field] = details.get(field)
+
+    name = game.get("name") or f"Universe {universe_id}"
+    now = __import__("datetime").datetime.now().strftime("%Y-%m-%d")
+
+    # Bygg rapport
+    lines = [
+        f"# Foreldrevurdering: {name}",
+        f"Dato: {now}  |  Universe ID: {universe_id}  |  Kilde: Roblox Foreldrekontroll (HA-addon)",
+        "",
+        "## Spillinformasjon",
+    ]
+
+    genre = game.get("genre") or "—"
+    creator_name = game.get("creator_name") or "—"
+    creator_type = "Gruppe" if game.get("creator_type") == "Group" else "Enkeltbruker"
+    creator_verified = "✓ Verifisert" if game.get("creator_verified") else "Ikke verifisert"
+    created = (game.get("created") or "—")[:10]
+    visits = game.get("visits")
+    playing = game.get("playing")
+    favorites = game.get("favorite_count")
+    like_ratio = game.get("like_ratio")
+    up = game.get("up_votes")
+    down = game.get("down_votes")
+
+    lines += [
+        f"- **Sjanger:** {genre}",
+        f"- **Utvikler:** {creator_name} ({creator_type}, {creator_verified})",
+        f"- **Opprettet:** {created}",
+    ]
+    if visits is not None:
+        lines.append(f"- **Totalt besøk:** {visits:,}".replace(",", " "))
+    if playing is not None:
+        lines.append(f"- **Spiller nå:** {playing:,}".replace(",", " "))
+    if favorites is not None:
+        lines.append(f"- **Favoritter:** {favorites:,}".replace(",", " "))
+    if like_ratio is not None:
+        vote_str = f"{up:,} opp / {down:,} ned".replace(",", " ") if up is not None else ""
+        lines.append(f"- **Like-ratio:** {like_ratio}% ({vote_str})")
+
+    name_history = game.get("name_history") or []
+    if len(name_history) >= 2:
+        lines.append(f"- **Navnehistorikk:** {len(name_history)} registrerte navn ({', '.join(name_history[:4])}{'…' if len(name_history) > 4 else ''})")
+
+    lines += ["", "## Aldersanbefaling (Roblox)"]
+    age_rating = game.get("age_rating")
+    minimum_age = game.get("minimum_age")
+    maturity_map = {"minimal": "Minimal", "moderate": "Moderat", "restricted": "Begrenset"}
+    if age_rating:
+        lines.append(f"- **Innholdsmodenhet:** {maturity_map.get(age_rating, age_rating)}")
+    if minimum_age:
+        lines.append(f"- **Minimumsalder:** {minimum_age}+")
+    descriptors = game.get("content_descriptors") or []
+    if descriptors:
+        lines.append(f"- **Innholdsdeskriptorer:** {', '.join(descriptors)}")
+    if not age_rating and not descriptors:
+        lines.append("- Ingen offisiell aldersanbefaling registrert")
+
+    lines += ["", "## Beskrivelse"]
+    description = (game.get("description") or "").strip()
+    lines.append(description if description else "_Ingen beskrivelse tilgjengelig._")
+
+    # Skjermtid
+    if child_minutes:
+        lines += ["", "## Barnets bruk denne uken"]
+        name_cache = {int(k): v for k, v in state.get("name_cache", {}).items()}
+        for child_id_str, mins in child_minutes.items():
+            child_display = name_cache.get(int(child_id_str), f"Barn {child_id_str}")
+            h, m = divmod(mins, 60)
+            time_str = f"{h}t {m}m" if h else f"{m} min"
+            lines.append(f"- **{child_display}:** {time_str}")
+
+    # Status
+    status = "Godkjent" if universe_id in approved else ("Blokkert" if game.get("blocked") else "Ikke vurdert")
+    lines += ["", f"## Status i foreldrekontroll: {status}"]
+
+    # AI-vurdering
+    ai_verdict = game.get("ai_verdict")
+    ai_summary = game.get("ai_summary")
+    ai_concerns = game.get("ai_concerns") or []
+    ai_safe_age = game.get("ai_safe_age")
+
+    if ai_verdict:
+        verdict_map = {"gronn": "✅ Greit for barn", "gul": "⚠️ Foreldres skjønn", "rod": "❌ Ikke anbefalt"}
+        lines += ["", "## AI-vurdering (lokal analyse)"]
+        lines.append(f"**{verdict_map.get(ai_verdict, ai_verdict)}**")
+        if ai_safe_age:
+            lines.append(f"Anbefalt minimumsalder: {ai_safe_age} år")
+        if ai_summary:
+            lines.append(f"\n{ai_summary}")
+        if ai_concerns:
+            lines += ["", "**Bekymringer:**"]
+            for c in ai_concerns:
+                lines.append(f"- {c}")
+
+    lines += [
+        "",
+        "---",
+        f"_Rapport generert av Roblox Foreldrekontroll addon. "
+        f"Lim inn i en AI-tjeneste for dypere analyse._",
+        "",
+        "**Foreslått spørsmål til AI:**",
+        f'Er "{name}" et passende Roblox-spill for et barn på 9-12 år? '
+        f"Basert på informasjonen over, hva bør en forelder spesielt være oppmerksom på?",
+    ]
+
+    report_text = "\n".join(lines)
+    return Response(report_text, mimetype="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="rapport_{universe_id}.md"'})
+
+
 @app.route("/api/friends/<int:child_id>")
 def api_friends(child_id: int):
     """Henter venneliste med navn for et barn."""

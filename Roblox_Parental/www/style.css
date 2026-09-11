@@ -550,6 +550,12 @@ main {
   color: var(--yellow);
   border-color: var(--yellow);
 }
+.btn-report {
+  background: var(--blue-bg);
+  color: var(--blue);
+  border-color: var(--blue);
+  margin-left: auto;
+}
 
 /* Friends list */
 .friends-list { display: flex; flex-direction: column; gap: 8px; }

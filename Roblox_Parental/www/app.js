@@ -383,6 +383,30 @@
     return btn;
   }
 
+  function makeReportBtn(universeId, name) {
+    const btn = document.createElement("button");
+    btn.className = "btn btn-report";
+    btn.textContent = "Kopier rapport";
+    btn.title = "Kopier rapport til utklippstavlen for å lime inn i AI-tjeneste";
+    btn.onclick = async () => {
+      btn.disabled = true;
+      btn.textContent = "Henter…";
+      try {
+        const resp = await fetch(apiUrl(`/api/report/${universeId}`));
+        const text = await resp.text();
+        await navigator.clipboard.writeText(text);
+        showToast("Rapport kopiert til utklippstavlen", "ok");
+        btn.textContent = "Kopiert ✓";
+        setTimeout(() => { btn.textContent = "Kopier rapport"; btn.disabled = false; }, 2500);
+      } catch (e) {
+        showToast("Feil ved kopiering: " + e.message, "err");
+        btn.textContent = "Kopier rapport";
+        btn.disabled = false;
+      }
+    };
+    return btn;
+  }
+
   function renderGamesList(universes, childId) {
     const list = document.getElementById("games-list");
     const empty = document.getElementById("games-empty");
@@ -540,6 +564,7 @@
         actions.appendChild(makeApproveBtn(g.universe_id, g.name, childId));
         actions.appendChild(makeBlockBtn(g.universe_id, g.name, childId));
       }
+      actions.appendChild(makeReportBtn(g.universe_id, g.name));
 
       const topRow = document.createElement("div");
       topRow.className = "game-detail-top";
