@@ -5,6 +5,7 @@
   let state = null;
   let activeChildIndex = 0;
   let currentTab = "all";
+  let expandedUniverseIds = new Set();
 
   const BASE = (() => {
     const p = window.location.pathname;
@@ -13,6 +14,7 @@
   })();
 
   function apiUrl(path) { return BASE + path; }
+  function imgUrl(url) { return url ? apiUrl("/api/image-proxy?url=" + encodeURIComponent(url)) : null; }
 
   async function fetchJson(path) {
     const r = await fetch(apiUrl(path));
@@ -433,7 +435,7 @@
       thumbEl.className = "game-detail-thumb";
       if (g.thumbnail_url) {
         const img = document.createElement("img");
-        img.src = g.thumbnail_url;
+        img.src = imgUrl(g.thumbnail_url);
         img.alt = g.name;
         img.loading = "lazy";
         thumbEl.appendChild(img);
@@ -448,11 +450,11 @@
       screenshotsEl.className = "game-screenshots" + (screenshots.length ? "" : " hidden");
       screenshots.forEach(url => {
         const img = document.createElement("img");
-        img.src = url;
+        img.src = imgUrl(url);
         img.alt = "Screenshot";
         img.loading = "lazy";
         img.className = "screenshot-img";
-        img.addEventListener("click", () => openLightbox(url, g.name));
+        img.addEventListener("click", () => openLightbox(imgUrl(url), g.name));
         screenshotsEl.appendChild(img);
       });
 
@@ -547,11 +549,20 @@
       detail.appendChild(screenshotsEl);
       detail.appendChild(actions);
 
+      const uid = g.universe_id;
+      if (expandedUniverseIds.has(uid)) {
+        row.setAttribute("aria-expanded", "true");
+        detail.classList.remove("hidden");
+        chevron.textContent = "▾";
+      }
+
       row.addEventListener("click", () => {
         const expanded = row.getAttribute("aria-expanded") === "true";
         row.setAttribute("aria-expanded", String(!expanded));
         detail.classList.toggle("hidden", expanded);
         chevron.textContent = expanded ? "▸" : "▾";
+        if (!expanded) expandedUniverseIds.add(uid);
+        else expandedUniverseIds.delete(uid);
       });
 
       wrap.appendChild(row);

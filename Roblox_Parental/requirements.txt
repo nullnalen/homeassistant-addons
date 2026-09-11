@@ -1,3 +1,4 @@
 aiohttp==3.10.11
 aiofiles==23.2.1
 flask==3.1.0
+requests==2.32.3

@@ -5,6 +5,7 @@ Starter polling i bakgrunnen og serverer REST API + statisk webgrensesnitt.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -13,7 +14,8 @@ import time
 from pathlib import Path
 
 import aiohttp
-from flask import Flask, jsonify, request, send_from_directory
+import requests
+from flask import Flask, Response, jsonify, request, send_from_directory
 
 from roblox_ai import check_ollama_available
 from roblox_api import RobloxApiError, RobloxAuthError, RobloxParentalClient
@@ -25,7 +27,10 @@ OPTIONS_FILE = Path("/data/options.json")
 AUTH_FILE = Path("/data/roblox_auth.json")
 STATE_FILE = Path("/data/state.json")
 APPROVED_FILE = Path("/data/approved_games.json")
+IMAGE_CACHE_DIR = Path("/data/image_cache")
 WWW_DIR = Path("/usr/bin/www")
+
+IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 app = Flask(__name__, static_folder=str(WWW_DIR))
 
@@ -417,6 +422,40 @@ def api_ai_status():
         "games_pending": total - analyzed,
         "verdicts": verdicts,
     })
+
+
+@app.route("/api/image-proxy")
+def api_image_proxy():
+    """Henter og cacher eksterne bilder lokalt — omgår nettverksblokkeringer hos bruker."""
+    url = request.args.get("url", "").strip()
+    if not url or not url.startswith("https://"):
+        return "", 400
+
+    cache_key = hashlib.sha256(url.encode()).hexdigest()
+    # Behold original filendelse for korrekt content-type
+    ext = url.split("?")[0].rsplit(".", 1)[-1].lower()
+    if ext not in ("webp", "png", "jpg", "jpeg", "gif"):
+        ext = "webp"
+    cache_path = IMAGE_CACHE_DIR / f"{cache_key}.{ext}"
+
+    if not cache_path.exists():
+        try:
+            resp = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+            if resp.status_code != 200:
+                return "", 502
+            cache_path.write_bytes(resp.content)
+        except Exception as err:
+            _LOGGER.warning("Image proxy feilet for %s: %s", url, err)
+            return "", 502
+
+    content_types = {"webp": "image/webp", "png": "image/png", "jpg": "image/jpeg",
+                     "jpeg": "image/jpeg", "gif": "image/gif"}
+    ct = content_types.get(ext, "image/webp")
+    return Response(
+        cache_path.read_bytes(),
+        mimetype=ct,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.route("/api/health")
