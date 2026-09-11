@@ -31,9 +31,12 @@ def _build_prompt(game: dict) -> str:
     playing = game.get("playing", 0)
     name_history = game.get("name_history") or []
 
-    age_str = f"{age_rating}"
-    if minimum_age:
-        age_str += f" ({minimum_age}+)"
+    if age_rating == "unrated":
+        age_str = "Ikke vurdert av Roblox (mangler offisiell aldersanbefaling)"
+    else:
+        age_str = f"{age_rating}"
+        if minimum_age:
+            age_str += f" ({minimum_age}+)"
 
     creator_str = creator_name
     if creator_type == "Group":

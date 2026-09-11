@@ -234,8 +234,8 @@
       s.last_slow_update ? `Oppdatert ${timeAgo(s.last_slow_update)}` : "";
   }
 
-  const MATURITY_LABEL = { minimal: "Minimal", moderate: "Moderat", restricted: "Begrenset" };
-  const MATURITY_COLOR = { minimal: "var(--green)", moderate: "var(--yellow)", restricted: "var(--red)" };
+  const MATURITY_LABEL = { minimal: "Minimal", moderate: "Moderat", restricted: "Begrenset", unrated: "Ikke vurdert av Roblox" };
+  const MATURITY_COLOR = { minimal: "var(--green)", moderate: "var(--yellow)", restricted: "var(--red)", unrated: "var(--text-muted)" };
   const AI_VERDICT_LABEL = { gronn: "✓ Greit for barn", gul: "⚠ Foreldres skjønn", rod: "✗ Ikke anbefalt" };
   const AI_VERDICT_COLOR = { gronn: "var(--green)", gul: "var(--yellow)", rod: "var(--red)" };
 
@@ -438,9 +438,12 @@
 
       const info = document.createElement("div");
       info.className = "game-row-info";
+      const ageTag = g.age_rating
+        ? `  •  <span style="color:${MATURITY_COLOR[g.age_rating] || "var(--text-muted)"}">${MATURITY_LABEL[g.age_rating] || g.age_rating}${g.minimum_age > 0 && g.age_rating !== "unrated" ? ` ${g.minimum_age}+` : ""}</span>`
+        : "";
       info.innerHTML = `
         <div class="game-row-name">${g.name}</div>
-        <div class="game-row-meta">${formatMinutes(g.minutes)} denne uken  •  ${statusLabel[g.status] || g.status}${g.playing ? `  •  ${g.playing.toLocaleString("no")} spiller nå` : ""}</div>
+        <div class="game-row-meta">${formatMinutes(g.minutes)} denne uken  •  ${statusLabel[g.status] || g.status}${ageTag}${g.playing ? `  •  ${g.playing.toLocaleString("no")} spiller nå` : ""}</div>
       `;
 
       const chevron = document.createElement("div");

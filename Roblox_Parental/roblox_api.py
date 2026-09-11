@@ -224,8 +224,10 @@ class RobloxParentalClient:
                             for d in (entry.get("ageRecommendationDetails") or {}).get("experienceDescriptorUsages", {}).get("items", [])
                             if d.get("contains") and d.get("descriptorDisplayName")
                         ]
-                        self._details_cache[uid]["age_rating"] = rec.get("contentMaturity")
-                        self._details_cache[uid]["minimum_age"] = rec.get("minimumAge")
+                        maturity = rec.get("contentMaturity")
+                        self._details_cache[uid]["age_rating"] = maturity
+                        # unrated = Roblox har ikke vurdert spillet, default-alder er ikke meningsfull
+                        self._details_cache[uid]["minimum_age"] = rec.get("minimumAge") if maturity != "unrated" else None
                         self._details_cache[uid]["content_descriptors"] = descriptors
                 except RobloxApiError as err:
                     _LOGGER.warning("Klarte ikke hente aldersanbefaling: %s", err)
