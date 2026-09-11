@@ -123,9 +123,10 @@ class RobloxPoller:
         self._last_limit_notified: dict[int, bool] = {}
 
     def _get_client(self) -> RobloxParentalClient:
-        name_cache = {int(k): v for k, v in self._state.get("name_cache", {}).items()}
         if self._client is None:
-            self._client = RobloxParentalClient(self._cookie, name_cache)
+            name_cache = {int(k): v for k, v in self._state.get("name_cache", {}).items()}
+            details_cache = {int(k): v for k, v in self._state.get("details_cache", {}).items()}
+            self._client = RobloxParentalClient(self._cookie, name_cache, details_cache)
         return self._client
 
     def _rebuild_client(self) -> None:
@@ -157,6 +158,7 @@ class RobloxPoller:
 
                 self._state["children"] = children_data
                 self._state["name_cache"] = {str(k): v for k, v in client.name_cache.items()}
+                self._state["details_cache"] = {str(k): v for k, v in client.details_cache.items()}
                 self._state["auth_error"] = False
                 self._state["last_slow_update"] = time.time()
 
@@ -281,13 +283,17 @@ class RobloxPoller:
 
         top_universes_raw = await client.get_top_universes(child_id)
         universe_ids = [int(u["universeId"]) for u in top_universes_raw if "universeId" in u]
-        names = await client.resolve_names(universe_ids)
+        details = await client.resolve_game_details(universe_ids)
         blocked_ids = await client.get_blocked(child_id)
 
         top_universes = [
             {
                 "universe_id": int(u["universeId"]),
-                "name": names.get(int(u["universeId"]), str(u["universeId"])),
+                "name": details.get(int(u["universeId"]), {}).get("name", str(u["universeId"])),
+                "description": details.get(int(u["universeId"]), {}).get("description", ""),
+                "playing": details.get(int(u["universeId"]), {}).get("playing", 0),
+                "genre": details.get(int(u["universeId"]), {}).get("genre", ""),
+                "thumbnail_url": details.get(int(u["universeId"]), {}).get("thumbnail_url"),
                 "minutes": u.get("weeklyMinutes", 0),
                 "blocked": int(u["universeId"]) in blocked_ids,
             }

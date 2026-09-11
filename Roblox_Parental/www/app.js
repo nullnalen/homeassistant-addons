@@ -359,9 +359,16 @@
     }
     empty.classList.add("hidden");
 
+    const statusLabel = { approved: "Godkjent", blocked: "Blokkert", unknown: "Ukjent" };
+
     filtered.forEach(g => {
+      const wrap = document.createElement("div");
+      wrap.className = "game-wrap";
+
+      // ── Sammendragsrad (alltid synlig) ──
       const row = document.createElement("div");
-      row.className = "game-row";
+      row.className = "game-row game-row-clickable";
+      row.setAttribute("aria-expanded", "false");
 
       const dot = document.createElement("div");
       dot.className = `game-dot dot-${g.status}`;
@@ -370,11 +377,47 @@
       info.className = "game-row-info";
       info.innerHTML = `
         <div class="game-row-name">${g.name}</div>
-        <div class="game-row-meta">${formatMinutes(g.minutes)} denne uken  •  ${{approved:"Godkjent",blocked:"Blokkert",unknown:"Ukjent"}[g.status]}</div>
+        <div class="game-row-meta">${formatMinutes(g.minutes)} denne uken  •  ${statusLabel[g.status] || g.status}${g.playing ? `  •  ${g.playing.toLocaleString("no")} spiller nå` : ""}</div>
+      `;
+
+      const chevron = document.createElement("div");
+      chevron.className = "game-row-chevron";
+      chevron.textContent = "▸";
+
+      row.appendChild(dot);
+      row.appendChild(info);
+      row.appendChild(chevron);
+
+      // ── Detalj-panel (skjult til å begynne med) ──
+      const detail = document.createElement("div");
+      detail.className = "game-detail hidden";
+
+      const thumbEl = document.createElement("div");
+      thumbEl.className = "game-detail-thumb";
+      if (g.thumbnail_url) {
+        const img = document.createElement("img");
+        img.src = g.thumbnail_url;
+        img.alt = g.name;
+        img.loading = "lazy";
+        thumbEl.appendChild(img);
+      } else {
+        thumbEl.classList.add("game-detail-thumb-placeholder");
+        thumbEl.textContent = "🎮";
+      }
+
+      const detailInfo = document.createElement("div");
+      detailInfo.className = "game-detail-info";
+      const meta = [
+        g.genre ? `Sjanger: ${g.genre}` : "",
+        g.playing ? `${g.playing.toLocaleString("no")} spiller nå` : "",
+      ].filter(Boolean).join("  •  ");
+      detailInfo.innerHTML = `
+        ${meta ? `<div class="game-detail-meta">${meta}</div>` : ""}
+        ${g.description ? `<div class="game-detail-desc">${g.description}</div>` : ""}
       `;
 
       const actions = document.createElement("div");
-      actions.className = "game-row-actions";
+      actions.className = "game-detail-actions";
 
       if (g.status === "blocked") {
         actions.appendChild(makeUnblockBtn(g.universe_id, g.name, childId));
@@ -387,10 +430,20 @@
         actions.appendChild(makeBlockBtn(g.universe_id, g.name, childId));
       }
 
-      row.appendChild(dot);
-      row.appendChild(info);
-      row.appendChild(actions);
-      list.appendChild(row);
+      detail.appendChild(thumbEl);
+      detail.appendChild(detailInfo);
+      detail.appendChild(actions);
+
+      row.addEventListener("click", () => {
+        const expanded = row.getAttribute("aria-expanded") === "true";
+        row.setAttribute("aria-expanded", String(!expanded));
+        detail.classList.toggle("hidden", expanded);
+        chevron.textContent = expanded ? "▸" : "▾";
+      });
+
+      wrap.appendChild(row);
+      wrap.appendChild(detail);
+      list.appendChild(wrap);
     });
   }
 

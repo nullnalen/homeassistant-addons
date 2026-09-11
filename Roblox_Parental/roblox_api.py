@@ -26,6 +26,8 @@ URL_PRESENCE = f"{PRESENCE_URL}/v1/presence/users"
 FRIENDS_URL = "https://friends.roblox.com"
 URL_FRIENDS = f"{FRIENDS_URL}/v1/users/{{user_id}}/friends/find"
 URL_PROFILES = f"{BASE_URL}/user-profile-api/v1/user/profiles/get-profiles"
+THUMBNAILS_URL = "https://thumbnails.roblox.com"
+URL_GAME_THUMBNAILS = f"{THUMBNAILS_URL}/v1/games/multiget/thumbnails"
 
 USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
 
@@ -43,10 +45,11 @@ class RobloxApiError(Exception):
 
 
 class RobloxParentalClient:
-    def __init__(self, cookie: str, name_cache: dict[int, str] | None = None) -> None:
+    def __init__(self, cookie: str, name_cache: dict[int, str] | None = None, details_cache: dict[int, dict] | None = None) -> None:
         self._cookie = cookie
         self._csrf_token: str | None = None
         self._name_cache: dict[int, str] = name_cache or {}
+        self._details_cache: dict[int, dict] = details_cache or {}
         self._session: aiohttp.ClientSession | None = None
 
     def _make_session(self) -> aiohttp.ClientSession:
@@ -150,7 +153,12 @@ class RobloxParentalClient:
         return await self._get(URL_CHILD_SETTINGS, params={"childUserId": child_id})
 
     async def resolve_names(self, universe_ids: list[int]) -> dict[int, str]:
-        to_fetch = [uid for uid in universe_ids if uid not in self._name_cache]
+        details = await self.resolve_game_details(universe_ids)
+        return {uid: details[uid]["name"] for uid in universe_ids if uid in details}
+
+    async def resolve_game_details(self, universe_ids: list[int]) -> dict[int, dict]:
+        """Henter navn, beskrivelse, spillertall, sjanger og thumbnail for en liste spill."""
+        to_fetch = [uid for uid in universe_ids if uid not in self._details_cache]
         if to_fetch:
             chunk_size = 50
             for i in range(0, len(to_fetch), chunk_size):
@@ -159,10 +167,40 @@ class RobloxParentalClient:
                     data = await self._get(URL_GAMES, params={"universeIds": ",".join(str(u) for u in chunk)})
                     for game in data.get("data", []):
                         uid = int(game["id"])
-                        self._name_cache[uid] = game.get("name", str(uid))
+                        self._details_cache[uid] = {
+                            "name": game.get("name", str(uid)),
+                            "description": (game.get("description") or "").strip()[:300],
+                            "playing": game.get("playing", 0),
+                            "genre": game.get("genre", ""),
+                            "root_place_id": game.get("rootPlaceId"),
+                            "thumbnail_url": None,
+                        }
+                        self._name_cache[uid] = self._details_cache[uid]["name"]
                 except RobloxApiError as err:
-                    _LOGGER.warning("Klarte ikke slå opp spillnavn: %s", err)
-        return {uid: self._name_cache.get(uid, str(uid)) for uid in universe_ids}
+                    _LOGGER.warning("Klarte ikke slå opp spillinfo: %s", err)
+
+            # Hent thumbnails for de samme
+            thumb_ids = [uid for uid in to_fetch if uid in self._details_cache]
+            if thumb_ids:
+                for i in range(0, len(thumb_ids), chunk_size):
+                    chunk = thumb_ids[i: i + chunk_size]
+                    try:
+                        tdata = await self._get(URL_GAME_THUMBNAILS, params={
+                            "universeIds": ",".join(str(u) for u in chunk),
+                            "size": "256x256",
+                            "format": "Png",
+                            "isCircular": "false",
+                        })
+                        for entry in tdata.get("data", []):
+                            uid = int(entry["universeId"])
+                            thumbs = entry.get("thumbnails", [])
+                            if thumbs and thumbs[0].get("state") == "Completed":
+                                if uid in self._details_cache:
+                                    self._details_cache[uid]["thumbnail_url"] = thumbs[0].get("imageUrl")
+                    except RobloxApiError as err:
+                        _LOGGER.warning("Klarte ikke hente thumbnails: %s", err)
+
+        return {uid: self._details_cache.get(uid, {"name": str(uid), "description": "", "playing": 0, "genre": "", "root_place_id": None, "thumbnail_url": None}) for uid in universe_ids}
 
     async def get_presence(self, child_id: int) -> dict:
         data = await self._post(URL_PRESENCE, {"userIds": [child_id]})
@@ -212,3 +250,7 @@ class RobloxParentalClient:
     @property
     def name_cache(self) -> dict[int, str]:
         return dict(self._name_cache)
+
+    @property
+    def details_cache(self) -> dict[int, dict]:
+        return dict(self._details_cache)
