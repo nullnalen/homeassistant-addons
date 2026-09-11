@@ -448,13 +448,14 @@
       const screenshots = g.screenshots || [];
       const screenshotsEl = document.createElement("div");
       screenshotsEl.className = "game-screenshots" + (screenshots.length ? "" : " hidden");
-      screenshots.forEach(url => {
+      const proxiedScreenshots = screenshots.map(u => imgUrl(u));
+      screenshots.forEach((url, i) => {
         const img = document.createElement("img");
-        img.src = imgUrl(url);
+        img.src = proxiedScreenshots[i];
         img.alt = "Screenshot";
         img.loading = "lazy";
         img.className = "screenshot-img";
-        img.addEventListener("click", () => openLightbox(imgUrl(url), g.name));
+        img.addEventListener("click", () => openLightbox(proxiedScreenshots[i], g.name, proxiedScreenshots));
         screenshotsEl.appendChild(img);
       });
 
@@ -571,19 +572,66 @@
     });
   }
 
-  function openLightbox(url, title) {
+  let _lbUrls = [];
+  let _lbIndex = 0;
+
+  function _lbShow(index) {
+    _lbIndex = (_lbUrls.length + index) % _lbUrls.length;
+    document.getElementById("lightbox-img").src = _lbUrls[_lbIndex];
+    const counter = document.getElementById("lightbox-counter");
+    if (counter) counter.textContent = _lbUrls.length > 1 ? `${_lbIndex + 1} / ${_lbUrls.length}` : "";
+    const prev = document.getElementById("lightbox-prev");
+    const next = document.getElementById("lightbox-next");
+    if (prev) prev.style.display = _lbUrls.length > 1 ? "" : "none";
+    if (next) next.style.display = _lbUrls.length > 1 ? "" : "none";
+  }
+
+  function openLightbox(url, title, allUrls) {
     let lb = document.getElementById("lightbox");
     if (!lb) {
       lb = document.createElement("div");
       lb.id = "lightbox";
       lb.className = "lightbox";
-      lb.innerHTML = '<div class="lightbox-inner"><img id="lightbox-img"><div id="lightbox-title"></div></div>';
-      lb.addEventListener("click", () => lb.classList.add("hidden"));
+      lb.innerHTML = `
+        <button id="lightbox-prev" class="lightbox-nav lightbox-prev">&#8249;</button>
+        <div class="lightbox-inner">
+          <img id="lightbox-img">
+          <div class="lightbox-footer">
+            <span id="lightbox-title"></span>
+            <span id="lightbox-counter"></span>
+          </div>
+        </div>
+        <button id="lightbox-next" class="lightbox-nav lightbox-next">&#8250;</button>
+      `;
+      lb.addEventListener("click", e => {
+        if (e.target === lb) lb.classList.add("hidden");
+      });
+      document.getElementById("lightbox-prev", lb).addEventListener
+        ? void 0 : null;
       document.body.appendChild(lb);
+
+      document.getElementById("lightbox-prev").addEventListener("click", e => {
+        e.stopPropagation();
+        _lbShow(_lbIndex - 1);
+      });
+      document.getElementById("lightbox-next").addEventListener("click", e => {
+        e.stopPropagation();
+        _lbShow(_lbIndex + 1);
+      });
+
+      document.addEventListener("keydown", e => {
+        if (lb.classList.contains("hidden")) return;
+        if (e.key === "ArrowLeft") _lbShow(_lbIndex - 1);
+        else if (e.key === "ArrowRight") _lbShow(_lbIndex + 1);
+        else if (e.key === "Escape") lb.classList.add("hidden");
+      });
     }
-    document.getElementById("lightbox-img").src = url;
+
+    _lbUrls = allUrls && allUrls.length ? allUrls : [url];
+    _lbIndex = Math.max(0, _lbUrls.indexOf(url));
     document.getElementById("lightbox-title").textContent = title || "";
     lb.classList.remove("hidden");
+    _lbShow(_lbIndex);
   }
 
   function renderFriends(friends) {
