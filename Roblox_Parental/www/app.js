@@ -180,7 +180,10 @@
     // Presence badge (for aktivt barn i tab)
     const badge = document.getElementById("presence-badge");
     const p = child.presence || {};
-    if (p.in_game) {
+    if (p.in_studio) {
+      badge.textContent = "I Studio";
+      badge.className = "badge badge-studio";
+    } else if (p.in_game) {
       badge.textContent = "Spiller nå";
       badge.className = "badge badge-ingame";
     } else if (p.online) {
@@ -211,6 +214,18 @@
         statusEl.style.color = "var(--yellow)";
         actionsEl.appendChild(makeApproveBtn(child.current_game.universe_id, child.current_game.name));
       }
+
+      // Venner i samme spill
+      const friendsEl = document.getElementById("current-game-friends");
+      const friends = p.friends_playing_with || [];
+      if (friends.length) {
+        friendsEl.classList.remove("hidden");
+        friendsEl.innerHTML = `<span class="playing-with-label">Spiller med:</span> ` +
+          friends.map(f => `<span class="playing-with-chip">${f.name}</span>`).join("");
+      } else {
+        friendsEl.classList.add("hidden");
+        friendsEl.innerHTML = "";
+      }
     } else {
       sec.classList.add("hidden");
     }
@@ -219,8 +234,12 @@
     const todayEl = document.getElementById("today-value");
     const weekEl = document.getElementById("week-value");
     const limitEl = document.getElementById("today-limit");
+    const robuxEl = document.getElementById("robux-value");
     todayEl.textContent = formatMinutes(child.screentime_today);
     weekEl.textContent = formatMinutes(child.screentime_week);
+    if (robuxEl) {
+      robuxEl.textContent = child.robux_balance != null ? child.robux_balance.toLocaleString("no") : "—";
+    }
     const todayBox = todayEl.closest(".screentime-box");
     if (child.daily_limit && child.screentime_today >= child.daily_limit) {
       todayBox.classList.add("screentime-over");
@@ -474,9 +493,17 @@
         ? `<div class="game-row-tags">${descriptors.map(d => `<span class="game-row-tag">${d}</span>`).join("")}</div>`
         : "";
 
-      const timeInfo = g.minutes > 0
-        ? `${formatMinutes(g.minutes)} denne uken`
-        : g.last_seen ? `Sist sett ${daysAgo(g.last_seen)}` : "Ikke spilt denne uken";
+      const totalMins = g.total_minutes || 0;
+      const thisWeekMins = g.minutes || 0;
+      let timeInfo;
+      if (thisWeekMins > 0) {
+        timeInfo = `${formatMinutes(thisWeekMins)} denne uken`;
+        if (totalMins > thisWeekMins) timeInfo += ` · ${formatMinutes(totalMins)} totalt`;
+      } else if (totalMins > 0) {
+        timeInfo = `${formatMinutes(totalMins)} totalt · sist sett ${daysAgo(g.last_seen)}`;
+      } else {
+        timeInfo = g.last_seen ? `Sist sett ${daysAgo(g.last_seen)}` : "Ikke spilt";
+      }
       info.innerHTML = `
         <div class="game-row-name ${g.status === "blocked" ? "game-row-name-blocked" : ""}">${blockedPrefix}${g.name}</div>
         <div class="game-row-meta">${timeInfo}  •  ${statusLabel[g.status] || g.status}${g.playing ? `  •  ${g.playing.toLocaleString("no")} spiller nå` : ""}</div>

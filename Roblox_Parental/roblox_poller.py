@@ -270,43 +270,78 @@ class RobloxPoller:
             try:
                 client = self._get_client()
                 presences = {}
+
+                try:
+                    all_presences = await client.get_presences(self._child_ids)
+                except RobloxApiError as err:
+                    _LOGGER.debug("Presence-batch feilet: %s", err)
+                    all_presences = {}
+
+                # Batch resolve_names for alle barn som er i spill
+                active_universe_ids = [
+                    int(all_presences[cid]["universeId"])
+                    for cid in self._child_ids
+                    if cid in all_presences
+                    and all_presences[cid].get("universeId")
+                    and all_presences[cid].get("userPresenceType") in (PRESENCE_IN_GAME, PRESENCE_IN_STUDIO)
+                ]
+                if active_universe_ids:
+                    await client.resolve_names(active_universe_ids)
+
+                now_ts = time.time()
                 for child_id in self._child_ids:
-                    try:
-                        presence = await client.get_presence(child_id)
-                    except RobloxApiError as err:
-                        _LOGGER.debug("Presence-feil barn %d: %s", child_id, err)
-                        continue
+                    presence = all_presences.get(child_id, {})
 
                     presence_type = presence.get("userPresenceType", PRESENCE_OFFLINE)
                     online = presence_type in (PRESENCE_ONLINE, PRESENCE_IN_GAME, PRESENCE_IN_STUDIO)
                     in_game = presence_type == PRESENCE_IN_GAME
+                    in_studio = presence_type == PRESENCE_IN_STUDIO
 
                     universe_id: int | None = None
                     game_name: str | None = None
+                    place_id: int | None = None
+                    game_id: str | None = None
 
-                    if in_game:
+                    if in_game or in_studio:
                         uid = presence.get("universeId")
                         if uid:
                             universe_id = int(uid)
-                            names = await client.resolve_names([universe_id])
-                            game_name = names.get(universe_id)
+                            game_name = client.name_cache.get(universe_id) or presence.get("lastLocation")
                         else:
                             game_name = presence.get("lastLocation")
+                        raw_place = presence.get("placeId")
+                        if raw_place:
+                            place_id = int(raw_place)
+                        game_id = presence.get("gameId")
 
                     prev = self._state.get("presences", {}).get(str(child_id), {})
                     was_in_game = prev.get("in_game", False)
                     prev_universe = prev.get("universe_id")
 
+                    # Finn venner i samme spill — kun når barnet nettopp byttet spill eller ikke allerede cached
+                    friends_playing_with: list[dict] = prev.get("friends_playing_with", [])
+                    if in_game and universe_id and (not was_in_game or universe_id != prev_universe):
+                        try:
+                            friends_playing_with = await client.get_friends_in_same_game(child_id, universe_id)
+                        except RobloxApiError as err:
+                            _LOGGER.debug("Klarte ikke hente medspillere for barn %d: %s", child_id, err)
+                        await self._check_game_approval(child_id, universe_id, game_name)
+                    elif not in_game:
+                        friends_playing_with = []
+
                     presences[str(child_id)] = {
                         "online": online,
                         "in_game": in_game,
+                        "in_studio": in_studio,
                         "game_name": game_name,
                         "universe_id": universe_id,
-                        "last_updated": time.time(),
+                        "place_id": place_id,
+                        "game_id": game_id,
+                        "last_online": presence.get("lastOnline"),
+                        "last_location": presence.get("lastLocation"),
+                        "friends_playing_with": friends_playing_with,
+                        "last_updated": now_ts,
                     }
-
-                    if in_game and universe_id and (not was_in_game or universe_id != prev_universe):
-                        await self._check_game_approval(child_id, universe_id, game_name)
 
             except RobloxAuthError as err:
                 _LOGGER.error("Auth-feil i fast poll: %s", err)
@@ -356,16 +391,34 @@ class RobloxPoller:
         # Oppdater kjent spillhistorikk — akkumulerer på tvers av uker
         known = self._state.setdefault("children", {}).setdefault(str(child_id), {}).get("known_universes", {})
         now_ts = int(time.time())
+        # ISO-ukenøkkel brukes for å oppdage ukebytte uten å miste historikk
+        current_week = datetime.now().strftime("%Y-W%W")
         for u in top_universes_raw:
             uid_str = str(int(u["universeId"])) if "universeId" in u else None
             if not uid_str:
                 continue
             mins_this_week = u.get("weeklyMinutes", 0)
             if uid_str in known:
-                known[uid_str]["minutes_this_week"] = mins_this_week
-                known[uid_str]["last_seen"] = now_ts
+                entry = known[uid_str]
+                prev_week = entry.get("current_week")
+                if prev_week != current_week:
+                    # Ny uke: arkiver forrige ukes minutter og start på nytt
+                    history = entry.setdefault("week_history", {})
+                    if prev_week and entry.get("minutes_this_week", 0) > 0:
+                        history[prev_week] = entry["minutes_this_week"]
+                    entry["current_week"] = current_week
+                    entry["total_minutes"] = entry.get("total_minutes", 0) + entry.get("minutes_this_week", 0)
+                entry["minutes_this_week"] = mins_this_week
+                entry["last_seen"] = now_ts
             else:
-                known[uid_str] = {"minutes_this_week": mins_this_week, "last_seen": now_ts, "first_seen": now_ts}
+                known[uid_str] = {
+                    "minutes_this_week": mins_this_week,
+                    "current_week": current_week,
+                    "total_minutes": 0,
+                    "week_history": {},
+                    "last_seen": now_ts,
+                    "first_seen": now_ts,
+                }
 
         # Bygg spilliste fra full historikk (ikke bare denne uken)
         all_uid_strs = list(known.keys())
@@ -405,6 +458,8 @@ class RobloxPoller:
                 "ai_concerns": d.get("ai_concerns", []),
                 "ai_safe_age": d.get("ai_safe_age"),
                 "minutes": entry.get("minutes_this_week", 0),
+                "total_minutes": entry.get("total_minutes", 0) + entry.get("minutes_this_week", 0),
+                "week_history": entry.get("week_history", {}),
                 "last_seen": entry.get("last_seen"),
                 "first_seen": entry.get("first_seen"),
                 "blocked": uid in blocked_ids,
@@ -417,6 +472,8 @@ class RobloxPoller:
         daily_limit = (settings.get("dailyScreenTimeLimit") or {}).get("currentValue")
         age_level = (settings.get("contentAgeRestriction") or {}).get("currentValue")
 
+        robux_balance = await client.get_robux_balance(child_id)
+
         return {
             "screentime_today": today_minutes,
             "screentime_week": week_minutes,
@@ -426,6 +483,7 @@ class RobloxPoller:
             "blocked_universe_ids": list(blocked_ids),
             "daily_limit": daily_limit,
             "age_level": age_level,
+            "robux_balance": robux_balance,
         }
 
     async def _check_slow_alerts(self, child_id: int, child_data: dict) -> None:
@@ -446,11 +504,16 @@ class RobloxPoller:
     async def _run_ai_analysis(self, client: RobloxParentalClient) -> None:
         """Kjør AI-vurdering for spill som mangler den. Oppdaterer details_cache og state."""
         details = client.details_cache
-        # Finn spill som ikke har fått AI-vurdering ennå
+        # Kun spill barnet faktisk har spilt — ikke alt som ligger i cache
+        known_uids: set[int] = set()
+        for child in self._state.get("children", {}).values():
+            for uid_str in child.get("known_universes", {}):
+                known_uids.add(int(uid_str))
+
         needs_analysis = [
             uid for uid, d in details.items()
-            if d.get("ai_verdict") is None and d.get("name")
-        ]
+            if uid in known_uids and d.get("ai_verdict") is None and d.get("name")
+        ][:10]  # maks 10 per runde for å ikke blokkere slow poll
         if not needs_analysis:
             return
 

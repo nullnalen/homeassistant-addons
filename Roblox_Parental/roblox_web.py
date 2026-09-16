@@ -146,9 +146,7 @@ def api_fetch_children():
             await client.close()
 
     try:
-        loop = asyncio.new_event_loop()
-        me, children = loop.run_until_complete(_fetch())
-        loop.close()
+        me, children = asyncio.run(_fetch())
     except RobloxAuthError:
         return jsonify({"error": "Cookie er ugyldig eller utløpt"}), 401
     except Exception as e:
@@ -254,13 +252,20 @@ def api_state():
             "screentime_week": child.get("screentime_week", 0),
             "daily_limit": child.get("daily_limit"),
             "age_level": child.get("age_level"),
+            "robux_balance": child.get("robux_balance"),
             "daily_data": child.get("daily_data", []),
             "top_universes": top_universes,
             "presence": {
                 "online": presence.get("online", False),
                 "in_game": presence.get("in_game", False),
+                "in_studio": presence.get("in_studio", False),
                 "game_name": presence.get("game_name"),
                 "universe_id": presence.get("universe_id"),
+                "place_id": presence.get("place_id"),
+                "game_id": presence.get("game_id"),
+                "last_online": presence.get("last_online"),
+                "last_location": presence.get("last_location"),
+                "friends_playing_with": presence.get("friends_playing_with", []),
             },
             "current_game": current_game,
             "friends": friends,
@@ -324,9 +329,7 @@ def api_block():
             await client.close()
 
     try:
-        loop = asyncio.new_event_loop()
-        loop.run_until_complete(_block())
-        loop.close()
+        asyncio.run(_block())
     except RobloxAuthError:
         return jsonify({"error": "Cookie ugyldig eller utløpt"}), 401
     except RobloxApiError as e:
@@ -362,9 +365,7 @@ def api_unblock():
             await client.close()
 
     try:
-        loop = asyncio.new_event_loop()
-        loop.run_until_complete(_unblock())
-        loop.close()
+        asyncio.run(_unblock())
     except RobloxAuthError:
         return jsonify({"error": "Cookie ugyldig eller utløpt"}), 401
     except RobloxApiError as e:
@@ -685,9 +686,7 @@ def api_ai_status():
     async def _check():
         return await check_ollama_available()
 
-    loop = asyncio.new_event_loop()
-    available = loop.run_until_complete(_check())
-    loop.close()
+    available = asyncio.run(_check())
 
     return jsonify({
         "ollama_available": available,
@@ -713,9 +712,7 @@ def api_ai_analyze(universe_id: int):
             return None
         return await analyze_game(details)
 
-    loop = asyncio.new_event_loop()
-    result = loop.run_until_complete(_run())
-    loop.close()
+    result = asyncio.run(_run())
 
     if result is None:
         return jsonify({"error": "Ollama ikke tilgjengelig eller analyse feilet"}), 503

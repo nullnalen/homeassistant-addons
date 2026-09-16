@@ -64,6 +64,7 @@ header {
 .badge-offline { background: var(--surface2); color: var(--text-muted); }
 .badge-online { background: var(--green-bg); color: var(--green); border: 1px solid var(--green); }
 .badge-ingame { background: var(--blue-bg); color: var(--blue); border: 1px solid var(--blue); animation: pulse 2s infinite; }
+.badge-studio { background: var(--yellow-bg); color: var(--yellow); border: 1px solid var(--yellow); }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
@@ -138,7 +139,7 @@ main {
 /* Screentime */
 .screentime-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -165,6 +166,36 @@ main {
   margin-top: 4px;
 }
 .screentime-over .screentime-value { color: var(--red); }
+.screentime-robux { color: var(--yellow); }
+
+/* Spiller med */
+.playing-with {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 13px;
+}
+.playing-with-label {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-right: 2px;
+}
+.playing-with-chip {
+  background: var(--blue-bg);
+  color: var(--blue);
+  border: 1px solid rgba(92,158,255,0.3);
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 500;
+}
 
 /* Week chart */
 .week-chart {
@@ -836,6 +867,8 @@ main {
 
 @media (max-width: 500px) {
   .screentime-value { font-size: 24px; }
+  .screentime-grid { grid-template-columns: 1fr 1fr; }
+  .screentime-grid .screentime-box:last-child { grid-column: span 2; }
   .game-name-large { font-size: 16px; }
   .logo h1 { font-size: 14px; }
   .setup-card { padding: 24px 16px; }

@@ -35,6 +35,8 @@ URL_GAME_THUMBNAILS = f"{THUMBNAILS_URL}/v1/batch"
 URL_GAME_SCREENSHOTS = f"{THUMBNAILS_URL}/v1/games/multiget/thumbnails"
 URL_AGE_RECOMMENDATIONS = f"{BASE_URL}/experience-guidelines-service/v1beta1/multi-age-recommendation"
 URL_UNIVERSE_FROM_PLACE = "https://apis.roblox.com/universes/v1/places/{place_id}/universe"
+ECONOMY_URL = "https://economy.roblox.com"
+URL_ROBUX_BALANCE = f"{ECONOMY_URL}/v1/users/{{user_id}}/currency"
 
 USER_AGENT = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
 
@@ -100,19 +102,19 @@ class RobloxParentalClient:
     async def _post(self, url: str, json: dict) -> Any:
         session = await self._get_session()
 
-        async def _do_post() -> aiohttp.ClientResponse:
+        def _make_ctx():
             headers: dict[str, str] = {}
             if self._csrf_token:
                 headers["x-csrf-token"] = self._csrf_token
             return session.post(url, json=json, headers=headers)
 
         try:
-            async with await _do_post() as resp:
+            async with _make_ctx() as resp:
                 if resp.status == 403:
                     new_csrf = resp.headers.get("x-csrf-token")
                     if new_csrf:
                         self._csrf_token = new_csrf
-                        async with await _do_post() as retry:
+                        async with _make_ctx() as retry:
                             if retry.status == 401:
                                 raise RobloxAuthError("Cookie ugyldig (401 på retry)")
                             if retry.status == 403:
@@ -345,6 +347,21 @@ class RobloxParentalClient:
         users = data.get("userPresences", [])
         return users[0] if users else {}
 
+    async def get_presences(self, user_ids: list[int]) -> dict[int, dict]:
+        """Henter presence for flere brukere i ett kall. Returnerer {user_id: presence}."""
+        if not user_ids:
+            return {}
+        data = await self._post(URL_PRESENCE, {"userIds": user_ids})
+        return {int(p["userId"]): p for p in data.get("userPresences", []) if "userId" in p}
+
+    async def get_robux_balance(self, user_id: int) -> int | None:
+        try:
+            url = URL_ROBUX_BALANCE.format(user_id=user_id)
+            data = await self._get(url)
+            return data.get("robux")
+        except RobloxApiError:
+            return None
+
     async def block_experience(self, child_id: int, universe_id: int) -> None:
         await self._post(URL_GRANT_CONSENT, {
             "childUserId": child_id,
@@ -384,6 +401,30 @@ class RobloxParentalClient:
             return []
         names = await self.get_profiles(friend_ids)
         return [{"id": uid, "name": names.get(uid, str(uid))} for uid in friend_ids]
+
+    async def get_friends_in_same_game(self, child_id: int, universe_id: int) -> list[dict]:
+        """Finn venner som spiller samme universe som barnet akkurat nå."""
+        friend_ids = await self.get_friends(child_id)
+        if not friend_ids:
+            return []
+        # Presence-APIet håndterer inntil 50 brukere per kall
+        chunk_size = 50
+        same_game: list[dict] = []
+        for i in range(0, len(friend_ids), chunk_size):
+            chunk = friend_ids[i: i + chunk_size]
+            try:
+                presences = await self.get_presences(chunk)
+                for uid, p in presences.items():
+                    if p.get("universeId") and int(p["universeId"]) == universe_id:
+                        same_game.append({"id": uid, "name": str(uid)})
+            except RobloxApiError:
+                pass
+        if not same_game:
+            return []
+        names = await self.get_profiles([f["id"] for f in same_game])
+        for f in same_game:
+            f["name"] = names.get(f["id"], str(f["id"]))
+        return same_game
 
     @property
     def name_cache(self) -> dict[int, str]:
