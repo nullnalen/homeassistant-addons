@@ -1,6 +1,6 @@
 name: "Finn no Bobil"
 description: "Addon traverserer finn på jakt etter bobiler og lagrer historikk i database"
-version: "1.74"
+version: "1.75"
 slug: "finn_no_bobil"
 init: false
 arch:
@@ -60,6 +60,7 @@ options:
   # Scrape-intervall i timer (hvor ofte nye annonser hentes fra Finn.no)
   scrape_interval: 6
   vegvesen_api_key: ""
+  log_level: "info"
 schema:
   databasehost: "str"
   databaseusername: "str"
@@ -80,4 +81,5 @@ schema:
   sort: "str"
   scrape_interval: "int"
   vegvesen_api_key: "str?"
+  log_level: "list(debug|info|warning|error|critical)?"
 

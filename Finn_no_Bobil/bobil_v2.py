@@ -17,13 +17,19 @@ MAX_RETRIES = 3
 
 # RUN_LOCALLY blir False hvis miljøvariabelen ikke er satt eller ikke finnes.
 RUN_LOCALLY = os.getenv("RUN_LOCALLY", "false").lower() == "true"
+
 logger = logging.getLogger()
-logger.setLevel(logging.INFO)
 logger.handlers.clear()
 console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.DEBUG)
 console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
 logger.addHandler(console_handler)
+
+def _apply_log_level(level_str: str) -> None:
+    level = getattr(logging, level_str.upper(), logging.INFO)
+    logger.setLevel(level)
+    console_handler.setLevel(level)
+
+_apply_log_level("info")
 
 if RUN_LOCALLY:
     # Kjører lokalt — les konfig fra miljøvariabler
@@ -45,6 +51,8 @@ else:
     except Exception as e:
         logger.error("Ukjent feil ved lasting av SUPERVISOR_OPTIONS: %s", e)
         sys.exit(1)
+
+_apply_log_level(options.get("log_level", "info"))
 
 FINN_API_BASE = "https://www.finn.no/mobility/search/api/search/SEARCH_ID_CAR_MOBILE_HOME"
 AUTODB_SEARCH_URL = "https://www.autodb.no/s/extsearch/"
