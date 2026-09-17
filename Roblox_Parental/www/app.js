@@ -823,9 +823,38 @@
     }
   }
 
+  function initAuthRefresh() {
+    const btn = document.getElementById("auth-refresh-btn");
+    const input = document.getElementById("auth-refresh-cookie");
+    const errEl = document.getElementById("auth-refresh-error");
+
+    btn.addEventListener("click", async () => {
+      const cookie = input.value.trim();
+      if (!cookie) return;
+      btn.disabled = true;
+      btn.textContent = "Oppdaterer…";
+      errEl.classList.add("hidden");
+      try {
+        await postJson("/api/setup/update-cookie", { cookie });
+        input.value = "";
+        showToast("Cookie oppdatert — poller restartet", "ok");
+        await refresh();
+      } catch (e) {
+        const msg = e.message.includes("401") ? "Cookie er ugyldig eller utløpt" : "Tilkoblingsfeil — prøv igjen";
+        errEl.textContent = msg;
+        errEl.classList.remove("hidden");
+        btn.disabled = false;
+        btn.textContent = "Oppdater";
+      }
+    });
+
+    input.addEventListener("keydown", e => { if (e.key === "Enter") btn.click(); });
+  }
+
   async function init() {
     setupTabs();
     initSetup();
+    initAuthRefresh();
 
     document.getElementById("export-list-btn").addEventListener("click", async () => {
       const btn = document.getElementById("export-list-btn");

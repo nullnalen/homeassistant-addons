@@ -183,6 +183,40 @@ def api_setup_save():
     return jsonify({"ok": True})
 
 
+@app.route("/api/setup/update-cookie", methods=["POST"])
+def api_update_cookie():
+    """Oppdater kun cookie — beholder eksisterende barn. Restarter polleren."""
+    body = request.get_json(force=True)
+    cookie = (body.get("cookie") or "").strip()
+    if not cookie:
+        return jsonify({"error": "cookie er påkrevd"}), 400
+
+    auth = read_auth()
+    child_ids = auth.get("child_user_ids", [])
+    if not child_ids:
+        return jsonify({"error": "Ingen barn konfigurert — bruk fullstendig oppsett"}), 400
+
+    async def _validate():
+        client = RobloxParentalClient(cookie)
+        try:
+            return await client.authenticate()
+        finally:
+            await client.close()
+
+    try:
+        asyncio.run(_validate())
+    except RobloxAuthError:
+        return jsonify({"error": "Cookie er ugyldig eller utløpt"}), 401
+    except Exception as e:
+        return jsonify({"error": f"Tilkoblingsfeil: {e}"}), 502
+
+    write_auth(cookie, [int(c) for c in child_ids])
+    os.environ["ROBLOSECURITY_COOKIE"] = cookie
+    _restart_poller()
+
+    return jsonify({"ok": True})
+
+
 # --- REST API ---
 
 @app.route("/api/state")

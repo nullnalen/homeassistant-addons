@@ -56,7 +56,14 @@
       </header>
 
       <div id="auth-error-banner" class="auth-error-banner hidden">
-        ⚠️ Cookie er utløpt eller ugyldig. Gå til innstillinger og oppdater <strong>roblosecurity_cookie</strong>.
+        <div class="auth-error-top">
+          ⚠️ Cookie er utløpt eller ugyldig — lim inn ny cookie for å fortsette.
+        </div>
+        <div class="auth-error-form">
+          <input type="password" id="auth-refresh-cookie" placeholder="Lim inn ny .ROBLOSECURITY cookie…" autocomplete="off">
+          <button id="auth-refresh-btn" class="btn btn-primary">Oppdater</button>
+        </div>
+        <div id="auth-refresh-error" class="auth-refresh-error hidden"></div>
       </div>
 
       <div id="enforce-allowlist-banner" class="enforce-allowlist-banner hidden">

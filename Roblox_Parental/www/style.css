@@ -77,9 +77,41 @@ header {
   background: var(--red-bg);
   border-bottom: 1px solid var(--red);
   color: var(--red);
-  padding: 10px 20px;
-  text-align: center;
+  padding: 12px 20px;
   font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.auth-error-top { text-align: center; }
+.auth-error-form {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  max-width: 560px;
+}
+.auth-error-form input {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--red);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-size: 13px;
+  outline: none;
+  min-width: 0;
+}
+.auth-error-form input:focus { border-color: var(--text); }
+.auth-error-form .btn-primary {
+  padding: 7px 16px;
+  font-size: 13px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.auth-refresh-error {
+  font-size: 12px;
+  color: var(--red);
 }
 
 .enforce-allowlist-banner {
