@@ -204,10 +204,16 @@ def api_update_cookie():
             await client.close()
 
     try:
-        asyncio.run(_validate())
-    except RobloxAuthError:
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(_validate())
+        finally:
+            loop.close()
+    except RobloxAuthError as e:
+        _LOGGER.warning("Cookie-validering feilet: %s", e)
         return jsonify({"error": "Cookie er ugyldig eller utløpt"}), 401
     except Exception as e:
+        _LOGGER.warning("Cookie-validering unntak: %s", e)
         return jsonify({"error": f"Tilkoblingsfeil: {e}"}), 502
 
     write_auth(cookie, [int(c) for c in child_ids])

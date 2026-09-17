@@ -89,6 +89,8 @@ class RobloxParentalClient:
                 if resp.status == 401:
                     raise RobloxAuthError("Cookie ugyldig eller utløpt (401)")
                 if resp.status == 403:
+                    body = await resp.text()
+                    _LOGGER.warning("403 på GET %s — body: %s", url, body[:200])
                     raise RobloxAuthError("Forbudt (403) på GET — cookie kan være ugyldig")
                 if resp.status == 429:
                     raise RobloxRateLimitError("Rate limited (429)")
