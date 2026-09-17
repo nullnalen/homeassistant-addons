@@ -203,6 +203,7 @@ def api_update_cookie():
         finally:
             await client.close()
 
+    _LOGGER.info("Cookie-oppdatering: lengde=%d, starter=%s", len(cookie), cookie[:30])
     try:
         loop = asyncio.new_event_loop()
         try:
