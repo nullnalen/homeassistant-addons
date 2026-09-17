@@ -2,9 +2,9 @@ ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
 LABEL maintainer="Kristian Kaldager <kristian@jomedit.no>"
-LABEL io.hass.version="1.0.35"
+LABEL io.hass.version="1.0.36"
 
-ENV ADDON_VERSION="1.0.35"
+ENV ADDON_VERSION="1.0.36"
 
 RUN apk add --no-cache python3 py3-pip
 

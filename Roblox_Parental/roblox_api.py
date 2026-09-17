@@ -357,12 +357,22 @@ class RobloxParentalClient:
         return {int(p["userId"]): p for p in data.get("userPresences", []) if "userId" in p}
 
     async def get_robux_balance(self, user_id: int) -> int | None:
+        # Economy-APIet returnerer 403 for barnekontoen — ikke en ekte auth-feil
+        url = URL_ROBUX_BALANCE.format(user_id=user_id)
+        session = await self._get_session()
         try:
-            url = URL_ROBUX_BALANCE.format(user_id=user_id)
-            data = await self._get(url)
-            return data.get("robux")
-        except RobloxApiError:
-            return None
+            async with session.get(url) as resp:
+                if resp.status in (401, 403, 404):
+                    return None
+                if resp.status == 429:
+                    raise RobloxRateLimitError("Rate limited (429)")
+                if resp.status >= 500:
+                    raise RobloxApiError(f"Serverfeil {resp.status}")
+                resp.raise_for_status()
+                data = await resp.json(content_type=None)
+                return data.get("robux")
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            raise RobloxApiError(f"Nettverksfeil: {err}") from err
 
     async def block_experience(self, child_id: int, universe_id: int) -> None:
         await self._post(URL_GRANT_CONSENT, {
