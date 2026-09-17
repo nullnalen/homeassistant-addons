@@ -220,7 +220,7 @@ def extract_info_from_json(json_data: dict) -> list[dict]:
                 logger.warning("Hopper over annonse uten id/url: %s", ad.get("heading", "ukjent"))
                 continue
             timestamp = ad.get("timestamp")
-            formatted_date = datetime.fromtimestamp(timestamp / 1000).strftime(DATE_FORMAT) if timestamp else "Ukjent"
+            formatted_date = datetime.fromtimestamp(timestamp / 1000) if timestamp else None
             # Hent bilde-URL fra API — Finn.no returnerer "image" (entall, dict)
             image_url = ""
             img = ad.get("image") or {}
@@ -1313,30 +1313,23 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
 
             km_str = format_kilometerstand(ad.get("Kilometerstand") or 0)
 
-            def _iso_to_str(raw):
+            def _iso_to_dt(raw):
                 if not raw:
-                    return "Ukjent"
+                    return None
                 try:
-                    return datetime.fromisoformat(raw.replace("Z", "+00:00")).strftime(DATE_FORMAT)
+                    return datetime.fromisoformat(raw.replace("Z", "+00:00")).replace(tzinfo=None)
                 except Exception:
-                    return raw[:16] if raw else "Ukjent"
+                    return None
 
-            oppdatert_str = _iso_to_str(ad.get("Oppdatert"))
-            sistsett_str = _iso_to_str(ad.get("SistSett")) if ad.get("SistSett") else None
+            oppdatert_dt = _iso_to_dt(ad.get("Oppdatert"))
+            sistsett_dt = _iso_to_dt(ad.get("SistSett"))
 
             svv = ad.get("VegvesenData") or {}
             svv_data = _build_svv_data_tuple(svv)
             tekst_nlp = ad.get("Annonsenavn", "") or ""
             placeholders_a = ", ".join(["%s"] * (27 + len(_SVV_COLS)))
-            autodb_sist_endret_str = _iso_to_str(ad.get("AutodbSistEndret")) if ad.get("AutodbSistEndret") else None
-            publisert_dato_str = _iso_to_str(ad.get("PublisertDato")) if ad.get("PublisertDato") else None
-            # Konverter tilbake til datetime for PublisertDato-kolonnen
-            publisert_dato_dt = None
-            if publisert_dato_str and publisert_dato_str != "Ukjent":
-                try:
-                    publisert_dato_dt = datetime.strptime(publisert_dato_str, DATE_FORMAT)
-                except Exception:
-                    pass
+            autodb_sist_endret_dt = _iso_to_dt(ad.get("AutodbSistEndret"))
+            publisert_dato_dt = _iso_to_dt(ad.get("PublisertDato"))
 
             if not dry_run:
                 try:
@@ -1380,10 +1373,10 @@ def update_database_autodb(ads: list[dict], existing_kjennemerker: dict, dry_run
                         "",
                         "Ikke oppgitt",
                         "Ikke oppgitt",
-                        oppdatert_str,
+                        oppdatert_dt,
                         publisert_dato_dt,
-                        sistsett_str,
-                        autodb_sist_endret_str,
+                        sistsett_dt,
+                        autodb_sist_endret_dt,
                         ad["URL"],
                         ny_pris_int,
                         ad.get("ImageURL", ""),

@@ -1902,7 +1902,7 @@ def get_sokresultater(keywords_str):
             GROUP BY b.Finnkode, b.AutodbId, b.Kilde, b.Annonsenavn, b.Beskrivelse, b.Modell,
                      b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
                      b.Oppdatert, b.Pris
-            ORDER BY STR_TO_DATE(b.Oppdatert, '%d. %m. %Y %H:%i') DESC
+            ORDER BY b.Oppdatert DESC
         """, params)
         rows = cur.fetchall()
 
@@ -2027,7 +2027,7 @@ def get_detaljer(page=1, per_page=50, filters=None):
                      b.Kilometerstand, b.Girkasse, b.Nyttelast, b.Typebobil,
                      b.Oppdatert, b.Pris, b.URL, b.ImageURL, b.Lokasjon, b.Solgt, b.SistSett,
                      b.Sengelayout, b.Heftelser, b.HeftelseSjekket, b.HeftelserDetaljer
-            ORDER BY STR_TO_DATE(b.Oppdatert, '%d. %m. %Y %H:%i') DESC
+            ORDER BY b.Oppdatert DESC
             LIMIT %s OFFSET %s
         """, params + [per_page, offset])
         rows = cur.fetchall()
