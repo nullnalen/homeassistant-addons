@@ -51,7 +51,7 @@ except (json.JSONDecodeError, TypeError, ValueError) as _cfg_err:
 
 # Versjon satt av Dockerfile via ADDON_VERSION env-var, fallback til hardkodet
 # (synkroniseres med config.yaml ved hvert release via Dockerfile LABEL)
-ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.33")
+ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.34")
 
 # Konstanter
 MAX_INFO_LENGTH = 500
@@ -728,22 +728,35 @@ def parse_pdf(file_path: Path) -> tuple[dict, list]:
         with pdfplumber.open(str(file_path)) as pdf:
             if not pdf.pages:
                 raise ValueError("PDF-en er tom")
-            page1 = pdf.pages[0]
-            tables = page1.extract_tables()
 
-            if not tables:
-                raise ValueError("Ingen tabeller funnet i PDF-en")
-
-            ukeplan_rows = tables[0]
-            logger.info("Ukeplan-tabell: %d rader, %d kolonner", len(ukeplan_rows), len(ukeplan_rows[0]) if ukeplan_rows else 0)
-
-            output = _parse_ukeplan_table(ukeplan_rows)
+            # Søk gjennom alle tabeller på alle sider og bruk den første som gir ukedager.
+            # Tidligere ble kun første tabell på side 1 forsøkt, noe som feilet når malen
+            # fikk en liten tabell (f.eks. overskrift) foran selve ukeplanen.
+            output = {}
+            tables = []
+            ukeplan_page = pdf.pages[0]
+            for page_no, page in enumerate(pdf.pages, start=1):
+                page_tables = page.extract_tables()
+                if page_no == 1:
+                    tables = page_tables
+                for table_no, table in enumerate(page_tables, start=1):
+                    logger.info(
+                        "Side %d, tabell %d: %d rader, %d kolonner",
+                        page_no, table_no, len(table), len(table[0]) if table else 0,
+                    )
+                    candidate = _parse_ukeplan_table(table)
+                    if candidate:
+                        output = candidate
+                        ukeplan_page = page
+                        break
+                if output:
+                    break
 
             if not output:
                 raise ValueError("Ingen ukedager funnet i PDF-tabellen. PDF-malen kan ha endret seg.")
 
             # Legg til emoji-prefiks på lekser (🌜/☀️) som pdfplumber ikke klarte å lese som tekst
-            output = _apply_emoji_to_ukeplan(output, page1)
+            output = _apply_emoji_to_ukeplan(output, ukeplan_page)
 
     except ValueError:
         raise
@@ -1329,8 +1342,13 @@ def upload_pdf():
             tmp_path.unlink(missing_ok=True)
             return jsonify({"error": "Kunne ikke aktivere fil etter parsing"}), 500
     else:
-        # Parsing feilet — behold forrige PDF, slett temp
-        tmp_path.unlink(missing_ok=True)
+        # Parsing feilet — behold forrige PDF, og lagre den forkastede PDF-en til feilsøking
+        rejected_path = pdf_path.with_suffix(".rejected.pdf")
+        try:
+            tmp_path.replace(rejected_path)
+            logger.warning("Forkastet PDF lagret for feilsøking: %s", rejected_path)
+        except IOError:
+            tmp_path.unlink(missing_ok=True)
         logger.warning("PDF forkastet for %s (parsing feilet): %s", child_name, message)
 
     return (

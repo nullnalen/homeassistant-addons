@@ -5,6 +5,14 @@ Alle vesentlige endringer i dette prosjektet vil bli dokumentert i denne filen.
 Formatet er basert på [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 og prosjektet følger [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.34] - 2026-09-30
+
+### Fikset
+- Parseren søker nå gjennom alle tabeller på alle sider og bruker første som gir ukedager. Før ble bare første tabell på side 1 forsøkt, og Henriks PDF (uke 40) ble forkastet med «Ingen ukedager funnet» når første tabell var en liten tabell (1 rad, 3 kolonner).
+
+### Endret
+- Forkastede PDF-er lagres nå som `<barn>.rejected.pdf` i `/data/ukenytt/` slik at årsaken kan feilsøkes.
+
 ## [1.0.28] - 2026-08-24
 
 ### Fikset
