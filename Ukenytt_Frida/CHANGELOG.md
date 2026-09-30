@@ -5,6 +5,11 @@ Alle vesentlige endringer i dette prosjektet vil bli dokumentert i denne filen.
 Formatet er basert på [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 og prosjektet følger [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.35] - 2026-09-30
+
+### Lagt til
+- Ny valgfri barneinnstilling `week_homework`. For barn med ukelekser (f.eks. Frida) vises ukas lekser alle skoledager i stedet for bare på dagen de står i PDF-en. Dagens opprinnelige lekser bevares i `dagens_lekser` i den rike JSON-en.
+
 ## [1.0.34] - 2026-09-30
 
 ### Fikset

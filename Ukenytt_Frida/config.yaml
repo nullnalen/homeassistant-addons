@@ -1,6 +1,6 @@
 name: "Ukenytt"
 description: "Mottar ukenytt-PDF via HTTP og konverterer til Home Assistant sensorer. Perfekt for å digitalisere ukeplaner fra barnehage/skole."
-version: "1.0.34"
+version: "1.0.35"
 slug: "ukenytt"
 url: "https://github.com/nullnalen/homeassistant-addons"
 init: false
@@ -29,8 +29,10 @@ options:
   api_key: ""
   children:
     - name: "Barn1"
+      week_homework: false
 schema:
   api_key: str?
   children:
     - name: str
+      week_homework: bool?
 advanced: false

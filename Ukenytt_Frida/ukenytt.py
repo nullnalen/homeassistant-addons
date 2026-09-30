@@ -42,16 +42,23 @@ try:
     if not isinstance(_children_list, list) or not _children_list:
         raise ValueError("UKENYTT_CHILDREN er ikke en liste eller er tom")
     CHILDREN = [child.get("name", "Barn") for child in _children_list]
+    # Barn som har ukelekser: leksene gjelder hele uka og vises alle skoledager
+    WEEK_HOMEWORK_CHILDREN = {
+        child.get("name", "Barn").lower()
+        for child in _children_list
+        if child.get("week_homework")
+    }
 except (json.JSONDecodeError, TypeError, ValueError) as _cfg_err:
     logging.warning(
         "Kunne ikke parse UKENYTT_CHILDREN ('%s'): %s — bruker fallback ['Barn1']",
         _children_json, _cfg_err
     )
     CHILDREN = ["Barn1"]
+    WEEK_HOMEWORK_CHILDREN = set()
 
 # Versjon satt av Dockerfile via ADDON_VERSION env-var, fallback til hardkodet
 # (synkroniseres med config.yaml ved hvert release via Dockerfile LABEL)
-ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.34")
+ADDON_VERSION = os.getenv("ADDON_VERSION", "1.0.35")
 
 # Konstanter
 MAX_INFO_LENGTH = 500
@@ -1190,6 +1197,44 @@ def _update_derived_sensors(child_name: str, ukeplan: dict, headers: dict) -> No
             logger.warning("Kunne ikke oppdatere avledet sensor '%s'", sensor_name)
 
 
+def _apply_week_homework(child_name: str, ukeplan: dict) -> dict:
+    """For barn med ukelekser: gjør ukas lekser synlige alle skoledager.
+
+    Leksene i PDF-en står på dagen de ble gitt, men når barnet har ukelekser skal de
+    kunne gjøres hele uka. Hver dag får derfor unionen av ukas lekser (uten duplikater,
+    i rekkefølge fra mandag). Dagens opprinnelige lekser bevares i `dagens_lekser`.
+    """
+    if child_name.lower() not in WEEK_HOMEWORK_CHILDREN:
+        return ukeplan
+
+    def _key(text: str) -> str:
+        return re.sub(r"^[^\wÆØÅæøå]+", "", text).strip().lower()
+
+    merged: list[str] = []
+    seen: set[str] = set()
+    for day in DAYS_NO:
+        day_data = ukeplan.get(day)
+        if not isinstance(day_data, dict):
+            continue
+        for item in day_data.get("lekser") or []:
+            k = _key(item)
+            if k and k not in seen:
+                seen.add(k)
+                merged.append(item)
+
+    if not merged:
+        return ukeplan
+
+    for day in DAYS_NO:
+        day_data = ukeplan.get(day)
+        if not isinstance(day_data, dict) or day in WEEKEND:
+            continue
+        day_data["dagens_lekser"] = list(day_data.get("lekser") or [])
+        day_data["lekser"] = list(merged)
+    logger.info("Ukelekser aktivert for %s: %d lekser vises hele uka", child_name, len(merged))
+    return ukeplan
+
+
 def build_ukenytt_data_from_pdf(
     child_name: str, original_filename: str = None, pdf_override: Path = None
 ) -> dict:
@@ -1199,6 +1244,7 @@ def build_ukenytt_data_from_pdf(
         raise ValueError(f"Ingen PDF funnet for {child_name}")
 
     data, tables = parse_pdf(pdf_path)
+    data = _apply_week_homework(child_name, data)
     page_texts = extract_pdf_page_texts(pdf_path)
     pdf_text = "\n".join(page_texts)
 
