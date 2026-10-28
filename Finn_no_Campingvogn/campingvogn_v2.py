@@ -533,7 +533,9 @@ def update_database(ads: list[dict], dry_run: bool = False) -> None:
             row = cursor.fetchone()
 
             if row:
-                gammel_pris = row[0]
+                gammel_pris = normalize_price(row[0])
+                if gammel_pris is None:
+                    logger.warning("Ugyldig gammel pris for Finnkode %s: %r", finnkode, row[0])
                 if gammel_pris != ny_pris:
                     endret += 1
                     if gammel_pris and ny_pris < gammel_pris:
