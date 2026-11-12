@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup
 HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
 HTTP_HEADERS = {"User-Agent": "Mozilla/5.0"}
 MAX_RETRIES = 3
+_FINN_HTML_BLOCKED = False
 
 # RUN_LOCALLY blir False hvis miljøvariabelen ikke er satt eller ikke finnes.
 RUN_LOCALLY = os.getenv("RUN_LOCALLY", "false").lower() == "true"
@@ -269,9 +270,17 @@ def extract_info_from_json(json_data: dict) -> list[dict]:
 
 async def fetch_html(session: aiohttp.ClientSession, url: str, max_retries: int = MAX_RETRIES) -> str | None:
     """Hent HTML-innhold fra gitt URL med retry ved feil."""
+    global _FINN_HTML_BLOCKED
+    if _FINN_HTML_BLOCKED:
+        return None
+
     for attempt in range(1, max_retries + 1):
         try:
             async with session.get(url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT) as response:
+                if response.status == 403:
+                    _FINN_HTML_BLOCKED = True
+                    logger.warning("Finn blokkerte HTML-oppslag (HTTP 403); hopper over resten av HTML-berikingen denne kjøringen")
+                    return None
                 if response.status == 429 or response.status >= 500:
                     wait = 2 ** attempt
                     logger.warning("HTTP %s for %s, venter %ds (forsøk %d/%d)", response.status, url, wait, attempt, max_retries)
@@ -325,11 +334,15 @@ def extract_detailed_ad_info(html_content: str) -> dict:
         logger.error("Feil under detaljuttrekk: %s", e)
         return {}
 
-async def fetch_and_combine_data(session, ads, max_concurrent=5):
+async def fetch_and_combine_data(session, ads, max_concurrent=1):
+    global _FINN_HTML_BLOCKED
+    _FINN_HTML_BLOCKED = False
     semaphore = asyncio.Semaphore(max_concurrent)
 
     async def fetch_details(ad):
         async with semaphore:
+            if _FINN_HTML_BLOCKED:
+                return ad
             await asyncio.sleep(0.2)
             html = await fetch_html(session, ad["URL"])
             if html:
@@ -868,14 +881,25 @@ def ensure_publisert_dato_column() -> None:
 
 async def _finn_er_solgt(session: aiohttp.ClientSession, finnkode: int) -> bool:
     """Dobbeltsjekk: hent Finn-annonsen direkte og se etter solgt/inaktiv-markør i HTML."""
+    global _FINN_HTML_BLOCKED
+    if _FINN_HTML_BLOCKED:
+        return False
     url = f"https://www.finn.no/mobility/item/{finnkode}"
     try:
         async with session.get(url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT) as resp:
+            if resp.status == 403:
+                _FINN_HTML_BLOCKED = True
+                logger.warning("Finn blokkerte HTML-oppslag (HTTP 403); hopper over resterende statuskontroller")
+                return False
             if resp.status == 404:
                 return True
             html = await resp.text()
             return "ikke lenger tilgjengelig" in html.lower()
     except Exception as e:
+        if isinstance(e, aiohttp.ClientResponseError) and e.status == 403:
+            _FINN_HTML_BLOCKED = True
+            logger.warning("Finn blokkerte HTML-oppslag (HTTP 403); hopper over resterende statuskontroller")
+            return False
         logger.warning("Kunne ikke verifisere Finn %s: %s", finnkode, e)
         return False
 
